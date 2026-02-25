@@ -86,12 +86,9 @@ export class CrxTransport implements ConnectionTransport {
       } else if (message.method === 'Target.setAutoAttach') {
         const [, versionStr] = navigator.userAgent.match(/Chrome\/([0-9]+)./) ?? [];
 
-        // we need to exclude service workers, see:
-        // https://github.com/ruifigueira/playwright-crx/issues/1
         // https://chromedevtools.github.io/devtools-protocol/tot/Target/#method-setAutoAttach
         result = await this._send(debuggee, message.method, { ...message.params, filter: [
-          { exclude: true, type: 'service_worker' },
-          // and these are the defaults:
+          // defaults:
           // https://chromedevtools.github.io/devtools-protocol/tot/Target/#type-TargetFilter
           { exclude: true, type: 'browser' },
           { exclude: true, type: 'tab' },
