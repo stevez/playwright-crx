@@ -14,20 +14,28 @@
  * limitations under the License.
  */
 
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+
 import { Artifact } from './artifact';
 import { BrowserContext, validateBrowserContextOptions } from './browserContext';
 import { Download } from './download';
 import { SdkObject } from './instrumentation';
 import { Page } from './page';
 import { ClientCertificatesProxy } from './socksClientCertificatesInterceptor';
+import { PlaywrightPipeServer } from '../remote/playwrightPipeServer';
+import { PlaywrightWebSocketServer } from '../remote/playwrightWebSocketServer';
+import { createGuid } from './utils/crypto';
+import { defaultRegistryDirectory } from './registry';
 
-import type { CallMetadata } from './instrumentation';
 import type * as types from './types';
 import type { ProxySettings } from './types';
 import type { RecentLogsCollector } from './utils/debugLogger';
 import type * as channels from '@protocol/channels';
 import type { ChildProcess } from 'child_process';
-
+import type { Language } from '../utils';
+import type { Progress } from './progress';
 
 export interface BrowserProcess {
   onclose?: ((exitCode: number | null, signal: string | null) => void);
@@ -52,6 +60,7 @@ export type BrowserOptions = {
   browserLogsCollector: RecentLogsCollector,
   slowMo?: number;
   wsEndpoint?: string;  // Only there when connected over web socket.
+  sdkLanguage?: Language;
   originalLaunchOptions: types.LaunchOptions;
 };
 
@@ -70,12 +79,14 @@ export abstract class Browser extends SdkObject {
   private _contextForReuse: { context: BrowserContext, hash: string } | undefined;
   _closeReason: string | undefined;
   _isCollocatedWithServer: boolean = true;
+  private _server: BrowserServer;
 
   constructor(parent: SdkObject, options: BrowserOptions) {
     super(parent, 'browser');
     this.attribution.browser = this;
     this.options = options;
     this.instrumentation.onBrowserOpen(this);
+    this._server = new BrowserServer(this);
   }
 
   abstract doCreateNewContext(options: types.BrowserContextOptions): Promise<BrowserContext>;
@@ -84,47 +95,53 @@ export abstract class Browser extends SdkObject {
   abstract version(): string;
   abstract userAgent(): string;
 
-  async newContext(metadata: CallMetadata, options: types.BrowserContextOptions): Promise<BrowserContext> {
-    validateBrowserContextOptions(options, this.options);
-    let clientCertificatesProxy: ClientCertificatesProxy | undefined;
-    if (options.clientCertificates?.length) {
-      clientCertificatesProxy = new ClientCertificatesProxy(options);
-      options = { ...options };
-      options.proxyOverride = await clientCertificatesProxy.listen();
-      options.internalIgnoreHTTPSErrors = true;
-    }
-    let context;
-    try {
-      context = await this.doCreateNewContext(options);
-    } catch (error) {
-      await clientCertificatesProxy?.close();
-      throw error;
-    }
-    context._clientCertificatesProxy = clientCertificatesProxy;
-    if (options.storageState)
-      await context.setStorageState(metadata, options.storageState);
-    this.emit(Browser.Events.Context, context);
-    return context;
+  sdkLanguage() {
+    return this.options.sdkLanguage || this.attribution.playwright.options.sdkLanguage;
   }
 
-  async newContextForReuse(params: channels.BrowserNewContextForReuseParams, metadata: CallMetadata): Promise<{ context: BrowserContext, needsReset: boolean }> {
+  async newContext(progress: Progress, options: types.BrowserContextOptions): Promise<BrowserContext> {
+    validateBrowserContextOptions(options, this.options);
+    let clientCertificatesProxy: ClientCertificatesProxy | undefined;
+    let context: BrowserContext | undefined;
+    try {
+      if (options.clientCertificates?.length) {
+        clientCertificatesProxy = await ClientCertificatesProxy.create(progress, options);
+        options = { ...options };
+        options.proxyOverride = clientCertificatesProxy.proxySettings();
+        options.internalIgnoreHTTPSErrors = true;
+      }
+      context = await progress.race(this.doCreateNewContext(options));
+      context._clientCertificatesProxy = clientCertificatesProxy;
+      if ((options as any).__testHookBeforeSetStorageState)
+        await progress.race((options as any).__testHookBeforeSetStorageState());
+      await context.setStorageState(progress, options.storageState, 'initial');
+      this.emit(Browser.Events.Context, context);
+      return context;
+    } catch (error) {
+      await context?.close({ reason: 'Failed to create context' }).catch(() => {});
+      await clientCertificatesProxy?.close().catch(() => {});
+      throw error;
+    }
+  }
+
+  async newContextForReuse(progress: Progress, params: channels.BrowserNewContextForReuseParams): Promise<BrowserContext> {
     const hash = BrowserContext.reusableContextHash(params);
     if (!this._contextForReuse || hash !== this._contextForReuse.hash || !this._contextForReuse.context.canResetForReuse()) {
       if (this._contextForReuse)
         await this._contextForReuse.context.close({ reason: 'Context reused' });
-      this._contextForReuse = { context: await this.newContext(metadata, params), hash };
-      return { context: this._contextForReuse.context, needsReset: false };
+      this._contextForReuse = { context: await this.newContext(progress, params), hash };
+      return this._contextForReuse.context;
     }
-    await this._contextForReuse.context.stopPendingOperations('Context recreated');
-    return { context: this._contextForReuse.context, needsReset: true };
+    await this._contextForReuse.context.resetForReuse(progress, params);
+    return this._contextForReuse.context;
   }
 
-  async stopPendingOperations(reason: string) {
-    await this._contextForReuse?.context?.stopPendingOperations(reason);
+  contextForReuse() {
+    return this._contextForReuse?.context;
   }
 
-  _downloadCreated(page: Page, uuid: string, url: string, suggestedFilename?: string) {
-    const download = new Download(page, this.options.downloadsPath || '', uuid, url, suggestedFilename);
+  _downloadCreated(page: Page, uuid: string, url: string, suggestedFilename?: string, downloadFilename?: string) {
+    const download = new Download(page, this.options.downloadsPath || '', uuid, url, suggestedFilename, downloadFilename);
     this._downloads.set(uuid, download);
   }
 
@@ -143,16 +160,11 @@ export abstract class Browser extends SdkObject {
     this._downloads.delete(uuid);
   }
 
-  _videoStarted(context: BrowserContext, videoId: string, path: string, pageOrError: Promise<Page | Error>) {
-    const artifact = new Artifact(context, path);
-    this._idToVideo.set(videoId, { context, artifact });
-    pageOrError.then(page => {
-      if (page instanceof Page) {
-        page.video = artifact;
-        page.emitOnContext(BrowserContext.Events.VideoStarted, artifact);
-        page.emit(Page.Events.Video, artifact);
-      }
-    });
+  _videoStarted(page: Page, videoId: string, path: string) {
+    const artifact = new Artifact(page.browserContext, path);
+    page.video = artifact;
+    this._idToVideo.set(videoId, { context: page.browserContext, artifact });
+    return artifact;
   }
 
   _takeVideo(videoId: string): Artifact | undefined {
@@ -161,11 +173,20 @@ export abstract class Browser extends SdkObject {
     return video?.artifact;
   }
 
+  async startServer(title: string, options: { workspaceDir?: string, wsPath?: string, pipeName?: string }): Promise<{ wsEndpoint?: string, pipeName?: string }> {
+    return await this._server.start(title, options);
+  }
+
+  async stopServer() {
+    await this._server.stop();
+  }
+
   _didClose() {
     for (const context of this.contexts())
       context._browserClosed();
     if (this._defaultContext)
       this._defaultContext._browserClosed();
+    this.stopServer().catch(() => {});
     this.emit(Browser.Events.Disconnected);
     this.instrumentation.onBrowserClose(this);
   }
@@ -183,5 +204,85 @@ export abstract class Browser extends SdkObject {
 
   async killForTests() {
     await this.options.browserProcess.kill();
+  }
+}
+
+const packageVersion = require('../../package.json').version;
+
+export class BrowserServer {
+  private _browser: Browser;
+  private _pipeServer?: PlaywrightPipeServer;
+  private _wsServer?: PlaywrightWebSocketServer;
+  private _pipeSocketPath?: string;
+  private _isStarted = false;
+
+  constructor(browser: Browser) {
+    this._browser = browser;
+  }
+
+  async start(title: string, options: { workspaceDir?: string, wsPath?: string }): Promise<{ wsEndpoint?: string, pipeName?: string }> {
+    if (this._isStarted)
+      throw new Error(`Server is already started.`);
+
+    const result: { wsEndpoint?: string, pipeName?: string } = {};
+    this._pipeServer = new PlaywrightPipeServer(this._browser);
+    this._pipeSocketPath = await this._socketPath();
+    await this._pipeServer.listen(this._pipeSocketPath);
+    result.pipeName = this._pipeSocketPath;
+
+    if (options.wsPath) {
+      const path = options.wsPath ? (options.wsPath.startsWith('/') ? options.wsPath : `/${options.wsPath}`) : `/${createGuid()}`;
+      this._wsServer = new PlaywrightWebSocketServer(this._browser, path);
+      result.wsEndpoint = await this._wsServer.listen(0);
+    }
+
+    await this._createDescriptor(title, result);
+    return result;
+  }
+
+  async stop() {
+    await this._deleteDescriptor();
+    await this._pipeServer?.close();
+    await this._wsServer?.close();
+    this._pipeServer = undefined;
+    this._wsServer = undefined;
+  }
+
+  private async _createDescriptor(title: string, result: { wsEndpoint?: string, pipeName?: string, workspaceDir?: string }) {
+    const file = this._descriptorPath();
+    await fs.promises.mkdir(path.dirname(file), { recursive: true });
+    const descriptor = {
+      version: packageVersion,
+      title,
+      browser: {
+        name: this._browser.options.name,
+        channel: this._browser.options.channel,
+        version: this._browser.version(),
+      },
+      wsEndpoint: result.wsEndpoint ? result.wsEndpoint : undefined,
+      pipeName: result.pipeName ? result.pipeName : undefined,
+      workspaceDir: result.workspaceDir,
+    };
+    await fs.promises.writeFile(file, JSON.stringify(descriptor), 'utf-8');
+  }
+
+  private async _deleteDescriptor() {
+    const file = this._descriptorPath();
+    await fs.promises.unlink(file).catch(() => {});
+    if (this._pipeSocketPath && process.platform !== 'win32')
+      await fs.promises.unlink(this._pipeSocketPath).catch(() => {});
+  }
+
+  private _descriptorPath() {
+    return path.join(defaultRegistryDirectory, 'browsers', this._browser.guid);
+  }
+
+  private async _socketPath() {
+    const socketName = `${this._browser.guid.slice(0, 14)}.sock`;
+    if (process.platform === 'win32')
+      return `\\\\.\\pipe\\${socketName}`;
+    const socketsDir = process.env.PLAYWRIGHT_BROWSER_SOCKETS_DIR || path.join(os.tmpdir(), 'playwright');
+    await fs.promises.mkdir(socketsDir, { recursive: true });
+    return path.join(socketsDir, socketName);
   }
 }

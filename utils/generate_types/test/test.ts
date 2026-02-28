@@ -226,11 +226,10 @@ playwright.chromium.launch().then(async browser => {
 // Test v0.12 features
 (async () => {
   const launchOptions: playwright.LaunchOptions = {
-    devtools: true,
     env: {
-      TIMEOUT: 52,
+      TIMEOUT: '52',
       SOMETHING: '/some/path',
-      JEST_TEST: true
+      JEST_TEST: 'true'
     }
   };
   const browser = await playwright.chromium.launch(launchOptions);

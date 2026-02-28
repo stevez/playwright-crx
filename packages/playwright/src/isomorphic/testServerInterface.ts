@@ -47,6 +47,7 @@ export interface TestServerInterface {
 
   runGlobalSetup(params: {}): Promise<{
     report: ReportEntry[],
+    env: [string, string | null][],
     status: reporterTypes.FullResult['status']
   }>;
 
@@ -88,7 +89,7 @@ export interface TestServerInterface {
   }>;
 
   runTests(params: {
-    locations?: string[];
+    locations: string[];
     grep?: string;
     grepInvert?: string;
     testIds?: string[];
@@ -96,12 +97,16 @@ export interface TestServerInterface {
     workers?: number | string;
     updateSnapshots?: 'all' | 'changed' | 'missing' | 'none';
     updateSourceMethod?: 'overwrite' | 'patch' | '3way';
+    runAgents?: 'all' | 'missing' | 'none';
     reporters?: string[],
     trace?: 'on' | 'off';
     video?: 'on' | 'off';
     projects?: string[];
     reuseContext?: boolean;
     connectWsEndpoint?: string;
+    timeout?: number;
+    pauseOnError?: boolean;
+    pauseAtEnd?: boolean;
   }): Promise<{
     status: reporterTypes.FullResult['status'];
   }>;
@@ -120,6 +125,7 @@ export interface TestServerInterfaceEvents {
   onStdio: Event<{ type: 'stdout' | 'stderr', text?: string, buffer?: string }>;
   onTestFilesChanged: Event<{ testFiles: string[] }>;
   onLoadTraceRequested: Event<{ traceUrl: string }>;
+  onTestPaused: Event<{ errors: reporterTypes.TestError[] }>;
 }
 
 export interface TestServerInterfaceEventEmitters {
@@ -127,4 +133,5 @@ export interface TestServerInterfaceEventEmitters {
   dispatchEvent(event: 'stdio', params: { type: 'stdout' | 'stderr', text?: string, buffer?: string }): void;
   dispatchEvent(event: 'testFilesChanged', params: { testFiles: string[] }): void;
   dispatchEvent(event: 'loadTraceRequested', params: { traceUrl: string }): void;
+  dispatchEvent(event: 'testPaused', params: { errors: reporterTypes.TestError[] }): void;
 }

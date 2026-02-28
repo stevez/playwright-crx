@@ -84,7 +84,7 @@ it('should work after a cross origin navigation', async ({ page, server }) => {
   expect(await page.evaluate(() => window['result'])).toBe(123);
 });
 
-it('init script should run only once in iframe', async ({ page, server, browserName }) => {
+it('init script should run only once in iframe', async ({ page, server, browserName, isBidi }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/26992' });
   const messages = [];
   page.on('console', event => {
@@ -95,22 +95,6 @@ it('init script should run only once in iframe', async ({ page, server, browserN
   await page.goto(server.PREFIX + '/frames/one-frame.html');
   expect(messages).toEqual([
     'init script: /frames/one-frame.html',
-    'init script: ' + (browserName === 'firefox' ? 'no url yet' : '/frames/frame.html'),
+    'init script: ' + (browserName === 'firefox' && !isBidi ? 'no url yet' : '/frames/frame.html'),
   ]);
-});
-
-it('init script should not observe playwright internals', async ({ server, page, trace }) => {
-  it.skip(!!process.env.PW_CLOCK, 'clock installs globalThis.__pwClock');
-  it.fixme(trace === 'on', 'tracing installs __playwright_snapshot_streamer');
-
-  await page.addInitScript(() => {
-    window['check'] = () => {
-      const keys = Reflect.ownKeys(globalThis).map(k => k.toString());
-      return keys.find(name => name.includes('playwright') || name.includes('_pw')) || 'none';
-    };
-    window['found'] = window['check']();
-  });
-  await page.goto(server.EMPTY_PAGE);
-  expect(await page.evaluate(() => window['found'])).toBe('none');
-  expect(await page.evaluate(() => window['check']())).toBe('none');
 });

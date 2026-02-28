@@ -48,9 +48,8 @@ type TestSummary = {
 
 export type CommonReporterOptions = {
   configDir: string,
-  _mode: 'list' | 'test' | 'merge',
-  _isTestServer: boolean,
-  _commandHash: string,
+  _mode?: 'list' | 'test' | 'merge',
+  _commandHash?: string,
 };
 
 export type Screen = {
@@ -58,23 +57,51 @@ export type Screen = {
   colors: Colors;
   isTTY: boolean;
   ttyWidth: number;
+  ttyHeight: number;
+  stdout?: NodeJS.WriteStream;
+  stderr?: NodeJS.WriteStream;
 };
 
+export type TerminalScreen = Screen & {
+  stdout: NodeJS.WriteStream;
+  stderr: NodeJS.WriteStream;
+};
+
+const DEFAULT_TTY_WIDTH = 100;
+const DEFAULT_TTY_HEIGHT = 40;
+
+// eslint-disable-next-line no-restricted-properties
+const originalProcessStdout = process.stdout;
+// eslint-disable-next-line no-restricted-properties
+const originalProcessStderr = process.stderr;
+
 // Output goes to terminal.
-export const terminalScreen: Screen = (() => {
-  let isTTY = !!process.stdout.isTTY;
-  let ttyWidth = process.stdout.columns || 0;
+export const terminalScreen: TerminalScreen = (() => {
+  let isTTY = !!originalProcessStdout.isTTY;
+  let ttyWidth = originalProcessStdout.columns || 0;
+  let ttyHeight = originalProcessStdout.rows || 0;
   if (process.env.PLAYWRIGHT_FORCE_TTY === 'false' || process.env.PLAYWRIGHT_FORCE_TTY === '0') {
     isTTY = false;
     ttyWidth = 0;
+    ttyHeight = 0;
   } else if (process.env.PLAYWRIGHT_FORCE_TTY === 'true' || process.env.PLAYWRIGHT_FORCE_TTY === '1') {
     isTTY = true;
-    ttyWidth = process.stdout.columns || 100;
+    ttyWidth = originalProcessStdout.columns || DEFAULT_TTY_WIDTH;
+    ttyHeight = originalProcessStdout.rows || DEFAULT_TTY_HEIGHT;
   } else if (process.env.PLAYWRIGHT_FORCE_TTY) {
     isTTY = true;
-    ttyWidth = +process.env.PLAYWRIGHT_FORCE_TTY;
+    const sizeMatch = process.env.PLAYWRIGHT_FORCE_TTY.match(/^(\d+)x(\d+)$/);
+    if (sizeMatch) {
+      ttyWidth = +sizeMatch[1];
+      ttyHeight = +sizeMatch[2];
+    } else {
+      ttyWidth = +process.env.PLAYWRIGHT_FORCE_TTY;
+      ttyHeight = DEFAULT_TTY_HEIGHT;
+    }
     if (isNaN(ttyWidth))
-      ttyWidth = 100;
+      ttyWidth = DEFAULT_TTY_WIDTH;
+    if (isNaN(ttyHeight))
+      ttyHeight = DEFAULT_TTY_HEIGHT;
   }
 
   let useColors = isTTY;
@@ -89,7 +116,10 @@ export const terminalScreen: Screen = (() => {
     resolveFiles: 'cwd',
     isTTY,
     ttyWidth,
-    colors
+    ttyHeight,
+    colors,
+    stdout: originalProcessStdout,
+    stderr: originalProcessStderr,
   };
 })();
 
@@ -98,6 +128,7 @@ export const nonTerminalScreen: Screen = {
   colors: terminalScreen.colors,
   isTTY: false,
   ttyWidth: 0,
+  ttyHeight: 0,
   resolveFiles: 'rootDir',
 };
 
@@ -106,22 +137,30 @@ export const internalScreen: Screen = {
   colors: realColors,
   isTTY: false,
   ttyWidth: 0,
+  ttyHeight: 0,
   resolveFiles: 'rootDir',
 };
 
+export type TerminalReporterOptions = {
+  screen?: TerminalScreen;
+  omitFailures?: boolean;
+  includeTestId?: boolean;
+};
+
 export class TerminalReporter implements ReporterV2 {
-  screen: Screen = terminalScreen;
+  screen: TerminalScreen;
   config!: FullConfig;
   suite!: Suite;
   totalTestCount = 0;
   result!: FullResult;
   private fileDurations = new Map<string, { duration: number, workers: Set<number> }>();
-  private _omitFailures: boolean;
+  private _options: TerminalReporterOptions;
   private _fatalErrors: TestError[] = [];
   private _failureCount: number = 0;
 
-  constructor(options: { omitFailures?: boolean } = {}) {
-    this._omitFailures = options.omitFailures || false;
+  constructor(options: TerminalReporterOptions = {}) {
+    this.screen = options.screen ?? terminalScreen;
+    this._options = options;
   }
 
   version(): 'v2' {
@@ -273,91 +312,135 @@ export class TerminalReporter implements ReporterV2 {
   epilogue(full: boolean) {
     const summary = this.generateSummary();
     const summaryMessage = this.generateSummaryMessage(summary);
-    if (full && summary.failuresToPrint.length && !this._omitFailures)
+    if (full && summary.failuresToPrint.length && !this._options.omitFailures)
       this._printFailures(summary.failuresToPrint);
     this._printSlowTests();
     this._printSummary(summaryMessage);
   }
 
   private _printFailures(failures: TestCase[]) {
-    console.log('');
+    this.writeLine('');
     failures.forEach((test, index) => {
-      console.log(this.formatFailure(test, index + 1));
+      this.writeLine(this.formatFailure(test, index + 1));
     });
   }
 
   private _printSlowTests() {
     const slowTests = this.getSlowTests();
     slowTests.forEach(([file, duration]) => {
-      console.log(this.screen.colors.yellow('  Slow test file: ') + file + this.screen.colors.yellow(` (${milliseconds(duration)})`));
+      this.writeLine(this.screen.colors.yellow('  Slow test file: ') + file + this.screen.colors.yellow(` (${milliseconds(duration)})`));
     });
     if (slowTests.length)
-      console.log(this.screen.colors.yellow('  Consider running tests from slow files in parallel. See: https://playwright.dev/docs/test-parallel'));
+      this.writeLine(this.screen.colors.yellow('  Consider running tests from slow files in parallel. See: https://playwright.dev/docs/test-parallel'));
   }
 
   private _printSummary(summary: string) {
     if (summary.trim())
-      console.log(summary);
+      this.writeLine(summary);
   }
 
   willRetry(test: TestCase): boolean {
     return test.outcome() === 'unexpected' && test.results.length <= test.retries;
   }
 
-  formatTestTitle(test: TestCase, step?: TestStep, omitLocation: boolean = false): string {
-    return formatTestTitle(this.screen, this.config, test, step, omitLocation);
+  formatTestTitle(test: TestCase, step?: TestStep): string {
+    return formatTestTitle(this.screen, this.config, test, step, this._options);
   }
 
   formatTestHeader(test: TestCase, options: { indent?: string, index?: number, mode?: 'default' | 'error' } = {}): string {
-    return formatTestHeader(this.screen, this.config, test, options);
+    return formatTestHeader(this.screen, this.config, test, { ...options, includeTestId: this._options.includeTestId });
   }
 
   formatFailure(test: TestCase, index?: number): string {
-    return formatFailure(this.screen, this.config, test, index);
+    return formatFailure(this.screen, this.config, test, index, this._options);
   }
 
   formatError(error: TestError): ErrorDetails {
     return formatError(this.screen, error);
   }
+
+  formatResultErrors(test: TestCase, result: TestResult): string {
+    return formatResultErrors(this.screen, test, result);
+  }
+
+  writeLine(line?: string) {
+    this.screen.stdout?.write(line ? line + '\n' : '\n');
+  }
 }
 
-export function formatFailure(screen: Screen, config: FullConfig, test: TestCase, index?: number): string {
+function formatResultErrors(screen: Screen, test: TestCase, result: TestResult): string {
   const lines: string[] = [];
-  const header = formatTestHeader(screen, config, test, { indent: '  ', index, mode: 'error' });
-  lines.push(screen.colors.red(header));
+  if (test.outcome() === 'unexpected') {
+    const errorDetails = formatResultFailure(screen, test, result, '    ');
+    if (errorDetails.length > 0)
+      lines.push('');
+    for (const error of errorDetails)
+      lines.push(error.message, '');
+  }
+  return lines.join('\n');
+}
+
+export function formatFailure(screen: Screen, config: FullConfig, test: TestCase, index?: number, options?: TerminalReporterOptions): string {
+  const lines: string[] = [];
+  let printedHeader = false;
   for (const result of test.results) {
     const resultLines: string[] = [];
     const errors = formatResultFailure(screen, test, result, '    ');
     if (!errors.length)
       continue;
+    if (!printedHeader) {
+      const header = formatTestHeader(screen, config, test, { indent: '  ', index, mode: 'error', includeTestId: options?.includeTestId });
+      lines.push(screen.colors.red(header));
+      printedHeader = true;
+    }
     if (result.retry) {
       resultLines.push('');
       resultLines.push(screen.colors.gray(separator(screen, `    Retry #${result.retry}`)));
     }
     resultLines.push(...errors.map(error => '\n' + error.message));
-    for (let i = 0; i < result.attachments.length; ++i) {
-      const attachment = result.attachments[i];
+    const attachmentGroups = groupAttachments(result.attachments);
+    for (let i = 0; i < attachmentGroups.length; ++i) {
+      const attachment = attachmentGroups[i];
       if (attachment.name === 'error-context' && attachment.path) {
         resultLines.push('');
         resultLines.push(screen.colors.dim(`    Error Context: ${relativeFilePath(screen, config, attachment.path)}`));
         continue;
       }
+
       if (attachment.name.startsWith('_'))
         continue;
+
       const hasPrintableContent = attachment.contentType.startsWith('text/');
       if (!attachment.path && !hasPrintableContent)
         continue;
+
       resultLines.push('');
-      resultLines.push(screen.colors.cyan(separator(screen, `    attachment #${i + 1}: ${attachment.name} (${attachment.contentType})`)));
-      if (attachment.path) {
-        const relativePath = path.relative(process.cwd(), attachment.path);
-        resultLines.push(screen.colors.cyan(`    ${relativePath}`));
+      resultLines.push(screen.colors.dim(separator(screen, `    attachment #${i + 1}: ${screen.colors.bold(attachment.name)} (${attachment.contentType})`)));
+
+      if (attachment.actual?.path) {
+        if (attachment.expected?.path) {
+          const expectedPath = relativeFilePath(screen, config, attachment.expected.path);
+          resultLines.push(screen.colors.dim(`    Expected: ${expectedPath}`));
+        }
+        const actualPath = relativeFilePath(screen, config, attachment.actual.path);
+        resultLines.push(screen.colors.dim(`    Received: ${actualPath}`));
+        if (attachment.previous?.path) {
+          const previousPath = relativeFilePath(screen, config, attachment.previous.path);
+          resultLines.push(screen.colors.dim(`    Previous: ${previousPath}`));
+        }
+        if (attachment.diff?.path) {
+          const diffPath = relativeFilePath(screen, config, attachment.diff.path);
+          resultLines.push(screen.colors.dim(`    Diff:     ${diffPath}`));
+        }
+      } else if (attachment.path) {
+        const relativePath = relativeFilePath(screen, config, attachment.path);
+        resultLines.push(screen.colors.dim(`    ${relativePath}`));
         // Make this extensible
         if (attachment.name === 'trace') {
           const packageManagerCommand = getPackageManagerExecCommand();
-          resultLines.push(screen.colors.cyan(`    Usage:`));
+          resultLines.push(screen.colors.dim(`    Usage:`));
           resultLines.push('');
-          resultLines.push(screen.colors.cyan(`        ${packageManagerCommand} playwright show-trace ${quotePathIfNeeded(relativePath)}`));
+          resultLines.push(screen.colors.dim(`        ${packageManagerCommand} playwright show-trace ${quotePathIfNeeded(relativePath)}`));
           resultLines.push('');
         }
       } else {
@@ -366,10 +449,10 @@ export function formatFailure(screen: Screen, config: FullConfig, test: TestCase
           if (text.length > 300)
             text = text.slice(0, 300) + '...';
           for (const line of text.split('\n'))
-            resultLines.push(screen.colors.cyan(`    ${line}`));
+            resultLines.push(screen.colors.dim(`    ${line}`));
         }
       }
-      resultLines.push(screen.colors.cyan(separator(screen, '   ')));
+      resultLines.push(screen.colors.dim(separator(screen, '   ')));
     }
     lines.push(...resultLines);
   }
@@ -392,6 +475,12 @@ function quotePathIfNeeded(path: string): string {
   return path;
 }
 
+const kReportedSymbol = Symbol('reported');
+
+export function markErrorsAsReported(result: TestResult) {
+  (result as any)[kReportedSymbol] = result.errors.length;
+}
+
 export function formatResultFailure(screen: Screen, test: TestCase, result: TestResult, initialIndent: string): ErrorDetails[] {
   const errorDetails: ErrorDetails[] = [];
 
@@ -406,7 +495,8 @@ export function formatResultFailure(screen: Screen, test: TestCase, result: Test
     });
   }
 
-  for (const error of result.errors) {
+  const reportedIndex = (result as any)[kReportedSymbol] || 0;
+  for (const error of result.errors.slice(reportedIndex)) {
     const formattedError = formatError(screen, error);
     errorDetails.push({
       message: indent(formattedError.message, initialIndent),
@@ -431,22 +521,20 @@ export function stepSuffix(step: TestStep | undefined) {
   return stepTitles.map(t => t.split('\n')[0]).map(t => ' › ' + t).join('');
 }
 
-function formatTestTitle(screen: Screen, config: FullConfig, test: TestCase, step?: TestStep, omitLocation: boolean = false): string {
+function formatTestTitle(screen: Screen, config: FullConfig, test: TestCase, step?: TestStep, options: { includeTestId?: boolean } = {}): string {
   // root, project, file, ...describes, test
   const [, projectName, , ...titles] = test.titlePath();
-  let location;
-  if (omitLocation)
-    location = `${relativeTestPath(screen, config, test)}`;
-  else
-    location = `${relativeTestPath(screen, config, test)}:${test.location.line}:${test.location.column}`;
-  const projectTitle = projectName ? `[${projectName}] › ` : '';
-  const testTitle = `${projectTitle}${location} › ${titles.join(' › ')}`;
-  const extraTags = test.tags.filter(t => !testTitle.includes(t));
+  const location = `${relativeTestPath(screen, config, test)}:${test.location.line}:${test.location.column}`;
+  const testId = options.includeTestId ? `[id=${test.id}] ` : '';
+  const projectLabel = options.includeTestId ? `project=` : '';
+  const projectTitle = projectName ? `[${projectLabel}${projectName}] › ` : '';
+  const testTitle = `${testId}${projectTitle}${location} › ${titles.join(' › ')}`;
+  const extraTags = test.tags.filter(t => !testTitle.includes(t) && !config.tags.includes(t));
   return `${testTitle}${stepSuffix(step)}${extraTags.length ? ' ' + extraTags.join(' ') : ''}`;
 }
 
-function formatTestHeader(screen: Screen, config: FullConfig, test: TestCase, options: { indent?: string, index?: number, mode?: 'default' | 'error' } = {}): string {
-  const title = formatTestTitle(screen, config, test);
+function formatTestHeader(screen: Screen, config: FullConfig, test: TestCase, options: { indent?: string, index?: number, mode?: 'default' | 'error', includeTestId?: boolean } = {}): string {
+  const title = formatTestTitle(screen, config, test, undefined, options);
   const header = `${options.indent || ''}${options.index ? options.index + ') ' : ''}${title}`;
   let fullHeader = header;
 
@@ -513,7 +601,7 @@ export function separator(screen: Screen, text: string = ''): string {
   if (text)
     text += ' ';
   const columns = Math.min(100, screen.ttyWidth || 100);
-  return text + screen.colors.dim('─'.repeat(Math.max(0, columns - text.length)));
+  return text + screen.colors.dim('─'.repeat(Math.max(0, columns - stripAnsiEscapes(text).length)));
 }
 
 function indent(lines: string, tab: string) {
@@ -590,15 +678,15 @@ function resolveFromEnv(name: string): string | undefined {
 // In addition to `outputFile` the function returns `outputDir` which should
 // be cleaned up if present by some reporters contract.
 export function resolveOutputFile(reporterName: string, options: {
-    configDir: string,
-    outputDir?: string,
-    fileName?: string,
-    outputFile?: string,
-    default?: {
-      fileName: string,
-      outputDir: string,
-    }
-  }): { outputFile: string, outputDir?: string } | undefined {
+  configDir: string,
+  outputDir?: string,
+  fileName?: string,
+  outputFile?: string,
+  default?: {
+    fileName: string,
+    outputDir: string,
+  }
+}): { outputFile: string, outputDir?: string } | undefined {
   const name = reporterName.toUpperCase();
   let outputFile = resolveFromEnv(`PLAYWRIGHT_${name}_OUTPUT_FILE`);
   if (!outputFile && options.outputFile)
@@ -620,4 +708,47 @@ export function resolveOutputFile(reporterName: string, options: {
   outputFile = path.resolve(outputDir, reportName);
 
   return { outputFile, outputDir };
+}
+
+type TestAttachment = TestResult['attachments'][number];
+
+type TestAttachmentGroup = TestAttachment & {
+  expected?: TestAttachment;
+  actual?: TestAttachment;
+  diff?: TestAttachment;
+  previous?: TestAttachment;
+};
+
+function groupAttachments(attachments: TestResult['attachments']): TestAttachmentGroup[] {
+  const result: TestAttachmentGroup[] = [];
+  const attachmentsByPrefix = new Map<string, TestAttachment>();
+  for (const attachment of attachments) {
+    if (!attachment.path) {
+      result.push(attachment);
+      continue;
+    }
+
+    const match = attachment.name.match(/^(.*)-(expected|actual|diff|previous)(\.[^.]+)?$/);
+    if (!match) {
+      result.push(attachment);
+      continue;
+    }
+
+    const [, name, category] = match;
+    let group: TestAttachmentGroup | undefined = attachmentsByPrefix.get(name);
+    if (!group) {
+      group = { ...attachment, name };
+      attachmentsByPrefix.set(name, group);
+      result.push(group);
+    }
+    if (category === 'expected')
+      group.expected = attachment;
+    else if (category === 'actual')
+      group.actual = attachment;
+    else if (category === 'diff')
+      group.diff = attachment;
+    else if (category === 'previous')
+      group.previous = attachment;
+  }
+  return result;
 }

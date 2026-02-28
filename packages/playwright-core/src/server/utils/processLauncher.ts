@@ -22,12 +22,10 @@ import * as readline from 'readline';
 import { removeFolders } from './fileUtils';
 import { isUnderTest } from '../../utils';
 
-export type Env = {[key: string]: string | number | boolean | undefined};
-
 export type LaunchProcessOptions = {
   command: string,
   args?: string[],
-  env?: Env,
+  env?: NodeJS.ProcessEnv,
   shell?: boolean,
 
   handleSIGINT?: boolean,
@@ -57,15 +55,15 @@ export async function gracefullyCloseAll() {
   await Promise.all(Array.from(gracefullyCloseSet).map(gracefullyClose => gracefullyClose().catch(e => {})));
 }
 
-export function gracefullyProcessExitDoNotHang(code: number) {
+export function gracefullyProcessExitDoNotHang(code: number, onExit?: () => Promise<void>) {
   // Force exit after 30 seconds.
+  const beforeExit = onExit ? () => onExit().catch(() => {}) : () => Promise.resolve();
   // eslint-disable-next-line no-restricted-properties
-  setTimeout(() => process.exit(code), 30000);
+  const callback = () => beforeExit().then(() => process.exit(code));
+
+  setTimeout(callback, 30000);
   // Meanwhile, try to gracefully close all browsers.
-  gracefullyCloseAll().then(() => {
-    // eslint-disable-next-line no-restricted-properties
-    process.exit(code);
-  });
+  gracefullyCloseAll().then(callback);
 }
 
 function exitHandler() {
@@ -138,7 +136,8 @@ export async function launchProcess(options: LaunchProcessOptions): Promise<Laun
     // process group, making it possible to kill child process tree with `.kill(-pid)` command.
     // @see https://nodejs.org/api/child_process.html#child_process_options_detached
     detached: process.platform !== 'win32',
-    env: (options.env as {[key: string]: string}),
+    windowsHide: true,
+    env: options.env,
     cwd: options.cwd,
     shell: options.shell,
     stdio,
@@ -164,7 +163,10 @@ export async function launchProcess(options: LaunchProcessOptions): Promise<Laun
     spawnedProcess.once('error', error => {
       failed(new Error('Failed to launch: ' + error));
     });
-    return cleanup().then(() => failedPromise).then(e => Promise.reject(e));
+    return failedPromise.then(async error => {
+      await cleanup();
+      throw error;
+    });
   }
   options.log(`<launched> pid=${spawnedProcess.pid}`);
 
@@ -232,7 +234,7 @@ export async function launchProcess(options: LaunchProcessOptions): Promise<Laun
       // Force kill the browser.
       try {
         if (process.platform === 'win32') {
-          const taskkillProcess = childProcess.spawnSync(`taskkill /pid ${spawnedProcess.pid} /T /F`, { shell: true });
+          const taskkillProcess = childProcess.spawnSync(`taskkill /pid ${spawnedProcess.pid} /T /F`, { shell: true, windowsHide: true });
           const [stdout, stderr] = [taskkillProcess.stdout.toString(), taskkillProcess.stderr.toString()];
           if (stdout)
             options.log(`[pid=${spawnedProcess.pid}] taskkill stdout: ${stdout}`);
@@ -271,8 +273,8 @@ export async function launchProcess(options: LaunchProcessOptions): Promise<Laun
   return { launchedProcess: spawnedProcess, gracefullyClose, kill: killAndWait };
 }
 
-export function envArrayToObject(env: { name: string, value: string }[]): Env {
-  const result: Env = {};
+export function envArrayToObject(env: { name: string, value: string }[]): NodeJS.ProcessEnv {
+  const result: NodeJS.ProcessEnv = {};
   for (const { name, value } of env)
     result[name] = value;
   return result;

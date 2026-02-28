@@ -70,13 +70,14 @@ export class Snapshotter {
       await this._context.safeNonStallingEvaluateInAllFrames(`window["${this._snapshotStreamer}"].reset()`, 'main');
   }
 
-  async stop() {
+  stop() {
     this._started = false;
   }
 
   async resetForReuse() {
     // Next time we start recording, we will call addInitScript again.
     if (this._initScript) {
+      eventsHelper.removeEventListeners(this._eventListeners);
       await this._context.removeInitScripts([this._initScript]);
       this._initScript = undefined;
     }
@@ -91,7 +92,7 @@ export class Snapshotter {
 
     const { javaScriptEnabled } = this._context._options;
     const initScriptSource = `(${frameSnapshotStreamer})("${this._snapshotStreamer}", ${javaScriptEnabled || javaScriptEnabled === undefined})`;
-    this._initScript = await this._context.addInitScript(initScriptSource);
+    this._initScript = await this._context.addInitScript(undefined, initScriptSource);
     await this._context.safeNonStallingEvaluateInAllFrames(initScriptSource, 'main');
   }
 
@@ -99,13 +100,26 @@ export class Snapshotter {
     eventsHelper.removeEventListeners(this._eventListeners);
   }
 
-  async captureSnapshot(page: Page, callId: string, snapshotName: string): Promise<void> {
+  private async _captureFrameSnapshot(frame: Frame): Promise<SnapshotData | void> {
     // Prepare expression synchronously.
-    const expression = `window["${this._snapshotStreamer}"].captureSnapshot(${JSON.stringify(snapshotName)})`;
+    const needsReset = !!(frame as any)[kNeedsResetSymbol];
+    (frame as any)[kNeedsResetSymbol] = false;
+    const expression = `window["${this._snapshotStreamer}"].captureSnapshot(${needsReset ? 'true' : 'false'})`;
+    try {
+      return await frame.nonStallingRawEvaluateInExistingMainContext(expression);
+    } catch (e) {
+      // If we fail to capture snapshot in this frame, we cannot rely on the snapshot index
+      // being the same here and in snapshotter injected script.
+      // Therefore, next time force a reset to avoid using node references.
+      (frame as any)[kNeedsResetSymbol] = true;
+      debugLogger.log('error', e);
+    }
+  }
 
+  async captureSnapshot(page: Page, callId: string, snapshotName: string): Promise<void> {
     // In each frame, in a non-stalling manner, capture the snapshots.
     const snapshots = page.frames().map(async frame => {
-      const data = await frame.nonStallingRawEvaluateInExistingMainContext(expression).catch(e => debugLogger.log('error', e)) as SnapshotData;
+      const data = await this._captureFrameSnapshot(frame);
       // Something went wrong -> bail out, our snapshots are best-efforty.
       if (!data || !this._started)
         return;
@@ -162,3 +176,5 @@ export class Snapshotter {
     }
   }
 }
+
+const kNeedsResetSymbol = Symbol('kNeedsReset');

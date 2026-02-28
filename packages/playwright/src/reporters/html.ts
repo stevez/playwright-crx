@@ -26,15 +26,14 @@ import { yazl } from 'playwright-core/lib/zipBundle';
 
 import { CommonReporterOptions, formatError, formatResultFailure, internalScreen } from './base';
 import { codeFrameColumns } from '../transform/babelBundle';
-import { resolveReporterOutputPath, stripAnsiEscapes, stepTitle } from '../util';
+import { resolveReporterOutputPath, stripAnsiEscapes } from '../util';
 
-import type { ReporterV2 } from './reporterV2';
+import type { ReportConfigureParams, ReportEndParams, ReporterV2 } from './reporterV2';
 import type { HtmlReporterOptions as HtmlReporterConfigOptions, Metadata, TestAnnotation } from '../../types/test';
 import type * as api from '../../types/testReporter';
-import type { HTMLReport, Location, Stats, TestAttachment, TestCase, TestCaseSummary, TestFile, TestFileSummary, TestResult, TestStep } from '@html-reporter/types';
+import type { HTMLReport, HTMLReportOptions, Location, Stats, TestAttachment, TestCase, TestCaseSummary, TestFile, TestFileSummary, TestResult, TestStep } from '@html-reporter/types';
 import type { ZipFile } from 'playwright-core/lib/zipBundle';
 import type { TransformCallback } from 'stream';
-import type { TestStepCategory } from '../util';
 
 type TestEntry = {
   testCase: TestCase;
@@ -48,6 +47,12 @@ const isHtmlReportOption = (type: string): type is HtmlReportOpenOption => {
   return htmlReportOptions.includes(type as HtmlReportOpenOption);
 };
 
+type MachineData = {
+  config: api.FullConfig;
+  result: api.FullResult;
+  reportPath: string;
+};
+
 class HtmlReporter implements ReporterV2 {
   private config!: api.FullConfig;
   private suite!: api.Suite;
@@ -57,9 +62,10 @@ class HtmlReporter implements ReporterV2 {
   private _open: string | undefined;
   private _port: number | undefined;
   private _host: string | undefined;
-  private _title: string | undefined;
   private _buildResult: { ok: boolean, singleTestId: string | undefined } | undefined;
   private _topLevelErrors: api.TestError[] = [];
+  private _reportConfigs = new Map<string, api.FullConfig>();
+  private _machines: MachineData[] = [];
 
   constructor(options: HtmlReporterConfigOptions & CommonReporterOptions) {
     this._options = options;
@@ -78,13 +84,12 @@ class HtmlReporter implements ReporterV2 {
   }
 
   onBegin(suite: api.Suite) {
-    const { outputFolder, open, attachmentsBaseURL, host, port, title } = this._resolveOptions();
+    const { outputFolder, open, attachmentsBaseURL, host, port } = this._resolveOptions();
     this._outputFolder = outputFolder;
     this._open = open;
     this._host = host;
     this._port = port;
     this._attachmentsBaseURL = attachmentsBaseURL;
-    this._title = title;
     const reportedWarnings = new Set<string>();
     for (const project of this.config.projects) {
       if (this._isSubdirectory(outputFolder, project.outputDir) || this._isSubdirectory(project.outputDir, outputFolder)) {
@@ -92,19 +97,19 @@ class HtmlReporter implements ReporterV2 {
         if (reportedWarnings.has(key))
           continue;
         reportedWarnings.add(key);
-        console.log(colors.red(`Configuration Error: HTML reporter output folder clashes with the tests output folder:`));
-        console.log(`
+        writeLine(colors.red(`Configuration Error: HTML reporter output folder clashes with the tests output folder:`));
+        writeLine(`
     html reporter folder: ${colors.bold(outputFolder)}
     test results folder: ${colors.bold(project.outputDir)}`);
-        console.log('');
-        console.log(`HTML reporter will clear its output directory prior to being generated, which will lead to the artifact loss.
+        writeLine('');
+        writeLine(`HTML reporter will clear its output directory prior to being generated, which will lead to the artifact loss.
 `);
       }
     }
     this.suite = suite;
   }
 
-  _resolveOptions(): { outputFolder: string, open: HtmlReportOpenOption, attachmentsBaseURL: string, host: string | undefined, port: number | undefined, title: string | undefined } {
+  _resolveOptions(): { outputFolder: string, open: HtmlReportOpenOption, attachmentsBaseURL: string, host: string | undefined, port: number | undefined } {
     const outputFolder = reportFolderFromEnv() ?? resolveReporterOutputPath('playwright-report', this._options.configDir, this._options.outputFolder);
     return {
       outputFolder,
@@ -112,7 +117,6 @@ class HtmlReporter implements ReporterV2 {
       attachmentsBaseURL: process.env.PLAYWRIGHT_HTML_ATTACHMENTS_BASE_URL || this._options.attachmentsBaseURL || 'data/',
       host: process.env.PLAYWRIGHT_HTML_HOST || this._options.host,
       port: process.env.PLAYWRIGHT_HTML_PORT ? +process.env.PLAYWRIGHT_HTML_PORT : this._options.port,
-      title: process.env.PLAYWRIGHT_HTML_TITLE || this._options.title,
     };
   }
 
@@ -125,28 +129,56 @@ class HtmlReporter implements ReporterV2 {
     this._topLevelErrors.push(error);
   }
 
+  onReportConfigure(params: ReportConfigureParams): void {
+    this._reportConfigs.set(params.reportPath, params.config);
+  }
+
+  onReportEnd(params: ReportEndParams): void {
+    const config = this._reportConfigs.get(params.reportPath);
+    if (config)
+      this._machines.push({ config, result: params.result, reportPath: params.reportPath });
+  }
+
   async onEnd(result: api.FullResult) {
     const projectSuites = this.suite.suites;
     await removeFolders([this._outputFolder]);
-    const builder = new HtmlBuilder(this.config, this._outputFolder, this._attachmentsBaseURL, this._title);
-    this._buildResult = await builder.build(this.config.metadata, projectSuites, result, this._topLevelErrors);
+    let noSnippets: boolean | undefined;
+    if (process.env.PLAYWRIGHT_HTML_NO_SNIPPETS === 'false' || process.env.PLAYWRIGHT_HTML_NO_SNIPPETS === '0')
+      noSnippets = false;
+    else if (process.env.PLAYWRIGHT_HTML_NO_SNIPPETS)
+      noSnippets = true;
+    noSnippets = noSnippets || this._options.noSnippets;
+
+    let noCopyPrompt: boolean | undefined;
+    if (process.env.PLAYWRIGHT_HTML_NO_COPY_PROMPT === 'false' || process.env.PLAYWRIGHT_HTML_NO_COPY_PROMPT === '0')
+      noCopyPrompt = false;
+    else if (process.env.PLAYWRIGHT_HTML_NO_COPY_PROMPT)
+      noCopyPrompt = true;
+    noCopyPrompt = noCopyPrompt || this._options.noCopyPrompt;
+
+    const builder = new HtmlBuilder(this.config, this._outputFolder, this._attachmentsBaseURL, {
+      title: process.env.PLAYWRIGHT_HTML_TITLE || this._options.title,
+      noSnippets,
+      noCopyPrompt,
+    });
+    this._buildResult = await builder.build(this.config.metadata, projectSuites, result, this._topLevelErrors, this._machines);
   }
 
   async onExit() {
     if (process.env.CI || !this._buildResult)
       return;
     const { ok, singleTestId } = this._buildResult;
-    const shouldOpen = !this._options._isTestServer && (this._open === 'always' || (!ok && this._open === 'on-failure'));
+    const shouldOpen = !!process.stdin.isTTY && (this._open === 'always' || (!ok && this._open === 'on-failure'));
     if (shouldOpen) {
       await showHTMLReport(this._outputFolder, this._host, this._port, singleTestId);
-    } else if (this._options._mode === 'test' && !this._options._isTestServer) {
+    } else if (this._options._mode === 'test' && !!process.stdin.isTTY) {
       const packageManagerCommand = getPackageManagerExecCommand();
       const relativeReportPath = this._outputFolder === standaloneDefaultFolder() ? '' : ' ' + path.relative(process.cwd(), this._outputFolder);
       const hostArg = this._host ? ` --host ${this._host}` : '';
       const portArg = this._port ? ` --port ${this._port}` : '';
-      console.log('');
-      console.log('To open last HTML report run:');
-      console.log(colors.cyan(`
+      writeLine('');
+      writeLine('To open last HTML report run:');
+      writeLine(colors.cyan(`
   ${packageManagerCommand} playwright show-report${relativeReportPath}${hostArg}${portArg}
 `));
     }
@@ -165,7 +197,7 @@ function getHtmlReportOptionProcessEnv(): HtmlReportOpenOption | undefined {
   if (!htmlOpenEnv)
     return undefined;
   if (!isHtmlReportOption(htmlOpenEnv)) {
-    console.log(colors.red(`Configuration Error: HTML reporter Invalid value for PLAYWRIGHT_HTML_OPEN: ${htmlOpenEnv}. Valid values are: ${htmlReportOptions.join(', ')}`));
+    writeLine(colors.red(`Configuration Error: HTML reporter Invalid value for PLAYWRIGHT_HTML_OPEN: ${htmlOpenEnv}. Valid values are: ${htmlReportOptions.join(', ')}`));
     return undefined;
   }
   return htmlOpenEnv;
@@ -180,15 +212,15 @@ export async function showHTMLReport(reportFolder: string | undefined, host: str
   try {
     assert(fs.statSync(folder).isDirectory());
   } catch (e) {
-    console.log(colors.red(`No report found at "${folder}"`));
+    writeLine(colors.red(`No report found at "${folder}"`));
     gracefullyProcessExitDoNotHang(1);
     return;
   }
   const server = startHtmlReportServer(folder);
   await server.start({ port, host, preferredPort: port ? undefined : 9323 });
   let url = server.urlPrefix('human-readable');
-  console.log('');
-  console.log(colors.cyan(`  Serving HTML report at ${url}. Press Ctrl+C to quit.`));
+  writeLine('');
+  writeLine(colors.cyan(`  Serving HTML report at ${url}. Press Ctrl+C to quit.`));
   if (testId)
     url += `#?testId=${testId}`;
   url = url.replace('0.0.0.0', 'localhost');
@@ -208,8 +240,6 @@ export function startHtmlReportServer(folder: string): HttpServer {
         return false;
       }
     }
-    if (relativePath.endsWith('/stall.js'))
-      return true;
     if (relativePath === '/')
       relativePath = '/index.html';
     const absolutePath = path.join(folder, ...relativePath.split('/'));
@@ -218,6 +248,8 @@ export function startHtmlReportServer(folder: string): HttpServer {
   return server;
 }
 
+type DataMap = Map<string, { testFile: TestFile, testFileSummary: TestFileSummary }>;
+
 class HtmlBuilder {
   private _config: api.FullConfig;
   private _reportFolder: string;
@@ -225,41 +257,28 @@ class HtmlBuilder {
   private _dataZipFile: ZipFile;
   private _hasTraces = false;
   private _attachmentsBaseURL: string;
-  private _title: string | undefined;
+  private _options: HTMLReportOptions;
 
-  constructor(config: api.FullConfig, outputDir: string, attachmentsBaseURL: string, title: string | undefined) {
+  constructor(config: api.FullConfig, outputDir: string, attachmentsBaseURL: string, options: HTMLReportOptions) {
     this._config = config;
     this._reportFolder = outputDir;
+    this._options = options;
     fs.mkdirSync(this._reportFolder, { recursive: true });
     this._dataZipFile = new yazl.ZipFile();
     this._attachmentsBaseURL = attachmentsBaseURL;
-    this._title = title;
   }
 
-  async build(metadata: Metadata, projectSuites: api.Suite[], result: api.FullResult, topLevelErrors: api.TestError[]): Promise<{ ok: boolean, singleTestId: string | undefined }> {
-    const data = new Map<string, { testFile: TestFile, testFileSummary: TestFileSummary }>();
+  async build(metadata: Metadata, projectSuites: api.Suite[], result: api.FullResult, topLevelErrors: api.TestError[], machines: MachineData[]): Promise<{ ok: boolean, singleTestId: string | undefined }> {
+    const data: DataMap = new Map();
     for (const projectSuite of projectSuites) {
+      const projectName = projectSuite.project()!.name;
       for (const fileSuite of projectSuite.suites) {
         const fileName = this._relativeLocation(fileSuite.location)!.file;
-        const fileId = calculateSha1(toPosixPath(fileName)).slice(0, 20);
-        let fileEntry = data.get(fileId);
-        if (!fileEntry) {
-          fileEntry = {
-            testFile: { fileId, fileName, tests: [] },
-            testFileSummary: { fileId, fileName, tests: [], stats: emptyStats() },
-          };
-          data.set(fileId, fileEntry);
-        }
-        const { testFile, testFileSummary } = fileEntry;
-        const testEntries: TestEntry[] = [];
-        this._processSuite(fileSuite, projectSuite.project()!.name, [], testEntries);
-        for (const test of testEntries) {
-          testFile.tests.push(test.testCase);
-          testFileSummary.tests.push(test.testCaseSummary);
-        }
+        this._createEntryForSuite(data, projectName, fileSuite, fileName, true);
       }
     }
-    createSnippets(this._stepsInFile);
+    if (!this._options.noSnippets)
+      createSnippets(this._stepsInFile);
 
     let ok = true;
     for (const [fileId, { testFile, testFileSummary }] of data) {
@@ -290,13 +309,19 @@ class HtmlBuilder {
     }
     const htmlReport: HTMLReport = {
       metadata,
-      title: this._title,
       startTime: result.startTime.getTime(),
       duration: result.duration,
       files: [...data.values()].map(e => e.testFileSummary),
       projectNames: projectSuites.map(r => r.project()!.name),
       stats: { ...[...data.values()].reduce((a, e) => addStats(a, e.testFileSummary.stats), emptyStats()) },
       errors: topLevelErrors.map(error => formatError(internalScreen, error).message),
+      options: this._options,
+      machines: machines.map(machine => ({
+        duration: machine.result.duration,
+        startTime: machine.result.startTime.getTime(),
+        tag: machine.config.tags,
+        shardIndex: machine.config.shard?.current,
+      })),
     };
     htmlReport.files.sort((f1, f2) => {
       const w1 = f1.stats.unexpected * 1000 + f1.stats.flaky;
@@ -310,30 +335,6 @@ class HtmlBuilder {
     if (htmlReport.stats.total === 1) {
       const testFile: TestFile  = data.values().next().value!.testFile;
       singleTestId = testFile.tests[0].testId;
-    }
-
-    if (process.env.PW_HMR === '1') {
-      const redirectFile = path.join(this._reportFolder, 'index.html');
-
-      await this._writeReportData(redirectFile);
-
-      async function redirect() {
-        const hmrURL = new URL('http://localhost:44224'); // dev server, port is harcoded in build.js
-        const popup = window.open(hmrURL);
-        const listener = (evt: MessageEvent) => {
-          if (evt.source === popup && evt.data === 'ready') {
-            popup!.postMessage((window as any).playwrightReportBase64, hmrURL.origin);
-            window.removeEventListener('message', listener);
-            // This is generally not allowed
-            window.close();
-          }
-        };
-        window.addEventListener('message', listener);
-      }
-
-      fs.appendFileSync(redirectFile, `<script>(${redirect.toString()})()</script>`);
-
-      return { ok, singleTestId };
     }
 
     // Copy app.
@@ -365,7 +366,7 @@ class HtmlBuilder {
   }
 
   private async _writeReportData(filePath: string) {
-    fs.appendFileSync(filePath, '<script>\nwindow.playwrightReportBase64 = "data:application/zip;base64,');
+    fs.appendFileSync(filePath, '<script id="playwrightReportBase64" type="application/zip">data:application/zip;base64,');
     await new Promise(f => {
       this._dataZipFile!.end(undefined, () => {
         this._dataZipFile!.outputStream
@@ -373,20 +374,40 @@ class HtmlBuilder {
             .pipe(fs.createWriteStream(filePath, { flags: 'a' })).on('close', f);
       });
     });
-    fs.appendFileSync(filePath, '";</script>');
+    fs.appendFileSync(filePath, '</script>');
   }
 
   private _addDataFile(fileName: string, data: any) {
     this._dataZipFile.addBuffer(Buffer.from(JSON.stringify(data)), fileName);
   }
 
-  private _processSuite(suite: api.Suite, projectName: string, path: string[], outTests: TestEntry[]) {
+  private _createEntryForSuite(data: DataMap, projectName: string, suite: api.Suite, fileName: string, deep: boolean) {
+    const fileId = calculateSha1(fileName).slice(0, 20);
+    let fileEntry = data.get(fileId);
+    if (!fileEntry) {
+      fileEntry = {
+        testFile: { fileId, fileName, tests: [] },
+        testFileSummary: { fileId, fileName, tests: [], stats: emptyStats() },
+      };
+      data.set(fileId, fileEntry);
+    }
+
+    const { testFile, testFileSummary } = fileEntry;
+    const testEntries: TestEntry[] = [];
+    this._processSuite(suite, projectName, [], deep, testEntries);
+    for (const test of testEntries) {
+      testFile.tests.push(test.testCase);
+      testFileSummary.tests.push(test.testCaseSummary);
+    }
+  }
+
+  private _processSuite(suite: api.Suite, projectName: string, path: string[], deep: boolean, outTests: TestEntry[]) {
     const newPath = [...path, suite.title];
     suite.entries().forEach(e => {
       if (e.type === 'test')
         outTests.push(this._createTestEntry(e, projectName, newPath));
-      else
-        this._processSuite(e, projectName, newPath, outTests);
+      else if (deep)
+        this._processSuite(e, projectName, newPath, deep, outTests);
     });
   }
 
@@ -422,7 +443,11 @@ class HtmlBuilder {
         path,
         ok: test.outcome() === 'expected' || test.outcome() === 'flaky',
         results: results.map(result => {
-          return { attachments: result.attachments.map(a => ({ name: a.name, contentType: a.contentType, path: a.path })) };
+          return {
+            attachments: result.attachments.map(a => ({ name: a.name, contentType: a.contentType, path: a.path })),
+            startTime: result.startTime,
+            workerIndex: result.workerIndex,
+          };
         }),
       },
     };
@@ -502,7 +527,15 @@ class HtmlBuilder {
 
   private _serializeAnnotations(annotations: api.TestCase['annotations']): TestAnnotation[] {
     // Annotations can be pushed directly, with a wrong type.
-    return annotations.map(a => ({ type: a.type, description: a.description === undefined ? undefined : String(a.description) }));
+    return annotations.map(a => ({
+      type: a.type,
+      description: a.description === undefined ? undefined : String(a.description),
+      location: a.location ? {
+        file: a.location.file,
+        line: a.location.line,
+        column: a.location.column,
+      } : undefined,
+    }));
   }
 
   private _createTestResult(test: api.TestCase, result: api.TestResult): TestResult {
@@ -523,13 +556,14 @@ class HtmlBuilder {
         ...result.attachments,
         ...result.stdout.map(m => stdioAttachment(m, 'stdout')),
         ...result.stderr.map(m => stdioAttachment(m, 'stderr'))]),
+      workerIndex: result.workerIndex,
     };
   }
 
   private _createTestStep(dedupedStep: DedupedStep, result: api.TestResult): TestStep {
     const { step, duration, count } = dedupedStep;
     const skipped = dedupedStep.step.annotations?.find(a => a.type === 'skip');
-    let title = stepTitle(step.category as TestStepCategory, step.title);
+    let title = step.title;
     if (skipped)
       title = `${title} (skipped${skipped.description ? ': ' + skipped.description : ''})`;
     const testStep: TestStep = {
@@ -703,6 +737,11 @@ function createErrorCodeframe(message: string, location: Location) {
         message: stripAnsiEscapes(message).split('\n')[0] || undefined,
       }
   );
+}
+
+function writeLine(line: string) {
+  // eslint-disable-next-line no-restricted-properties
+  process.stdout.write(line + '\n');
 }
 
 export default HtmlReporter;

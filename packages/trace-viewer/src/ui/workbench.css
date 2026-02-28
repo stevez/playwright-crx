@@ -16,7 +16,7 @@
 
 .workbench-run-status {
   height: 30px;
-  padding: 4px;
+  padding: 4px 4px 4px 5px;
   flex: none;
   display: flex;
   flex-direction: row;
@@ -36,5 +36,11 @@
   display: flex;
   flex: none;
   align-items: center;
+  color: var(--vscode-editorCodeLens-foreground);
+}
+
+.workbench-actions-hidden-count {
+  padding-right: 4px;
+  user-select: none;
   color: var(--vscode-editorCodeLens-foreground);
 }

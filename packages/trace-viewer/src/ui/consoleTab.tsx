@@ -17,7 +17,7 @@
 import type * as channels from '@protocol/channels';
 import * as React from 'react';
 import './consoleTab.css';
-import type * as modelUtil from './modelUtil';
+import type { TraceModel } from '@isomorphic/trace/traceModel';
 import { ListView } from '@web/components/listView';
 import type { Boundaries } from './geometry';
 import { clsx, msToString } from '@web/uiUtils';
@@ -26,7 +26,7 @@ import { PlaceholderPanel } from './placeholderPanel';
 
 export type ConsoleEntry = {
   browserMessage?: {
-    body: JSX.Element[];
+    body: React.JSX.Element[];
     bodyString: string;
     location: string;
   },
@@ -47,7 +47,7 @@ type ConsoleTabModel = {
 const ConsoleListView = ListView<ConsoleEntry>;
 
 
-export function useConsoleTabModel(model: modelUtil.MultiTraceModel | undefined, selectedTime: Boundaries | undefined): ConsoleTabModel {
+export function useConsoleTabModel(model: TraceModel | undefined, selectedTime: Boundaries | undefined): ConsoleTabModel {
   const { entries } = React.useMemo(() => {
     if (!model)
       return { entries: [] };
@@ -130,7 +130,7 @@ export const ConsoleTab: React.FunctionComponent<{
   boundaries: Boundaries,
   consoleModel: ConsoleTabModel,
   selectedTime?: Boundaries | undefined,
-  onEntryHovered?: (entry: ConsoleEntry | undefined) => void,
+  onEntryHovered?: (ordinal: number | undefined) => void,
   onAccepted?: (entry: ConsoleEntry) => void,
 }> = ({ consoleModel, boundaries, onEntryHovered, onAccepted }) => {
   if (!consoleModel.entries.length)
@@ -140,7 +140,7 @@ export const ConsoleTab: React.FunctionComponent<{
     <ConsoleListView
       name='console'
       onAccepted={onAccepted}
-      onHighlighted={onEntryHovered}
+      onHighlighted={entry => onEntryHovered?.(entry ? consoleModel.entries.indexOf(entry) : undefined)}
       items={consoleModel.entries}
       isError={entry => entry.isError}
       isWarning={entry => entry.isWarning}
@@ -150,9 +150,9 @@ export const ConsoleTab: React.FunctionComponent<{
         const errorSuffix = entry.isError ? 'status-error' : entry.isWarning ? 'status-warning' : 'status-none';
         const statusElement = entry.browserMessage || entry.browserError ? <span className={clsx('codicon', 'codicon-browser', errorSuffix)} title='Browser message'></span> : <span className={clsx('codicon', 'codicon-file', errorSuffix)} title='Runner message'></span>;
         let locationText: string | undefined;
-        let messageBody: JSX.Element[] | string | undefined;
+        let messageBody: React.JSX.Element[] | string | undefined;
         let messageInnerHTML: string | undefined;
-        let messageStack: JSX.Element[] | string | undefined;
+        let messageStack: React.JSX.Element[] | string | undefined;
 
         const { browserMessage, browserError, nodeMessage } = entry;
         if (browserMessage) {
@@ -187,7 +187,7 @@ export const ConsoleTab: React.FunctionComponent<{
   </div>;
 };
 
-function format(args: { preview: string, value: any }[]): JSX.Element[] {
+function format(args: { preview: string, value: any }[]): React.JSX.Element[] {
   if (args.length === 1)
     return formatAnsi(args[0].preview);
 
@@ -198,8 +198,8 @@ function format(args: { preview: string, value: any }[]): JSX.Element[] {
 
   const regex = /%([%sdifoOc])/g;
   let match;
-  const formatted: JSX.Element[] = [];
-  let tokens: JSX.Element[] = [];
+  const formatted: React.JSX.Element[] = [];
+  let tokens: React.JSX.Element[] = [];
   formatted.push(<span key={formatted.length + 1}>{tokens}</span>);
   let formatIndex = 0;
   while ((match = regex.exec(messageFormat)) !== null) {
@@ -236,7 +236,7 @@ function format(args: { preview: string, value: any }[]): JSX.Element[] {
   return formatted;
 }
 
-function formatAnsi(text: string): JSX.Element[] {
+function formatAnsi(text: string): React.JSX.Element[] {
   // eslint-disable-next-line react/jsx-key
   return [<span dangerouslySetInnerHTML={{ __html: ansi2html(text.trim()) }}></span>];
 }

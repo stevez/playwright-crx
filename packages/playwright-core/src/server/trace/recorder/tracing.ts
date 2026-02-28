@@ -24,6 +24,7 @@ import { assert } from '../../../utils/isomorphic/assert';
 import { monotonicTime } from '../../../utils/isomorphic/time';
 import { eventsHelper  } from '../../utils/eventsHelper';
 import { createGuid  } from '../../utils/crypto';
+import { getPlaywrightVersion } from '../../utils/userAgent';
 import { Artifact } from '../../artifact';
 import { BrowserContext } from '../../browserContext';
 import { Dispatcher } from '../../dispatchers/dispatcher';
@@ -32,6 +33,7 @@ import { SerializedFS, removeFolders  } from '../../utils/fileUtils';
 import { HarTracer } from '../../har/harTracer';
 import { SdkObject } from '../../instrumentation';
 import { Page } from '../../page';
+import { isAbortError } from '../../progress';
 
 import type { SnapshotterBlob, SnapshotterDelegate } from './snapshotter';
 import type { NameValue } from '../../../utils/isomorphic/types';
@@ -46,6 +48,7 @@ import type { StackFrame, TracingTracingStopChunkParams } from '@protocol/channe
 import type * as har from '@trace/har';
 import type { FrameSnapshot } from '@trace/snapshot';
 import type * as trace from '@trace/trace';
+import type { Progress } from '@protocol/progress';
 
 const version: trace.VERSION = 8;
 
@@ -105,11 +108,12 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
       type: 'context-options',
       origin: 'library',
       browserName: '',
+      playwrightVersion: getPlaywrightVersion(),
       options: {},
       platform: process.platform,
       wallTime: 0,
       monotonicTime: 0,
-      sdkLanguage: context.attribution.playwright.options.sdkLanguage,
+      sdkLanguage: this._sdkLanguage(),
       testIdAttributeName,
       contextId: context.guid,
     };
@@ -122,21 +126,26 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
     }
   }
 
-  async resetForReuse() {
-    // Discard previous chunk if any and ignore any errors there.
-    await this.stopChunk({ mode: 'discard' }).catch(() => {});
-    await this.stop();
-    await this._snapshotter?.resetForReuse();
+  private _sdkLanguage() {
+    return this._context instanceof BrowserContext ? this._context._browser.sdkLanguage() : this._context.attribution.playwright.options.sdkLanguage;
   }
 
-  async start(options: TracerOptions) {
+  async resetForReuse(progress: Progress) {
+    // Discard previous chunk if any and ignore any errors there.
+    await this.stopChunk(progress, { mode: 'discard' }).catch(() => {});
+    await this.stop(progress);
+    if (this._snapshotter)
+      await progress.race(this._snapshotter.resetForReuse());
+  }
+
+  start(options: TracerOptions) {
     if (this._isStopping)
       throw new Error('Cannot start tracing while stopping');
     if (this._state)
       throw new Error('Tracing has been already started');
 
     // Re-write for testing.
-    this._contextCreatedEvent.sdkLanguage = this._context.attribution.playwright.options.sdkLanguage;
+    this._contextCreatedEvent.sdkLanguage = this._sdkLanguage();
 
     // TODO: passing the same name for two contexts makes them write into a single file
     // and conflict.
@@ -166,9 +175,9 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
       this._harTracer.start({ omitScripts: !options.live });
   }
 
-  async startChunk(options: { name?: string, title?: string } = {}): Promise<{ traceName: string }> {
+  async startChunk(progress: Progress, options: { name?: string, title?: string } = {}): Promise<{ traceName: string }> {
     if (this._state && this._state.recording)
-      await this.stopChunk({ mode: 'discard' });
+      await this.stopChunk(progress, { mode: 'discard' });
 
     if (!this._state)
       throw new Error('Must start tracing before starting a new chunk');
@@ -214,7 +223,7 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
     return this._state?.groupStack.length ? this._state.groupStack[this._state.groupStack.length - 1] : undefined;
   }
 
-  async group(name: string, location: { file: string, line?: number, column?: number } | undefined, metadata: CallMetadata): Promise<void> {
+  group(name: string, location: { file: string, line?: number, column?: number } | undefined, metadata: CallMetadata) {
     if (!this._state)
       return;
     const stackFrames: StackFrame[] = [];
@@ -272,7 +281,7 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
     if (!(this._context instanceof BrowserContext))
       return;
     for (const page of this._context.pages())
-      page.setScreencastOptions(null);
+      page.screencast.setOptions(null);
   }
 
   private _allocateNewTraceFile(state: RecordingState) {
@@ -292,7 +301,7 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
     state.networkFile = newNetworkFile;
   }
 
-  async stop() {
+  async stop(progress: Progress | undefined) {
     if (!this._state)
       return;
     if (this._isStopping)
@@ -302,8 +311,10 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
     this._closeAllGroups();
     this._harTracer.stop();
     this.flushHarEntries();
-    await this._fs.syncAndGetError();
-    this._state = undefined;
+    const promise = progress ? progress.race(this._fs.syncAndGetError()) : this._fs.syncAndGetError();
+    await promise.finally(() => {
+      this._state = undefined;
+    });
   }
 
   async deleteTmpTracesDir() {
@@ -333,7 +344,7 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
       this.groupEnd();
   }
 
-  async stopChunk(params: TracingTracingStopChunkParams): Promise<{ artifact?: Artifact, entries?: NameValue[] }> {
+  async stopChunk(progress: Progress | undefined, params: TracingTracingStopChunkParams): Promise<{ artifact?: Artifact, entries?: NameValue[] }> {
     if (this._isStopping)
       throw new Error(`Tracing is already stopping`);
     this._isStopping = true;
@@ -353,7 +364,7 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
       this._stopScreencast();
 
     if (this._state.options.snapshots)
-      await this._snapshotter?.stop();
+      this._snapshotter?.stop();
 
     this.flushHarEntries();
 
@@ -387,7 +398,8 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
       this._fs.zip(entries, zipFileName);
 
     // Make sure all file operations complete.
-    const error = await this._fs.syncAndGetError();
+    const promise = progress ? progress.race(this._fs.syncAndGetError()) : this._fs.syncAndGetError();
+    const error = await promise.catch(e => e);
 
     this._isStopping = false;
     if (this._state)
@@ -398,7 +410,7 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
     if (error) {
       // This check is here because closing the browser removes the tracesDir and tracing
       // cannot access removed files. Clients are ready for the missing artifact.
-      if (this._context instanceof BrowserContext && !this._context._browser.isConnected())
+      if (!isAbortError(error) && this._context instanceof BrowserContext && !this._context._browser.isConnected())
         return {};
       throw error;
     }
@@ -411,45 +423,47 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
     return { artifact };
   }
 
-  async _captureSnapshot(snapshotName: string, sdkObject: SdkObject, metadata: CallMetadata): Promise<void> {
-    if (!this._snapshotter)
+  private async _captureSnapshot(snapshotName: string | undefined, sdkObject: SdkObject, metadata: CallMetadata): Promise<void> {
+    if (!snapshotName || !sdkObject.attribution.page)
       return;
-    if (!sdkObject.attribution.page)
-      return;
-    if (!this._snapshotter.started())
-      return;
-    if (!shouldCaptureSnapshot(metadata))
-      return;
-    await this._snapshotter.captureSnapshot(sdkObject.attribution.page, metadata.id, snapshotName).catch(() => {});
+    await this._snapshotter?.captureSnapshot(sdkObject.attribution.page, metadata.id, snapshotName).catch(() => {});
   }
 
-  onBeforeCall(sdkObject: SdkObject, metadata: CallMetadata) {
-    // IMPORTANT: no awaits before this._appendTraceEvent in this method.
-    const event = createBeforeActionTraceEvent(metadata, this._currentGroupId());
+  private _shouldCaptureSnapshot(sdkObject: SdkObject, metadata: CallMetadata) {
+    return !!this._snapshotter?.started() && shouldCaptureSnapshot(metadata) && !!sdkObject.attribution.page;
+  }
+
+  onBeforeCall(sdkObject: SdkObject, metadata: CallMetadata, parentId?: string) {
+    // IMPORTANT: no awaits in this method, this._appendTraceEvent must be called synchronously.
+    const event = createBeforeActionTraceEvent(metadata, parentId ?? this._currentGroupId());
     if (!event)
       return Promise.resolve();
-    sdkObject.attribution.page?.temporarilyDisableTracingScreencastThrottling();
-    event.beforeSnapshot = `before@${metadata.id}`;
+    sdkObject.attribution.page?.screencast.temporarilyDisableThrottling();
+    if (this._shouldCaptureSnapshot(sdkObject, metadata))
+      event.beforeSnapshot = `before@${metadata.id}`;
     this._state?.callIds.add(metadata.id);
     this._appendTraceEvent(event);
     return this._captureSnapshot(event.beforeSnapshot, sdkObject, metadata);
   }
 
   onBeforeInputAction(sdkObject: SdkObject, metadata: CallMetadata) {
+    // IMPORTANT: no awaits in this method, this._appendTraceEvent must be called synchronously.
     if (!this._state?.callIds.has(metadata.id))
       return Promise.resolve();
-    // IMPORTANT: no awaits before this._appendTraceEvent in this method.
     const event = createInputActionTraceEvent(metadata);
     if (!event)
       return Promise.resolve();
-    sdkObject.attribution.page?.temporarilyDisableTracingScreencastThrottling();
-    event.inputSnapshot = `input@${metadata.id}`;
+    sdkObject.attribution.page?.screencast.temporarilyDisableThrottling();
+    if (this._shouldCaptureSnapshot(sdkObject, metadata))
+      event.inputSnapshot = `input@${metadata.id}`;
     this._appendTraceEvent(event);
     return this._captureSnapshot(event.inputSnapshot, sdkObject, metadata);
   }
 
   onCallLog(sdkObject: SdkObject, metadata: CallMetadata, logName: string, message: string) {
-    if (metadata.isServerSide || metadata.internal)
+    if (!this._state?.callIds.has(metadata.id))
+      return;
+    if (metadata.internal)
       return;
     if (logName !== 'api')
       return;
@@ -458,15 +472,17 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
       this._appendTraceEvent(event);
   }
 
-  async onAfterCall(sdkObject: SdkObject, metadata: CallMetadata) {
+  onAfterCall(sdkObject: SdkObject, metadata: CallMetadata) {
+    // IMPORTANT: no awaits in this method, this._appendTraceEvent must be called synchronously.
     if (!this._state?.callIds.has(metadata.id))
-      return;
+      return Promise.resolve();
     this._state?.callIds.delete(metadata.id);
     const event = createAfterActionTraceEvent(metadata);
     if (!event)
-      return;
-    sdkObject.attribution.page?.temporarilyDisableTracingScreencastThrottling();
-    event.afterSnapshot = `after@${metadata.id}`;
+      return Promise.resolve();
+    sdkObject.attribution.page?.screencast.temporarilyDisableThrottling();
+    if (this._shouldCaptureSnapshot(sdkObject, metadata))
+      event.afterSnapshot = `after@${metadata.id}`;
     this._appendTraceEvent(event);
     return this._captureSnapshot(event.afterSnapshot, sdkObject, metadata);
   }
@@ -576,7 +592,7 @@ export class Tracing extends SdkObject implements InstrumentationListener, Snaps
   }
 
   private _startScreencastInPage(page: Page) {
-    page.setScreencastOptions(kScreencastOptions);
+    page.screencast.setOptions(kScreencastOptions);
     const prefix = page.guid;
     this._screencastListeners.push(
         eventsHelper.addEventListener(page, Page.Events.ScreencastFrame, params => {
@@ -638,7 +654,7 @@ function visitTraceEvent(object: any, sha1s: Set<string>): any {
   return object;
 }
 
-export function shouldCaptureSnapshot(metadata: CallMetadata): boolean {
+function shouldCaptureSnapshot(metadata: CallMetadata): boolean {
   const metainfo = methodMetainfo.get(metadata.type + '.' + metadata.method);
   return !!metainfo?.snapshot;
 }

@@ -20,12 +20,23 @@ import { ReadStream } from 'fs';
 import { Protocol } from './protocol';
 import { Serializable, EvaluationArgument, PageFunction, PageFunctionOn, SmartHandle, ElementHandleForTag, BindingSource } from './structs';
 
+// Use the global URLPattern type if available (Node.js 22+, modern browsers),
+// otherwise fall back to `never` so it disappears from union types.
+type URLPattern = typeof globalThis extends { URLPattern: infer T } ? T : never;
+
 type PageWaitForSelectorOptionsNotHidden = PageWaitForSelectorOptions & {
   state?: 'visible'|'attached';
 };
 type ElementHandleWaitForSelectorOptionsNotHidden = ElementHandleWaitForSelectorOptions & {
   state?: 'visible'|'attached';
 };
+
+// @ts-ignore this will be any if zod is not installed
+import { ZodTypeAny, z } from 'zod';
+// @ts-ignore this will be any if zod is not installed
+import * as z3 from 'zod/v3';
+type ZodSchema = ZodTypeAny | z3.ZodTypeAny;
+type InferZodSchema<T extends ZodSchema> = T extends z3.ZodTypeAny ? z3.infer<T> : T extends ZodTypeAny ? z.infer<T> : never;
 
 /**
  * Page provides methods to interact with a single tab in a [Browser](https://playwright.dev/docs/api/class-browser),
@@ -2089,6 +2100,89 @@ export interface Page {
   }): Promise<ElementHandle>;
 
   /**
+   * Initialize page agent with the llm provider and cache.
+   * @param options
+   */
+  agent(options?: {
+    cache?: {
+      /**
+       * Cache file to use/generate code for performed actions into. Cache is not used if not specified (default).
+       */
+      cacheFile?: string;
+
+      /**
+       * When specified, generated entries are written into the `cacheOutFile` instead of updating the `cacheFile`.
+       */
+      cacheOutFile?: string;
+    };
+
+    expect?: {
+      /**
+       * Default timeout for expect calls in milliseconds, defaults to 5000ms.
+       */
+      timeout?: number;
+    };
+
+    /**
+     * Limits to use for the agentic loop.
+     */
+    limits?: {
+      /**
+       * Maximum number of tokens to consume. The agentic loop will stop after input + output tokens exceed this value.
+       * Defaults to unlimited.
+       */
+      maxTokens?: number;
+
+      /**
+       * Maximum number of agentic actions to generate, defaults to 10.
+       */
+      maxActions?: number;
+
+      /**
+       * Maximum number retries per action, defaults to 3.
+       */
+      maxActionRetries?: number;
+    };
+
+    provider?: {
+      /**
+       * API to use.
+       */
+      api: "openai"|"openai-compatible"|"anthropic"|"google";
+
+      /**
+       * Endpoint to use if different from default.
+       */
+      apiEndpoint?: string;
+
+      /**
+       * API key for the LLM provider.
+       */
+      apiKey: string;
+
+      /**
+       * Amount of time to wait for the provider to respond to each request.
+       */
+      apiTimeout?: number;
+
+      /**
+       * Model identifier within the provider. Required in non-cache mode.
+       */
+      model: string;
+    };
+
+    /**
+     * Secrets to hide from the LLM.
+     */
+    secrets?: { [key: string]: string; };
+
+    /**
+     * System prompt for the agent's loop.
+     */
+    systemPrompt?: string;
+  }): Promise<PageAgent>;
+
+  /**
    * Brings page to front (activates tab).
    */
   bringToFront(): Promise<void>;
@@ -2161,6 +2255,20 @@ export interface Page {
      */
     trial?: boolean;
   }): Promise<void>;
+
+  /**
+   * Clears all stored console messages from this page. Subsequent calls to
+   * [page.consoleMessages()](https://playwright.dev/docs/api/class-page#page-console-messages) will only return
+   * messages logged after the clear.
+   */
+  clearConsoleMessages(): Promise<void>;
+
+  /**
+   * Clears all stored page errors from this page. Subsequent calls to
+   * [page.pageErrors()](https://playwright.dev/docs/api/class-page#page-page-errors) will only return errors thrown
+   * after the clear.
+   */
+  clearPageErrors(): Promise<void>;
 
   /**
    * **NOTE** Use locator-based [locator.click([options])](https://playwright.dev/docs/api/class-locator#locator-click) instead.
@@ -2283,6 +2391,12 @@ export interface Page {
      */
     runBeforeUnload?: boolean;
   }): Promise<void>;
+
+  /**
+   * Returns up to (currently) 200 last console messages from this page. See
+   * [page.on('console')](https://playwright.dev/docs/api/class-page#page-event-console) for more details.
+   */
+  consoleMessages(): Promise<Array<ConsoleMessage>>;
 
   /**
    * Gets the full HTML contents of the page, including the doctype.
@@ -2489,6 +2603,12 @@ export interface Page {
 
       y: number;
     };
+
+    /**
+     * Defaults to 1. Sends `n` interpolated `mousemove` events to represent travel between the `mousedown` and `mouseup`
+     * of the drag. When set to 1, emits a single `mousemove` event at the destination location.
+     */
+    steps?: number;
 
     /**
      * When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
@@ -2738,9 +2858,9 @@ export interface Page {
     name?: string;
 
     /**
-     * A glob pattern, regex pattern or predicate receiving frame's `url` as a [URL] object. Optional.
+     * A glob pattern, regex pattern, URL pattern, or predicate receiving frame's `url` as a [URL] object. Optional.
      */
-    url?: string|RegExp|((url: URL) => boolean);
+    url?: string|RegExp|URLPattern|((url: URL) => boolean);
   }): null|Frame;
 
   /**
@@ -2897,7 +3017,7 @@ export interface Page {
    * <button>Submit</button>
    * ```
    *
-   * You can locate each element by it's implicit role:
+   * You can locate each element by its implicit role:
    *
    * ```js
    * await expect(page.getByRole('heading', { name: 'Sign up' })).toBeVisible();
@@ -3002,7 +3122,7 @@ export interface Page {
    * <button data-testid="directions">Itinéraire</button>
    * ```
    *
-   * You can locate the element by it's test id:
+   * You can locate the element by its test id:
    *
    * ```js
    * await page.getByTestId('directions').click();
@@ -3599,8 +3719,14 @@ export interface Page {
   opener(): Promise<null|Page>;
 
   /**
-   * Pauses script execution. Playwright will stop executing the script and wait for the user to either press 'Resume'
-   * button in the page overlay or to call `playwright.resume()` in the DevTools console.
+   * Returns up to (currently) 200 last page errors from this page. See
+   * [page.on('pageerror')](https://playwright.dev/docs/api/class-page#page-event-page-error) for more details.
+   */
+  pageErrors(): Promise<Array<Error>>;
+
+  /**
+   * Pauses script execution. Playwright will stop executing the script and wait for the user to either press the
+   * 'Resume' button in the page overlay or to call `playwright.resume()` in the DevTools console.
    *
    * User can inspect selectors or perform manual steps while paused. Resume will continue running the original script
    * from the place it was paused.
@@ -3915,6 +4041,21 @@ export interface Page {
   requestGC(): Promise<void>;
 
   /**
+   * Returns up to (currently) 100 last network request from this page. See
+   * [page.on('request')](https://playwright.dev/docs/api/class-page#page-event-request) for more details.
+   *
+   * Returned requests should be accessed immediately, otherwise they might be collected to prevent unbounded memory
+   * growth as new requests come in. Once collected, retrieving most information about the request is impossible.
+   *
+   * Note that requests reported through the
+   * [page.on('request')](https://playwright.dev/docs/api/class-page#page-event-request) request are not collected, so
+   * there is a trade off between efficient memory usage with
+   * [page.requests()](https://playwright.dev/docs/api/class-page#page-requests) and the amount of available information
+   * reported through [page.on('request')](https://playwright.dev/docs/api/class-page#page-event-request).
+   */
+  requests(): Promise<Array<Request>>;
+
+  /**
    * Routing provides the capability to modify network requests that are made by a page.
    *
    * Once routing is enabled, every request matching the url pattern will stall unless it's continued, fulfilled or
@@ -3965,6 +4106,8 @@ export interface Page {
    * });
    * ```
    *
+   * If a request matches multiple registered routes, the most recently registered route takes precedence.
+   *
    * Page routes take precedence over browser context routes (set up with
    * [browserContext.route(url, handler[, options])](https://playwright.dev/docs/api/class-browsercontext#browser-context-route))
    * when request matches both handlers.
@@ -3974,14 +4117,14 @@ export interface Page {
    *
    * **NOTE** Enabling routing disables http cache.
    *
-   * @param url A glob pattern, regex pattern, or predicate that receives a [URL] to match during routing. If
+   * @param url A glob pattern, regex pattern, URL pattern, or predicate that receives a [URL] to match during routing. If
    * [`baseURL`](https://playwright.dev/docs/api/class-browser#browser-new-context-option-base-url) is set in the
    * context options and the provided URL is a string that does not start with `*`, it is resolved using the
    * [`new URL()`](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) constructor.
    * @param handler handler function to route the request.
    * @param options
    */
-  route(url: string|RegExp|((url: URL) => boolean), handler: ((route: Route, request: Request) => Promise<any>|any), options?: {
+  route(url: string|RegExp|URLPattern|((url: URL) => boolean), handler: ((route: Route, request: Request) => Promise<any>|any), options?: {
     /**
      * How often a route should be used. By default it will be used every time.
      */
@@ -4062,7 +4205,7 @@ export interface Page {
    * [`baseURL`](https://playwright.dev/docs/api/class-browser#browser-new-context-option-base-url) context option.
    * @param handler Handler function to route the WebSocket.
    */
-  routeWebSocket(url: string|RegExp|((url: URL) => boolean), handler: ((websocketroute: WebSocketRoute) => Promise<any>|any)): Promise<void>;
+  routeWebSocket(url: string|RegExp|URLPattern|((url: URL) => boolean), handler: ((websocketroute: WebSocketRoute) => Promise<any>|any)): Promise<void>;
 
   /**
    * Returns the buffer with the captured screenshot.
@@ -4653,10 +4796,10 @@ export interface Page {
    * [page.route(url, handler[, options])](https://playwright.dev/docs/api/class-page#page-route). When
    * [`handler`](https://playwright.dev/docs/api/class-page#page-unroute-option-handler) is not specified, removes all
    * routes for the [`url`](https://playwright.dev/docs/api/class-page#page-unroute-option-url).
-   * @param url A glob pattern, regex pattern or predicate receiving [URL] to match while routing.
+   * @param url A glob pattern, regex pattern, URL pattern, or predicate receiving [URL] to match while routing.
    * @param handler Optional handler function to route the request.
    */
-  unroute(url: string|RegExp|((url: URL) => boolean), handler?: ((route: Route, request: Request) => Promise<any>|any)): Promise<void>;
+  unroute(url: string|RegExp|URLPattern|((url: URL) => boolean), handler?: ((route: Route, request: Request) => Promise<any>|any)): Promise<void>;
 
   /**
    * Removes all routes created with
@@ -4679,9 +4822,12 @@ export interface Page {
   url(): string;
 
   /**
-   * Video object associated with this page.
+   * Video object associated with this page. Can be used to control video recording with
+   * [video.start([options])](https://playwright.dev/docs/api/class-video#video-start) and
+   * [video.stop([options])](https://playwright.dev/docs/api/class-video#video-stop), or to access the video file when
+   * using the `recordVideo` context option.
    */
-  video(): null|Video;
+  video(): Video;
 
   viewportSize(): null|{
     /**
@@ -4985,11 +5131,11 @@ export interface Page {
     timeout?: number;
 
     /**
-     * A glob pattern, regex pattern or predicate receiving [URL] to match while waiting for the navigation. Note that if
-     * the parameter is a string without wildcard characters, the method will wait for navigation to URL that is exactly
-     * equal to the string.
+     * A glob pattern, regex pattern, URL pattern, or predicate receiving [URL] to match while waiting for the navigation.
+     * Note that if the parameter is a string without wildcard characters, the method will wait for navigation to URL that
+     * is exactly equal to the string.
      */
-    url?: string|RegExp|((url: URL) => boolean);
+    url?: string|RegExp|URLPattern|((url: URL) => boolean);
 
     /**
      * When to consider operation succeeded, defaults to `load`. Events can be either:
@@ -5103,12 +5249,12 @@ export interface Page {
    * await page.waitForURL('**\/target.html');
    * ```
    *
-   * @param url A glob pattern, regex pattern or predicate receiving [URL] to match while waiting for the navigation. Note that if
-   * the parameter is a string without wildcard characters, the method will wait for navigation to URL that is exactly
-   * equal to the string.
+   * @param url A glob pattern, regex pattern, URL pattern, or predicate receiving [URL] to match while waiting for the navigation.
+   * Note that if the parameter is a string without wildcard characters, the method will wait for navigation to URL that
+   * is exactly equal to the string.
    * @param options
    */
-  waitForURL(url: string|RegExp|((url: URL) => boolean), options?: {
+  waitForURL(url: string|RegExp|URLPattern|((url: URL) => boolean), options?: {
     /**
      * Maximum operation time in milliseconds. Defaults to `0` - no timeout. The default value can be changed via
      * `navigationTimeout` option in the config, or by using the
@@ -5141,13 +5287,6 @@ export interface Page {
   workers(): Array<Worker>;
 
   /**
-   * @deprecated This property is discouraged. Please use other libraries such as [Axe](https://www.deque.com/axe/) if you need to
-   * test page accessibility. See our Node.js [guide](https://playwright.dev/docs/accessibility-testing) for integration
-   * with Axe.
-   */
-  accessibility: Accessibility;
-
-  /**
    * Playwright has ability to mock clock and passage of time.
    */
   clock: Clock;
@@ -5174,6 +5313,243 @@ export interface Page {
   request: APIRequestContext;
 
   touchscreen: Touchscreen;
+
+  [Symbol.asyncDispose](): Promise<void>;
+}
+
+/**
+ *
+ */
+export interface PageAgent {
+  /**
+   * Extract information from the page using the agentic loop, return it in a given Zod format.
+   *
+   * **Usage**
+   *
+   * ```js
+   * await agent.extract('List of items in the cart', z.object({
+   *   title: z.string().describe('Item title to extract'),
+   *   price: z.string().describe('Item price to extract'),
+   * }).array());
+   * ```
+   *
+   * @param query Task to perform using agentic loop.
+   * @param schema
+   * @param options
+   */
+  extract<Schema extends ZodSchema>(query: string, schema: Schema): Promise<{ result: InferZodSchema<Schema>, usage: { turns: number, inputTokens: number, outputTokens: number } }>;
+  /**
+   * Emitted when the agent makes a turn.
+   */
+  on(event: 'turn', listener: (data: {
+    role: string;
+
+    message: string;
+
+    usage?: {
+      inputTokens: number;
+
+      outputTokens: number;
+    };
+  }) => any): this;
+
+  /**
+   * Adds an event listener that will be automatically removed after it is triggered once. See `addListener` for more information about this event.
+   */
+  once(event: 'turn', listener: (data: {
+    role: string;
+
+    message: string;
+
+    usage?: {
+      inputTokens: number;
+
+      outputTokens: number;
+    };
+  }) => any): this;
+
+  /**
+   * Emitted when the agent makes a turn.
+   */
+  addListener(event: 'turn', listener: (data: {
+    role: string;
+
+    message: string;
+
+    usage?: {
+      inputTokens: number;
+
+      outputTokens: number;
+    };
+  }) => any): this;
+
+  /**
+   * Removes an event listener added by `on` or `addListener`.
+   */
+  removeListener(event: 'turn', listener: (data: {
+    role: string;
+
+    message: string;
+
+    usage?: {
+      inputTokens: number;
+
+      outputTokens: number;
+    };
+  }) => any): this;
+
+  /**
+   * Removes an event listener added by `on` or `addListener`.
+   */
+  off(event: 'turn', listener: (data: {
+    role: string;
+
+    message: string;
+
+    usage?: {
+      inputTokens: number;
+
+      outputTokens: number;
+    };
+  }) => any): this;
+
+  /**
+   * Emitted when the agent makes a turn.
+   */
+  prependListener(event: 'turn', listener: (data: {
+    role: string;
+
+    message: string;
+
+    usage?: {
+      inputTokens: number;
+
+      outputTokens: number;
+    };
+  }) => any): this;
+
+  /**
+   * Dispose this agent.
+   */
+  dispose(): Promise<void>;
+
+  /**
+   * Expect certain condition to be met.
+   *
+   * **Usage**
+   *
+   * ```js
+   * await agent.expect('"0 items" to be reported');
+   * ```
+   *
+   * @param expectation Expectation to assert.
+   * @param options
+   */
+  expect(expectation: string, options?: {
+    /**
+     * All the agentic actions are converted to the Playwright calls and are cached. By default, they are cached globally
+     * with the `task` as a key. This option allows controlling the cache key explicitly.
+     */
+    cacheKey?: string;
+
+    /**
+     * Maximum number of retries when generating each action, defaults to context-wide value specified in `agent`
+     * property.
+     */
+    maxActionRetries?: number;
+
+    /**
+     * Maximum number of agentic actions to generate, defaults to context-wide value specified in `agent` property.
+     */
+    maxActions?: number;
+
+    /**
+     * Maximum number of tokens to consume. The agentic loop will stop after input + output tokens exceed this value.
+     * Defaults to context-wide value specified in `agent` property.
+     */
+    maxTokens?: number;
+
+    /**
+     * Expect timeout in milliseconds. Defaults to `5000`. The default value can be changed via `expect.timeout` option in
+     * the config, or by specifying the `expect` property of the
+     * [`expect`](https://playwright.dev/docs/api/class-page#page-agent-option-expect) option. Pass `0` to disable
+     * timeout.
+     */
+    timeout?: number;
+  }): Promise<void>;
+
+  /**
+   * Perform action using agentic loop.
+   *
+   * **Usage**
+   *
+   * ```js
+   * await agent.perform('Click submit button');
+   * ```
+   *
+   * @param task Task to perform using agentic loop.
+   * @param options
+   */
+  perform(task: string, options?: {
+    /**
+     * All the agentic actions are converted to the Playwright calls and are cached. By default, they are cached globally
+     * with the `task` as a key. This option allows controlling the cache key explicitly.
+     */
+    cacheKey?: string;
+
+    /**
+     * Maximum number of retries when generating each action, defaults to context-wide value specified in `agent`
+     * property.
+     */
+    maxActionRetries?: number;
+
+    /**
+     * Maximum number of agentic actions to generate, defaults to context-wide value specified in `agent` property.
+     */
+    maxActions?: number;
+
+    /**
+     * Maximum number of tokens to consume. The agentic loop will stop after input + output tokens exceed this value.
+     * Defaults to context-wide value specified in `agent` property.
+     */
+    maxTokens?: number;
+
+    /**
+     * Perform timeout in milliseconds. Defaults to `5000`. The default value can be changed via `actionTimeout` option in
+     * the config, or by using the
+     * [browserContext.setDefaultTimeout(timeout)](https://playwright.dev/docs/api/class-browsercontext#browser-context-set-default-timeout)
+     * or [page.setDefaultTimeout(timeout)](https://playwright.dev/docs/api/class-page#page-set-default-timeout) methods.
+     * Pass `0` to disable timeout.
+     */
+    timeout?: number;
+  }): Promise<{
+    usage: {
+      turns: number;
+
+      inputTokens: number;
+
+      outputTokens: number;
+    };
+  }>;
+
+  /**
+   * Returns the current token usage for this agent.
+   *
+   * **Usage**
+   *
+   * ```js
+   * const usage = await agent.usage();
+   * console.log(`Tokens used: ${usage.inputTokens} in, ${usage.outputTokens} out`);
+   * ```
+   *
+   */
+  usage(): Promise<{
+    turns: number;
+
+    inputTokens: number;
+
+    outputTokens: number;
+  }>;
 
   [Symbol.asyncDispose](): Promise<void>;
 }
@@ -6381,6 +6757,12 @@ export interface Frame {
     };
 
     /**
+     * Defaults to 1. Sends `n` interpolated `mousemove` events to represent travel between the `mousedown` and `mouseup`
+     * of the drag. When set to 1, emits a single `mousemove` event at the destination location.
+     */
+    steps?: number;
+
+    /**
      * When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
      * element, the call throws an exception.
      */
@@ -6656,7 +7038,7 @@ export interface Frame {
    * <button>Submit</button>
    * ```
    *
-   * You can locate each element by it's implicit role:
+   * You can locate each element by its implicit role:
    *
    * ```js
    * await expect(page.getByRole('heading', { name: 'Sign up' })).toBeVisible();
@@ -6761,7 +7143,7 @@ export interface Frame {
    * <button data-testid="directions">Itinéraire</button>
    * ```
    *
-   * You can locate the element by it's test id:
+   * You can locate the element by its test id:
    *
    * ```js
    * await page.getByTestId('directions').click();
@@ -7932,11 +8314,11 @@ export interface Frame {
     timeout?: number;
 
     /**
-     * A glob pattern, regex pattern or predicate receiving [URL] to match while waiting for the navigation. Note that if
-     * the parameter is a string without wildcard characters, the method will wait for navigation to URL that is exactly
-     * equal to the string.
+     * A glob pattern, regex pattern, URL pattern, or predicate receiving [URL] to match while waiting for the navigation.
+     * Note that if the parameter is a string without wildcard characters, the method will wait for navigation to URL that
+     * is exactly equal to the string.
      */
-    url?: string|RegExp|((url: URL) => boolean);
+    url?: string|RegExp|URLPattern|((url: URL) => boolean);
 
     /**
      * When to consider operation succeeded, defaults to `load`. Events can be either:
@@ -7973,12 +8355,12 @@ export interface Frame {
    * await frame.waitForURL('**\/target.html');
    * ```
    *
-   * @param url A glob pattern, regex pattern or predicate receiving [URL] to match while waiting for the navigation. Note that if
-   * the parameter is a string without wildcard characters, the method will wait for navigation to URL that is exactly
-   * equal to the string.
+   * @param url A glob pattern, regex pattern, URL pattern, or predicate receiving [URL] to match while waiting for the navigation.
+   * Note that if the parameter is a string without wildcard characters, the method will wait for navigation to URL that
+   * is exactly equal to the string.
    * @param options
    */
-  waitForURL(url: string|RegExp|((url: URL) => boolean), options?: {
+  waitForURL(url: string|RegExp|URLPattern|((url: URL) => boolean), options?: {
     /**
      * Maximum operation time in milliseconds. Defaults to `0` - no timeout. The default value can be changed via
      * `navigationTimeout` option in the config, or by using the
@@ -8181,14 +8563,7 @@ export interface BrowserContext {
     behavior?: 'wait'|'ignoreErrors'|'default'
   }): Promise<void>;
   /**
-   * **NOTE** Only works with Chromium browser's persistent context.
-   *
-   * Emitted when new background page is created in the context.
-   *
-   * ```js
-   * const backgroundPage = await context.waitForEvent('backgroundpage');
-   * ```
-   *
+   * This event is not emitted.
    */
   on(event: 'backgroundpage', listener: (page: Page) => any): this;
 
@@ -8380,14 +8755,7 @@ export interface BrowserContext {
   once(event: 'weberror', listener: (webError: WebError) => any): this;
 
   /**
-   * **NOTE** Only works with Chromium browser's persistent context.
-   *
-   * Emitted when new background page is created in the context.
-   *
-   * ```js
-   * const backgroundPage = await context.waitForEvent('backgroundpage');
-   * ```
-   *
+   * This event is not emitted.
    */
   addListener(event: 'backgroundpage', listener: (page: Page) => any): this;
 
@@ -8634,14 +9002,7 @@ export interface BrowserContext {
   off(event: 'weberror', listener: (webError: WebError) => any): this;
 
   /**
-   * **NOTE** Only works with Chromium browser's persistent context.
-   *
-   * Emitted when new background page is created in the context.
-   *
-   * ```js
-   * const backgroundPage = await context.waitForEvent('backgroundpage');
-   * ```
-   *
+   * This event is not emitted.
    */
   prependListener(event: 'backgroundpage', listener: (page: Page) => any): this;
 
@@ -8796,18 +9157,18 @@ export interface BrowserContext {
     value: string;
 
     /**
-     * Either url or domain / path are required. Optional.
+     * Either `url` or both `domain` and `path` are required. Optional.
      */
     url?: string;
 
     /**
-     * For the cookie to apply to all subdomains as well, prefix domain with a dot, like this: ".example.com". Either url
-     * or domain / path are required. Optional.
+     * For the cookie to apply to all subdomains as well, prefix domain with a dot, like this: ".example.com". Either
+     * `url` or both `domain` and `path` are required. Optional.
      */
     domain?: string;
 
     /**
-     * Either url or domain / path are required Optional.
+     * Either `url` or both `domain` and `path` are required. Optional.
      */
     path?: string;
 
@@ -8830,17 +9191,24 @@ export interface BrowserContext {
      * Optional.
      */
     sameSite?: "Strict"|"Lax"|"None";
+
+    /**
+     * For partitioned third-party cookies (aka
+     * [CHIPS](https://developer.mozilla.org/en-US/docs/Web/Privacy/Guides/Privacy_sandbox/Partitioned_cookies)), the
+     * partition key. Optional.
+     */
+    partitionKey?: string;
   }>): Promise<void>;
 
   /**
-   * **NOTE** Background pages are only supported on Chromium-based browsers.
-   *
-   * All existing background pages in the context.
+   * Returns an empty list.
+   * @deprecated Background pages have been removed from Chromium together with Manifest V2 extensions.
    */
   backgroundPages(): Array<Page>;
 
   /**
-   * Returns the browser instance of the context. If it was launched as a persistent context null gets returned.
+   * Gets the browser instance that owns the context. Returns `null` if the context is created outside of normal
+   * browser, e.g. Android or Electron.
    */
   browser(): null|Browser;
 
@@ -8978,6 +9346,8 @@ export interface BrowserContext {
    * - `'clipboard-write'`
    * - `'geolocation'`
    * - `'gyroscope'`
+   * - `'local-fonts'`
+   * - `'local-network-access'`
    * - `'magnetometer'`
    * - `'microphone'`
    * - `'midi-sysex'` (system-exclusive midi)
@@ -8985,6 +9355,7 @@ export interface BrowserContext {
    * - `'notifications'`
    * - `'payment-handler'`
    * - `'storage-access'`
+   * - `'screen-wake-lock'`
    * @param options
    */
   grantPermissions(permissions: ReadonlyArray<string>, options?: {
@@ -9068,14 +9439,14 @@ export interface BrowserContext {
    *
    * **NOTE** Enabling routing disables http cache.
    *
-   * @param url A glob pattern, regex pattern, or predicate that receives a [URL] to match during routing. If
+   * @param url A glob pattern, regex pattern, URL pattern, or predicate that receives a [URL] to match during routing. If
    * [`baseURL`](https://playwright.dev/docs/api/class-browser#browser-new-context-option-base-url) is set in the
    * context options and the provided URL is a string that does not start with `*`, it is resolved using the
    * [`new URL()`](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) constructor.
    * @param handler handler function to route the request.
    * @param options
    */
-  route(url: string|RegExp|((url: URL) => boolean), handler: ((route: Route, request: Request) => Promise<any>|any), options?: {
+  route(url: string|RegExp|URLPattern|((url: URL) => boolean), handler: ((route: Route, request: Request) => Promise<any>|any), options?: {
     /**
      * How often a route should be used. By default it will be used every time.
      */
@@ -9265,6 +9636,71 @@ export interface BrowserContext {
   setOffline(offline: boolean): Promise<void>;
 
   /**
+   * Clears the existing cookies, local storage and IndexedDB entries for all origins and sets the new storage state.
+   *
+   * **Usage**
+   *
+   * ```js
+   * // Load storage state from a file and apply it to the context.
+   * await context.setStorageState('state.json');
+   * ```
+   *
+   * @param storageState Learn more about [storage state and auth](https://playwright.dev/docs/auth).
+   *
+   * Populates context with given storage state. This option can be used to initialize context with logged-in
+   * information obtained via
+   * [browserContext.storageState([options])](https://playwright.dev/docs/api/class-browsercontext#browser-context-storage-state).
+   */
+  setStorageState(storageState: string|{
+    /**
+     * Cookies to set for context
+     */
+    cookies: Array<{
+      name: string;
+
+      value: string;
+
+      /**
+       * Domain and path are required. For the cookie to apply to all subdomains as well, prefix domain with a dot, like
+       * this: ".example.com"
+       */
+      domain: string;
+
+      /**
+       * Domain and path are required
+       */
+      path: string;
+
+      /**
+       * Unix time in seconds.
+       */
+      expires: number;
+
+      httpOnly: boolean;
+
+      secure: boolean;
+
+      /**
+       * sameSite flag
+       */
+      sameSite: "Strict"|"Lax"|"None";
+    }>;
+
+    origins: Array<{
+      origin: string;
+
+      /**
+       * localStorage to set for context
+       */
+      localStorage: Array<{
+        name: string;
+
+        value: string;
+      }>;
+    }>;
+  }): Promise<void>;
+
+  /**
    * Returns storage state for this browser context, contains current cookies, local storage snapshot and IndexedDB
    * snapshot.
    * @param options
@@ -9323,12 +9759,12 @@ export interface BrowserContext {
    * When [`handler`](https://playwright.dev/docs/api/class-browsercontext#browser-context-unroute-option-handler) is
    * not specified, removes all routes for the
    * [`url`](https://playwright.dev/docs/api/class-browsercontext#browser-context-unroute-option-url).
-   * @param url A glob pattern, regex pattern or predicate receiving [URL] used to register a routing with
+   * @param url A glob pattern, regex pattern, URL pattern, or predicate receiving [URL] used to register a routing with
    * [browserContext.route(url, handler[, options])](https://playwright.dev/docs/api/class-browsercontext#browser-context-route).
    * @param handler Optional handler function used to register a routing with
    * [browserContext.route(url, handler[, options])](https://playwright.dev/docs/api/class-browsercontext#browser-context-route).
    */
-  unroute(url: string|RegExp|((url: URL) => boolean), handler?: ((route: Route, request: Request) => Promise<any>|any)): Promise<void>;
+  unroute(url: string|RegExp|URLPattern|((url: URL) => boolean), handler?: ((route: Route, request: Request) => Promise<any>|any)): Promise<void>;
 
   /**
    * Removes all routes created with
@@ -9350,14 +9786,7 @@ export interface BrowserContext {
   }): Promise<void>;
 
   /**
-   * **NOTE** Only works with Chromium browser's persistent context.
-   *
-   * Emitted when new background page is created in the context.
-   *
-   * ```js
-   * const backgroundPage = await context.waitForEvent('backgroundpage');
-   * ```
-   *
+   * This event is not emitted.
    */
   waitForEvent(event: 'backgroundpage', optionsOrPredicate?: { predicate?: (page: Page) => boolean | Promise<boolean>, timeout?: number } | ((page: Page) => boolean | Promise<boolean>)): Promise<Page>;
 
@@ -9728,6 +10157,10 @@ export interface Browser {
      * a single `pfxPath`, or their corresponding direct value equivalents (`cert` and `key`, or `pfx`). Optionally,
      * `passphrase` property should be provided if the certificate is encrypted. The `origin` property should be provided
      * with an exact match to the request origin that the certificate is valid for.
+     *
+     * Client certificate authentication is only active when at least one client certificate is provided. If you want to
+     * reject all client certificates sent by the server, you need to provide a client certificate with an `origin` that
+     * does not match any of the domains you plan to visit.
      *
      * **NOTE** When using WebKit on macOS, accessing `localhost` will not pick up client certificates. You can make it
      * work by replacing `localhost` with `local.playwright`.
@@ -10314,15 +10747,30 @@ export interface Worker {
   on(event: 'close', listener: (worker: Worker) => any): this;
 
   /**
+   * Emitted when JavaScript within the worker calls one of console API methods, e.g. `console.log` or `console.dir`.
+   */
+  on(event: 'console', listener: (consoleMessage: ConsoleMessage) => any): this;
+
+  /**
    * Adds an event listener that will be automatically removed after it is triggered once. See `addListener` for more information about this event.
    */
   once(event: 'close', listener: (worker: Worker) => any): this;
+
+  /**
+   * Adds an event listener that will be automatically removed after it is triggered once. See `addListener` for more information about this event.
+   */
+  once(event: 'console', listener: (consoleMessage: ConsoleMessage) => any): this;
 
   /**
    * Emitted when this dedicated [WebWorker](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API) is
    * terminated.
    */
   addListener(event: 'close', listener: (worker: Worker) => any): this;
+
+  /**
+   * Emitted when JavaScript within the worker calls one of console API methods, e.g. `console.log` or `console.dir`.
+   */
+  addListener(event: 'console', listener: (consoleMessage: ConsoleMessage) => any): this;
 
   /**
    * Removes an event listener added by `on` or `addListener`.
@@ -10332,7 +10780,17 @@ export interface Worker {
   /**
    * Removes an event listener added by `on` or `addListener`.
    */
+  removeListener(event: 'console', listener: (consoleMessage: ConsoleMessage) => any): this;
+
+  /**
+   * Removes an event listener added by `on` or `addListener`.
+   */
   off(event: 'close', listener: (worker: Worker) => any): this;
+
+  /**
+   * Removes an event listener added by `on` or `addListener`.
+   */
+  off(event: 'console', listener: (consoleMessage: ConsoleMessage) => any): this;
 
   /**
    * Emitted when this dedicated [WebWorker](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API) is
@@ -10340,7 +10798,24 @@ export interface Worker {
    */
   prependListener(event: 'close', listener: (worker: Worker) => any): this;
 
+  /**
+   * Emitted when JavaScript within the worker calls one of console API methods, e.g. `console.log` or `console.dir`.
+   */
+  prependListener(event: 'console', listener: (consoleMessage: ConsoleMessage) => any): this;
+
   url(): string;
+
+  /**
+   * Emitted when this dedicated [WebWorker](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API) is
+   * terminated.
+   */
+  waitForEvent(event: 'close', optionsOrPredicate?: { predicate?: (worker: Worker) => boolean | Promise<boolean>, timeout?: number } | ((worker: Worker) => boolean | Promise<boolean>)): Promise<Worker>;
+
+  /**
+   * Emitted when JavaScript within the worker calls one of console API methods, e.g. `console.log` or `console.dir`.
+   */
+  waitForEvent(event: 'console', optionsOrPredicate?: { predicate?: (consoleMessage: ConsoleMessage) => boolean | Promise<boolean>, timeout?: number } | ((consoleMessage: ConsoleMessage) => boolean | Promise<boolean>)): Promise<ConsoleMessage>;
+
 }
 
 /**
@@ -11200,6 +11675,12 @@ export interface ElementHandle<T=Node> extends JSHandle<T> {
     };
 
     /**
+     * Defaults to 1. Sends `n` interpolated `mousemove` events to represent travel between Playwright's current cursor
+     * position and the provided destination. When set to 1, emits a single `mousemove` event at the destination location.
+     */
+    steps?: number;
+
+    /**
      * Maximum time in milliseconds. Defaults to `0` - no timeout. The default value can be changed via `actionTimeout`
      * option in the config, or by using the
      * [browserContext.setDefaultTimeout(timeout)](https://playwright.dev/docs/api/class-browsercontext#browser-context-set-default-timeout)
@@ -11281,6 +11762,12 @@ export interface ElementHandle<T=Node> extends JSHandle<T> {
 
       y: number;
     };
+
+    /**
+     * Defaults to 1. Sends `n` interpolated `mousemove` events to represent travel between Playwright's current cursor
+     * position and the provided destination. When set to 1, emits a single `mousemove` event at the destination location.
+     */
+    steps?: number;
 
     /**
      * Maximum time in milliseconds. Defaults to `0` - no timeout. The default value can be changed via `actionTimeout`
@@ -12387,6 +12874,12 @@ export interface Locator {
     timeout?: number;
   }): Promise<null|ElementHandle<SVGElement | HTMLElement>>;
   /**
+   * Returns a human-readable representation of the locator, using the
+   * [locator.description()](https://playwright.dev/docs/api/class-locator#locator-description) if one exists;
+   * otherwise, it generates a string based on the locator's selector.
+   */
+  toString(): string;
+  /**
    * When the locator points to a list of elements, this returns an array of locators, pointing to their respective
    * elements.
    *
@@ -12777,6 +13270,12 @@ export interface Locator {
     };
 
     /**
+     * Defaults to 1. Sends `n` interpolated `mousemove` events to represent travel between Playwright's current cursor
+     * position and the provided destination. When set to 1, emits a single `mousemove` event at the destination location.
+     */
+    steps?: number;
+
+    /**
      * Maximum time in milliseconds. Defaults to `0` - no timeout. The default value can be changed via `actionTimeout`
      * option in the config, or by using the
      * [browserContext.setDefaultTimeout(timeout)](https://playwright.dev/docs/api/class-browsercontext#browser-context-set-default-timeout)
@@ -12894,6 +13393,12 @@ export interface Locator {
     };
 
     /**
+     * Defaults to 1. Sends `n` interpolated `mousemove` events to represent travel between Playwright's current cursor
+     * position and the provided destination. When set to 1, emits a single `mousemove` event at the destination location.
+     */
+    steps?: number;
+
+    /**
      * Maximum time in milliseconds. Defaults to `0` - no timeout. The default value can be changed via `actionTimeout`
      * option in the config, or by using the
      * [browserContext.setDefaultTimeout(timeout)](https://playwright.dev/docs/api/class-browsercontext#browser-context-set-default-timeout)
@@ -12924,6 +13429,26 @@ export interface Locator {
    * @param description Locator description.
    */
   describe(description: string): Locator;
+
+  /**
+   * Returns locator description previously set with
+   * [locator.describe(description)](https://playwright.dev/docs/api/class-locator#locator-describe). Returns `null` if
+   * no custom description has been set. Prefer
+   * [locator.toString()](https://playwright.dev/docs/api/class-locator#locator-to-string) for a human-readable
+   * representation, as it uses the description when available.
+   *
+   * **Usage**
+   *
+   * ```js
+   * const button = page.getByRole('button').describe('Subscribe button');
+   * console.log(button.description()); // "Subscribe button"
+   *
+   * const input = page.getByRole('textbox');
+   * console.log(input.description()); // null
+   * ```
+   *
+   */
+  description(): null|string;
 
   /**
    * Programmatically dispatch an event on the matching element.
@@ -13026,6 +13551,12 @@ export interface Locator {
 
       y: number;
     };
+
+    /**
+     * Defaults to 1. Sends `n` interpolated `mousemove` events to represent travel between the `mousedown` and `mouseup`
+     * of the drag. When set to 1, emits a single `mousemove` event at the destination location.
+     */
+    steps?: number;
 
     /**
      * Drops on the target element at this point relative to the top-left corner of the element's padding box. If not
@@ -13323,7 +13854,7 @@ export interface Locator {
    * <button>Submit</button>
    * ```
    *
-   * You can locate each element by it's implicit role:
+   * You can locate each element by its implicit role:
    *
    * ```js
    * await expect(page.getByRole('heading', { name: 'Sign up' })).toBeVisible();
@@ -13428,7 +13959,7 @@ export interface Locator {
    * <button data-testid="directions">Itinéraire</button>
    * ```
    *
-   * You can locate the element by it's test id:
+   * You can locate the element by its test id:
    *
    * ```js
    * await page.getByTestId('directions').click();
@@ -14748,6 +15279,13 @@ export interface BrowserType<Unused = {}> {
    * **parent** directory of the "Profile Path" seen at `chrome://version`.
    *
    * Note that browsers do not allow launching multiple instances with the same User Data Directory.
+   *
+   * **NOTE** Chromium/Chrome: Due to recent Chrome policy changes, automating the default Chrome user profile is not
+   * supported. Pointing `userDataDir` to Chrome's main "User Data" directory (the profile used for your regular
+   * browsing) may result in pages not loading or the browser exiting. Create and use a separate directory (for example,
+   * an empty folder) as your automation profile instead. See https://developer.chrome.com/blog/remote-debugging-port
+   * for details.
+   *
    * @param options
    */
   launchPersistentContext(userDataDir: string, options?: {
@@ -14763,6 +15301,13 @@ export interface BrowserType<Unused = {}> {
      * [here](https://peter.sh/experiments/chromium-command-line-switches/).
      */
     args?: Array<string>;
+
+    /**
+     * If specified, artifacts (traces, videos, downloads, HAR files, etc.) are saved into this directory. The directory
+     * is not cleaned up when the browser closes. If not specified, a temporary directory is used and cleaned up when the
+     * browser closes.
+     */
+    artifactsDir?: string;
 
     /**
      * When using [page.goto(url[, options])](https://playwright.dev/docs/api/class-page#page-goto),
@@ -14811,6 +15356,10 @@ export interface BrowserType<Unused = {}> {
      * a single `pfxPath`, or their corresponding direct value equivalents (`cert` and `key`, or `pfx`). Optionally,
      * `passphrase` property should be provided if the certificate is encrypted. The `origin` property should be provided
      * with an exact match to the request origin that the certificate is valid for.
+     *
+     * Client certificate authentication is only active when at least one client certificate is provided. If you want to
+     * reject all client certificates sent by the server, you need to provide a client certificate with an `origin` that
+     * does not match any of the domains you plan to visit.
      *
      * **NOTE** When using WebKit on macOS, accessing `localhost` will not pick up client certificates. You can make it
      * work by replacing `localhost` with `local.playwright`.
@@ -14880,24 +15429,13 @@ export interface BrowserType<Unused = {}> {
     deviceScaleFactor?: number;
 
     /**
-     * **Chromium-only** Whether to auto-open a Developer Tools panel for each tab. If this option is `true`, the
-     * [`headless`](https://playwright.dev/docs/api/class-browsertype#browser-type-launch-persistent-context-option-headless)
-     * option will be set `false`.
-     * @deprecated Use [debugging tools](https://playwright.dev/docs/debug) instead.
-     */
-    devtools?: boolean;
-
-    /**
      * If specified, accepted downloads are downloaded into this directory. Otherwise, temporary directory is created and
      * is deleted when browser is closed. In either case, the downloads are deleted when the browser context they were
      * created in is closed.
      */
     downloadsPath?: string;
 
-    /**
-     * Specify environment variables that will be visible to the browser. Defaults to `process.env`.
-     */
-    env?: { [key: string]: string|number|boolean; };
+    env?: { [key: string]: string|undefined; };
 
     /**
      * Path to a browser executable to run instead of the bundled one. If
@@ -14969,9 +15507,7 @@ export interface BrowserType<Unused = {}> {
     /**
      * Whether to run browser in headless mode. More details for
      * [Chromium](https://developers.google.com/web/updates/2017/04/headless-chrome) and
-     * [Firefox](https://hacks.mozilla.org/2017/12/using-headless-mode-in-firefox/). Defaults to `true` unless the
-     * [`devtools`](https://playwright.dev/docs/api/class-browsertype#browser-type-launch-option-devtools) option is
-     * `true`.
+     * [Firefox](https://hacks.mozilla.org/2017/12/using-headless-mode-in-firefox/). Defaults to `true`.
      */
     headless?: boolean;
 
@@ -15298,6 +15834,13 @@ export interface BrowserType<Unused = {}> {
     args?: Array<string>;
 
     /**
+     * If specified, artifacts (traces, videos, downloads, HAR files, etc.) are saved into this directory. The directory
+     * is not cleaned up when the browser closes. If not specified, a temporary directory is used and cleaned up when the
+     * browser closes.
+     */
+    artifactsDir?: string;
+
+    /**
      * Browser distribution channel.
      *
      * Use "chromium" to [opt in to new headless mode](https://playwright.dev/docs/browsers#chromium-new-headless-mode).
@@ -15313,24 +15856,13 @@ export interface BrowserType<Unused = {}> {
     chromiumSandbox?: boolean;
 
     /**
-     * **Chromium-only** Whether to auto-open a Developer Tools panel for each tab. If this option is `true`, the
-     * [`headless`](https://playwright.dev/docs/api/class-browsertype#browser-type-launch-server-option-headless) option
-     * will be set `false`.
-     * @deprecated Use [debugging tools](https://playwright.dev/docs/debug) instead.
-     */
-    devtools?: boolean;
-
-    /**
      * If specified, accepted downloads are downloaded into this directory. Otherwise, temporary directory is created and
      * is deleted when browser is closed. In either case, the downloads are deleted when the browser context they were
      * created in is closed.
      */
     downloadsPath?: string;
 
-    /**
-     * Specify environment variables that will be visible to the browser. Defaults to `process.env`.
-     */
-    env?: { [key: string]: string|number|boolean; };
+    env?: { [key: string]: string|undefined; };
 
     /**
      * Path to a browser executable to run instead of the bundled one. If
@@ -15367,9 +15899,7 @@ export interface BrowserType<Unused = {}> {
     /**
      * Whether to run browser in headless mode. More details for
      * [Chromium](https://developers.google.com/web/updates/2017/04/headless-chrome) and
-     * [Firefox](https://hacks.mozilla.org/2017/12/using-headless-mode-in-firefox/). Defaults to `true` unless the
-     * [`devtools`](https://playwright.dev/docs/api/class-browsertype#browser-type-launch-option-devtools) option is
-     * `true`.
+     * [Firefox](https://hacks.mozilla.org/2017/12/using-headless-mode-in-firefox/). Defaults to `true`.
      */
     headless?: boolean;
 
@@ -15712,97 +16242,6 @@ export namespace errors {
 class TimeoutError extends Error {
 }
 
-}
-
-/**
- * The Accessibility class provides methods for inspecting Chromium's accessibility tree. The accessibility tree is
- * used by assistive technology such as [screen readers](https://en.wikipedia.org/wiki/Screen_reader) or
- * [switches](https://en.wikipedia.org/wiki/Switch_access).
- *
- * Accessibility is a very platform-specific thing. On different platforms, there are different screen readers that
- * might have wildly different output.
- *
- * Rendering engines of Chromium, Firefox and WebKit have a concept of "accessibility tree", which is then translated
- * into different platform-specific APIs. Accessibility namespace gives access to this Accessibility Tree.
- *
- * Most of the accessibility tree gets filtered out when converting from internal browser AX Tree to Platform-specific
- * AX-Tree or by assistive technologies themselves. By default, Playwright tries to approximate this filtering,
- * exposing only the "interesting" nodes of the tree.
- */
-export interface Accessibility {
-  /**
-   * Captures the current state of the accessibility tree. The returned object represents the root accessible node of
-   * the page.
-   *
-   * **NOTE** The Chromium accessibility tree contains nodes that go unused on most platforms and by most screen
-   * readers. Playwright will discard them as well for an easier to process tree, unless
-   * [`interestingOnly`](https://playwright.dev/docs/api/class-accessibility#accessibility-snapshot-option-interesting-only)
-   * is set to `false`.
-   *
-   * **Usage**
-   *
-   * An example of dumping the entire accessibility tree:
-   *
-   * ```js
-   * const snapshot = await page.accessibility.snapshot();
-   * console.log(snapshot);
-   * ```
-   *
-   * An example of logging the focused node's name:
-   *
-   * ```js
-   * const snapshot = await page.accessibility.snapshot();
-   * const node = findFocusedNode(snapshot);
-   * console.log(node && node.name);
-   *
-   * function findFocusedNode(node) {
-   *   if (node.focused)
-   *     return node;
-   *   for (const child of node.children || []) {
-   *     const foundNode = findFocusedNode(child);
-   *     if (foundNode)
-   *       return foundNode;
-   *   }
-   *   return null;
-   * }
-   * ```
-   *
-   * @deprecated This method is deprecated. Please use other libraries such as [Axe](https://www.deque.com/axe/) if you need to test
-   * page accessibility. See our Node.js [guide](https://playwright.dev/docs/accessibility-testing) for integration with
-   * Axe.
-   * @param options
-   */
-  snapshot(options?: AccessibilitySnapshotOptions): Promise<null|AccessibilityNode>;
-
-}
-
-type AccessibilityNode = {
-  role: string;
-  name: string;
-  value?: string|number;
-  description?: string;
-  keyshortcuts?: string;
-  roledescription?: string;
-  valuetext?: string;
-  disabled?: boolean;
-  expanded?: boolean;
-  focused?: boolean;
-  modal?: boolean;
-  multiline?: boolean;
-  multiselectable?: boolean;
-  readonly?: boolean;
-  required?: boolean;
-  selected?: boolean;
-  checked?: boolean|"mixed";
-  pressed?: boolean|"mixed";
-  level?: number;
-  valuemin?: number;
-  valuemax?: number;
-  autocomplete?: string;
-  haspopup?: string;
-  invalid?: string;
-  orientation?: string;
-  children?: AccessibilityNode[];
 }
 
 export const devices: Devices;
@@ -16211,18 +16650,16 @@ export type AndroidKey =
   'Home' |
   'Back' |
   'Call' | 'EndCall' |
-  '0' |  '1' |  '2' |  '3' |  '4' |  '5' |  '6' |  '7' |  '8' |  '9' |
-  'Star' | 'Pound' | '*' | '#' |
+  '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' |
+  'Star' | '*' | 'Pound' | '#' |
   'DialUp' | 'DialDown' | 'DialLeft' | 'DialRight' | 'DialCenter' |
   'VolumeUp' | 'VolumeDown' |
-  'ChannelUp' | 'ChannelDown' |
   'Power' |
   'Camera' |
   'Clear' |
   'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' |
   'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T' | 'U' | 'V' | 'W' | 'X' | 'Y' | 'Z' |
-  'Comma' | ',' |
-  'Period' | '.' |
+  'Comma' | ',' | 'Period' | '.' |
   'AltLeft' | 'AltRight' |
   'ShiftLeft' | 'ShiftRight' |
   'Tab' | '\t' |
@@ -16250,16 +16687,32 @@ export type AndroidKey =
   'Notification' |
   'Search' |
   'RecentApps' |
+  'MediaPlayPause' |
+  'MediaStop' |
+  'MediaNext' |
+  'MediaPrevious' |
+  'MediaRewind' |
+  'MediaFastForward' |
+  'MediaPlay' |
+  'MediaPause' |
+  'MediaClose' |
+  'MediaEject' |
+  'MediaRecord' |
+  'ChannelUp' | 'ChannelDown' |
   'AppSwitch' |
   'Assist' |
+  'MediaAudioTrack' |
+  'MediaTopMenu' |
+  'MediaSkipForward' |
+  'MediaSkipBackward' |
+  'MediaStepForward' |
+  'MediaStepBackward' |
   'Cut' |
   'Copy' |
   'Paste';
 
 export const _electron: Electron;
 export const _android: Android;
-export const _bidiChromium: BrowserType;
-export const _bidiFirefox: BrowserType;
 
 // This is required to not export everything by default. See https://github.com/Microsoft/TypeScript/issues/19545#issuecomment-340490459
 export {};
@@ -17524,6 +17977,10 @@ export interface APIRequest {
      * a single `pfxPath`, or their corresponding direct value equivalents (`cert` and `key`, or `pfx`). Optionally,
      * `passphrase` property should be provided if the certificate is encrypted. The `origin` property should be provided
      * with an exact match to the request origin that the certificate is valid for.
+     *
+     * Client certificate authentication is only active when at least one client certificate is provided. If you want to
+     * reject all client certificates sent by the server, you need to provide a client certificate with an `origin` that
+     * does not match any of the domains you plan to visit.
      *
      * **NOTE** When using WebKit on macOS, accessing `localhost` will not pick up client certificates. You can make it
      * work by replacing `localhost` with `local.playwright`.
@@ -18842,11 +19299,18 @@ export interface ConsoleMessage {
   text(): string;
 
   /**
-   * One of the following values: `'log'`, `'debug'`, `'info'`, `'error'`, `'warning'`, `'dir'`, `'dirxml'`, `'table'`,
-   * `'trace'`, `'clear'`, `'startGroup'`, `'startGroupCollapsed'`, `'endGroup'`, `'assert'`, `'profile'`,
-   * `'profileEnd'`, `'count'`, `'timeEnd'`.
+   * The timestamp of the console message in milliseconds since the Unix epoch.
    */
-  type(): string;
+  timestamp(): number;
+
+  type(): "log"|"debug"|"info"|"error"|"warning"|"dir"|"dirxml"|"table"|"trace"|"clear"|"startGroup"|"startGroupCollapsed"|"endGroup"|"assert"|"profile"|"profileEnd"|"count"|"time"|"timeEnd";
+
+  /**
+   * The web worker or service worker that produced this console message, if any. Note that console messages from web
+   * workers also have non-null
+   * [consoleMessage.page()](https://playwright.dev/docs/api/class-consolemessage#console-message-page).
+   */
+  worker(): null|Worker;
 }
 
 /**
@@ -19077,6 +19541,10 @@ export interface Download {
 
   /**
    * Returns a readable stream for a successful download, or throws for a failed/canceled download.
+   *
+   * **NOTE** If you don't need a readable stream, it's usually simpler to read the file from disk after the download
+   * completed. See [download.path()](https://playwright.dev/docs/api/class-download#download-path).
+   *
    */
   createReadStream(): Promise<Readable>;
 
@@ -19205,6 +19673,11 @@ export interface Electron {
      * Toggles bypassing page's Content-Security-Policy. Defaults to `false`.
      */
     bypassCSP?: boolean;
+
+    /**
+     * Enable Chromium sandboxing. Defaults to `false`.
+     */
+    chromiumSandbox?: boolean;
 
     /**
      * Emulates [prefers-colors-scheme](https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-color-scheme)
@@ -19624,7 +20097,7 @@ export interface FrameLocator {
    * <button>Submit</button>
    * ```
    *
-   * You can locate each element by it's implicit role:
+   * You can locate each element by its implicit role:
    *
    * ```js
    * await expect(page.getByRole('heading', { name: 'Sign up' })).toBeVisible();
@@ -19730,7 +20203,7 @@ export interface FrameLocator {
    * <button data-testid="directions">Itinéraire</button>
    * ```
    *
-   * You can locate the element by it's test id:
+   * You can locate the element by its test id:
    *
    * ```js
    * await page.getByTestId('directions').click();
@@ -20151,6 +20624,10 @@ export interface Logger {
 /**
  * The Mouse class operates in main-frame CSS pixels relative to the top-left corner of the viewport.
  *
+ * **NOTE** If you want to debug where the mouse moved, you can use the [Trace viewer](https://playwright.dev/docs/trace-viewer-intro) or
+ * [Playwright Inspector](https://playwright.dev/docs/running-tests). A red dot showing the location of the mouse will be shown for every
+ * mouse action.
+ *
  * Every `page` object has its own Mouse, accessible with
  * [page.mouse](https://playwright.dev/docs/api/class-page#page-mouse).
  *
@@ -20238,7 +20715,8 @@ export interface Mouse {
    */
   move(x: number, y: number, options?: {
     /**
-     * Defaults to 1. Sends intermediate `mousemove` events.
+     * Defaults to 1. Sends `n` interpolated `mousemove` events to represent travel between Playwright's current cursor
+     * position and the provided destination. When set to 1, emits a single `mousemove` event at the destination location.
      */
     steps?: number;
   }): Promise<void>;
@@ -20326,6 +20804,16 @@ export interface Request {
    * An object with all the request HTTP headers associated with this request. The header names are lower-cased.
    */
   allHeaders(): Promise<{ [key: string]: string; }>;
+
+  /**
+   * Returns the [Response](https://playwright.dev/docs/api/class-response) object if the response has already been
+   * received, `null` otherwise.
+   *
+   * Unlike [request.response()](https://playwright.dev/docs/api/class-request#request-response), this method does not
+   * wait for the response to arrive. It returns immediately with the response object if the response has been received,
+   * or `null` if the response has not been received yet.
+   */
+  existingResponse(): null|Response;
 
   /**
    * The method returns `null` unless this request has failed, as reported by `requestfailed` event.
@@ -20825,8 +21313,12 @@ export interface Route {
    * [route.fallback([options])](https://playwright.dev/docs/api/class-route#route-fallback) If you want next matching
    * handler in the chain to be invoked.
    *
-   * **NOTE** The `Cookie` header cannot be overridden using this method. If a value is provided, it will be ignored,
-   * and the cookie will be loaded from the browser's cookie store. To set custom cookies, use
+   * **NOTE** Some request headers are **forbidden** and cannot be overridden (for example, `Cookie`, `Host`,
+   * `Content-Length` and others, see
+   * [this MDN page](https://developer.mozilla.org/en-US/docs/Glossary/Forbidden_request_header) for full list). If an
+   * override is provided for a forbidden header, it will be ignored and the original request header will be used.
+   *
+   * To set custom cookies, use
    * [browserContext.addCookies(cookies)](https://playwright.dev/docs/api/class-browsercontext#browser-context-add-cookies).
    *
    * @param options
@@ -21388,6 +21880,16 @@ export interface Tracing {
  * console.log(await page.video().path());
  * ```
  *
+ * Alternatively, you can use [video.start([options])](https://playwright.dev/docs/api/class-video#video-start) and
+ * [video.stop([options])](https://playwright.dev/docs/api/class-video#video-stop) to record video manually. This
+ * approach is mutually exclusive with the `recordVideo` option.
+ *
+ * ```js
+ * await page.video().start();
+ * // ... perform actions ...
+ * await page.video().stop({ path: 'video.webm' });
+ * ```
+ *
  */
 export interface Video {
   /**
@@ -21407,6 +21909,49 @@ export interface Video {
    * @param path Path where the video should be saved.
    */
   saveAs(path: string): Promise<void>;
+
+  /**
+   * Starts video recording. This method is mutually exclusive with the `recordVideo` context option.
+   *
+   * **Usage**
+   *
+   * ```js
+   * await page.video().start();
+   * // ... perform actions ...
+   * await page.video().stop({ path: 'video.webm' });
+   * ```
+   *
+   * @param options
+   */
+  start(options?: {
+    /**
+     * Optional dimensions of the recorded video. If not specified the size will be equal to page viewport scaled down to
+     * fit into 800x800. Actual picture of the page will be scaled down if necessary to fit the specified size.
+     */
+    size?: {
+      /**
+       * Video frame width.
+       */
+      width: number;
+
+      /**
+       * Video frame height.
+       */
+      height: number;
+    };
+  }): Promise<void>;
+
+  /**
+   * Stops video recording started with
+   * [video.start([options])](https://playwright.dev/docs/api/class-video#video-start).
+   * @param options
+   */
+  stop(options?: {
+    /**
+     * Path where the video should be saved.
+     */
+    path?: string;
+  }): Promise<void>;
 }
 
 /**
@@ -21688,18 +22233,6 @@ export interface WebSocket {
 
 }
 
-interface AccessibilitySnapshotOptions {
-  /**
-   * Prune uninteresting nodes from the tree. Defaults to `true`.
-   */
-  interestingOnly?: boolean;
-
-  /**
-   * The root DOM element for the snapshot. Defaults to the whole page.
-   */
-  root?: ElementHandle;
-}
-
 export interface LaunchOptions {
   /**
    * **NOTE** Use custom browser args at your own risk, as some of them may break Playwright functionality.
@@ -21708,6 +22241,13 @@ export interface LaunchOptions {
    * [here](https://peter.sh/experiments/chromium-command-line-switches/).
    */
   args?: Array<string>;
+
+  /**
+   * If specified, artifacts (traces, videos, downloads, HAR files, etc.) are saved into this directory. The directory
+   * is not cleaned up when the browser closes. If not specified, a temporary directory is used and cleaned up when the
+   * browser closes.
+   */
+  artifactsDir?: string;
 
   /**
    * Browser distribution channel.
@@ -21725,24 +22265,13 @@ export interface LaunchOptions {
   chromiumSandbox?: boolean;
 
   /**
-   * **Chromium-only** Whether to auto-open a Developer Tools panel for each tab. If this option is `true`, the
-   * [`headless`](https://playwright.dev/docs/api/class-browsertype#browser-type-launch-option-headless) option will be
-   * set `false`.
-   * @deprecated Use [debugging tools](https://playwright.dev/docs/debug) instead.
-   */
-  devtools?: boolean;
-
-  /**
    * If specified, accepted downloads are downloaded into this directory. Otherwise, temporary directory is created and
    * is deleted when browser is closed. In either case, the downloads are deleted when the browser context they were
    * created in is closed.
    */
   downloadsPath?: string;
 
-  /**
-   * Specify environment variables that will be visible to the browser. Defaults to `process.env`.
-   */
-  env?: { [key: string]: string|number|boolean; };
+  env?: { [key: string]: string|undefined; };
 
   /**
    * Path to a browser executable to run instead of the bundled one. If
@@ -21779,9 +22308,7 @@ export interface LaunchOptions {
   /**
    * Whether to run browser in headless mode. More details for
    * [Chromium](https://developers.google.com/web/updates/2017/04/headless-chrome) and
-   * [Firefox](https://hacks.mozilla.org/2017/12/using-headless-mode-in-firefox/). Defaults to `true` unless the
-   * [`devtools`](https://playwright.dev/docs/api/class-browsertype#browser-type-launch-option-devtools) option is
-   * `true`.
+   * [Firefox](https://hacks.mozilla.org/2017/12/using-headless-mode-in-firefox/). Defaults to `true`.
    */
   headless?: boolean;
 
@@ -21852,6 +22379,12 @@ export interface ConnectOverCDPOptions {
    * Additional HTTP headers to be sent with connect request. Optional.
    */
   headers?: { [key: string]: string; };
+
+  /**
+   * Tells Playwright that it runs on the same host as the CDP server. It will enable certain optimizations that rely
+   * upon the file system being the same between Playwright and the Browser.
+   */
+  isLocal?: boolean;
 
   /**
    * Logger sink for Playwright logging. Optional.
@@ -22059,6 +22592,10 @@ export interface BrowserContextOptions {
    * a single `pfxPath`, or their corresponding direct value equivalents (`cert` and `key`, or `pfx`). Optionally,
    * `passphrase` property should be provided if the certificate is encrypted. The `origin` property should be provided
    * with an exact match to the request origin that the certificate is valid for.
+   *
+   * Client certificate authentication is only active when at least one client certificate is provided. If you want to
+   * reject all client certificates sent by the server, you need to provide a client certificate with an `origin` that
+   * does not match any of the domains you plan to visit.
    *
    * **NOTE** When using WebKit on macOS, accessing `localhost` will not pick up client certificates. You can make it
    * work by replacing `localhost` with `local.playwright`.
@@ -22501,6 +23038,8 @@ export interface Cookie {
   secure: boolean;
 
   sameSite: "Strict"|"Lax"|"None";
+
+  partitionKey?: string;
 }
 
 interface PageWaitForSelectorOptions {

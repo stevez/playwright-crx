@@ -6,12 +6,16 @@
 ../utilsBundle.ts
 ../zipBundle.ts
 ./
+./codegen/
 ./isomorphic/
 ./har/
 ./recorder/
 ./registry/
 ./trace/recorder/tracing.ts
 ./utils/
+
+[devtoolsController.ts]
+./chromium/
 
 [playwright.ts]
 ./android/
@@ -20,3 +24,6 @@
 ./electron/
 ./firefox/
 ./webkit/
+
+[browser.ts]
+../remote/

@@ -16,7 +16,7 @@
 
 import * as css from '@isomorphic/cssTokenizer';
 
-import { getGlobalOptions, closestCrossShadow, elementSafeTagName, enclosingShadowRootOrDocument, getElementComputedStyle, isElementStyleVisibilityVisible, isVisibleTextNode, parentElementOrShadowHost } from './domUtils';
+import { beginDOMCaches, closestCrossShadow, elementSafeTagName, enclosingShadowRootOrDocument, endDOMCaches, getElementComputedStyle, isElementStyleVisibilityVisible, isVisibleTextNode, parentElementOrShadowHost } from './domUtils';
 
 import type { AriaRole } from '@isomorphic/ariaSnapshot';
 
@@ -135,7 +135,7 @@ const kImplicitRoleByTagName: { [tagName: string]: (e: Element) => AriaRole | nu
     // File inputs do not have a role by the spec: https://www.w3.org/TR/html-aam-1.0/#el-input-file.
     // However, there are open issues about fixing it: https://github.com/w3c/aria/issues/1926.
     // All browsers report it as a button, and it is rendered as a button, so we do "button".
-    if (type === 'file' && !getGlobalOptions().inputFileRoleTextbox)
+    if (type === 'file')
       return 'button';
     return inputTypeToRole[type] || 'textbox';
   },
@@ -153,6 +153,7 @@ const kImplicitRoleByTagName: { [tagName: string]: (e: Element) => AriaRole | nu
   'OUTPUT': () => 'status',
   'P': () => 'paragraph',
   'PROGRESS': () => 'progressbar',
+  'SEARCH': () => 'search',
   'SECTION': (e: Element) => hasExplicitAccessibleName(e) ? 'region' : null,
   'SELECT': (e: Element) => e.hasAttribute('multiple') || (e as HTMLSelectElement).size > 1 ? 'listbox' : 'combobox',
   'STRONG': () => 'strong',
@@ -173,19 +174,57 @@ const kImplicitRoleByTagName: { [tagName: string]: (e: Element) => AriaRole | nu
   'TEXTAREA': () => 'textbox',
   'TFOOT': () => 'rowgroup',
   'TH': (e: Element) => {
-    if (e.getAttribute('scope') === 'col')
+    const scope = e.getAttribute('scope');
+    if (scope === 'col' || scope === 'colgroup')
       return 'columnheader';
-    if (e.getAttribute('scope') === 'row')
+    if (scope === 'row' || scope === 'rowgroup')
       return 'rowheader';
-    const table = closestCrossShadow(e, 'table');
-    const role = table ? getExplicitAriaRole(table) : '';
-    return (role === 'grid' || role === 'treegrid') ? 'gridcell' : 'cell';
+
+    const nextSibling = e.nextElementSibling;
+    const prevSibling = e.previousElementSibling;
+
+    const row = !!e.parentElement && elementSafeTagName(e.parentElement) === 'TR' ? e.parentElement : undefined;
+
+    // Chromium/Safari: A TH that is the only cell in a table is not labeling any content, thus it's technically not a header. Do not assign a role.
+    // Firefox: Follows the spec and assigns `columnheader`. We prioritize Chrome/Safari semantics.
+    if (!nextSibling && !prevSibling) {
+      if (row) {
+        const table = closestCrossShadow(row, 'table') as HTMLTableElement | undefined;
+        // If there's only one row in the table, this TH has no column to head
+        if (table && table.rows.length <= 1)
+          return null;
+      }
+      return 'columnheader';
+    }
+
+    // Tables are built up incrementally by iterating over them in a particular pattern. In order to emulate this,
+    // we check only immediate siblings and occasionally the parent row
+    // This doesn't seem to directly follow the spec, but matches Chromium behavior
+    // https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/modules/accessibility/ax_node_object.cc;l=1585-1623
+    if (isHeaderCell(nextSibling) && isHeaderCell(prevSibling))
+      return 'columnheader';
+
+    if (isNonEmptyDataCell(nextSibling) || isNonEmptyDataCell(prevSibling))
+      return 'rowheader';
+
+    // As long as we didn't exclude it above, it's still a TH, so default to columnheader
+    return 'columnheader';
   },
   'THEAD': () => 'rowgroup',
   'TIME': () => 'time',
   'TR': () => 'row',
   'UL': () => 'list',
 };
+
+function isHeaderCell(element: Element | null): boolean {
+  return !!element && elementSafeTagName(element) === 'TH';
+}
+
+function isNonEmptyDataCell(element: Element | null): boolean {
+  if (!element || elementSafeTagName(element) !== 'TD')
+    return false;
+  return !!(element.textContent?.trim() || element.children.length > 0);
+}
 
 const kPresentationInheritanceParents: { [tagName: string]: string[] } = {
   'DD': ['DL', 'DIV'],
@@ -366,9 +405,14 @@ export function getCSSContent(element: Element, pseudo?: '::before' | '::after')
 
   const style = getElementComputedStyle(element, pseudo);
   let content: string | undefined;
-  if (style && style.display !== 'none' && style.visibility !== 'hidden') {
-    // Note: all browsers ignore display:none and visibility:hidden pseudos.
-    content = parseCSSContentPropertyAsString(element, style.content, !!pseudo);
+  if (style) {
+    const contentValue = style.content;
+    if (contentValue && contentValue !== 'none' && contentValue !== 'normal') {
+      if (style.display !== 'none' && style.visibility !== 'hidden') {
+        // Note: all browsers ignore display:none and visibility:hidden pseudos.
+        content = parseCSSContentPropertyAsString(element, contentValue, !!pseudo);
+      }
+    }
   }
 
   if (pseudo && content !== undefined) {
@@ -707,7 +751,7 @@ function getTextAlternativeInternal(element: Element, options: AccessibleNameOpt
     // There is no spec for this, but Chromium/WebKit do "Choose File" so we follow that.
     // All browsers respect labels, aria-labelledby and aria-label.
     // No browsers respect the title attribute, although w3c accname tests disagree. We follow browsers.
-    if (!getGlobalOptions().inputFileRoleTextbox && tagName === 'INPUT' && (element as HTMLInputElement).type === 'file') {
+    if (tagName === 'INPUT' && (element as HTMLInputElement).type === 'file') {
       options.visitedElements.add(element);
       const labels = (element as HTMLInputElement).labels || [];
       if (labels.length && !options.embeddedInLabelledBy)
@@ -1060,8 +1104,12 @@ export function getAriaDisabled(element: Element): boolean {
 
 function isNativelyDisabled(element: Element) {
   // https://www.w3.org/TR/html-aam-1.0/#html-attribute-state-and-property-mappings
-  const isNativeFormControl = ['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'OPTION', 'OPTGROUP'].includes(element.tagName);
-  return isNativeFormControl && (element.hasAttribute('disabled') || belongsToDisabledFieldSet(element));
+  const isNativeFormControl = ['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'OPTION', 'OPTGROUP'].includes(elementSafeTagName(element));
+  return isNativeFormControl && (element.hasAttribute('disabled') || belongsToDisabledOptGroup(element) || belongsToDisabledFieldSet(element));
+}
+
+function belongsToDisabledOptGroup(element: Element): boolean {
+  return elementSafeTagName(element) === 'OPTION' && !!element.closest('OPTGROUP[DISABLED]');
 }
 
 function belongsToDisabledFieldSet(element: Element): boolean {
@@ -1145,6 +1193,7 @@ let cachePointerEvents: Map<Element, boolean> | undefined;
 let cachesCounter = 0;
 
 export function beginAriaCaches() {
+  beginDOMCaches();
   ++cachesCounter;
   cacheAccessibleName ??= new Map();
   cacheAccessibleNameHidden ??= new Map();
@@ -1171,6 +1220,7 @@ export function endAriaCaches() {
     cachePseudoContentAfter = undefined;
     cachePointerEvents = undefined;
   }
+  endDOMCaches();
 }
 
 const inputTypeToRole: Record<string, AriaRole> = {

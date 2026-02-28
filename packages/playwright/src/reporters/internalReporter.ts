@@ -22,8 +22,9 @@ import { internalScreen, prepareErrorStack, relativeFilePath } from './base';
 import { Multiplexer } from './multiplexer';
 import { Suite } from '../common/test';
 import { codeFrameColumns } from '../transform/babelBundle';
+import { wrapReporterAsV2 } from './reporterV2';
 
-import type { ReporterV2 } from './reporterV2';
+import type { AnyReporter, ReporterV2 } from './reporterV2';
 import type { FullConfig, FullResult, TestCase, TestError, TestResult, TestStep } from '../../types/testReporter';
 
 
@@ -34,8 +35,8 @@ export class InternalReporter implements ReporterV2 {
   private _startTime: Date | undefined;
   private _monotonicStartTime: number | undefined;
 
-  constructor(reporters: ReporterV2[]) {
-    this._reporter = new Multiplexer(reporters);
+  constructor(reporters: AnyReporter[]) {
+    this._reporter = new Multiplexer(reporters.map(wrapReporterAsV2));
   }
 
   version(): 'v2' {
@@ -64,6 +65,11 @@ export class InternalReporter implements ReporterV2 {
 
   onStdErr(chunk: string | Buffer, test?: TestCase, result?: TestResult) {
     this._reporter.onStdErr?.(chunk, test, result);
+  }
+
+  async onTestPaused(test: TestCase, result: TestResult) {
+    this._addSnippetToTestErrors(test, result);
+    return await this._reporter.onTestPaused?.(test, result);
   }
 
   onTestEnd(test: TestCase, result: TestResult) {
@@ -116,11 +122,14 @@ export class InternalReporter implements ReporterV2 {
   }
 }
 
-function addLocationAndSnippetToError(config: FullConfig, error: TestError, file?: string) {
+export function addLocationAndSnippetToError(config: FullConfig, error: TestError, file?: string) {
   if (error.stack && !error.location)
     error.location = prepareErrorStack(error.stack).location;
   const location = error.location;
   if (!location)
+    return;
+
+  if (!!error.snippet)
     return;
 
   try {

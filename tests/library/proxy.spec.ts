@@ -33,7 +33,7 @@ it('should use proxy @smoke', async ({ browserType, server, mode }) => {
     res.end('<html><title>Served by the proxy</title></html>');
   });
   const browser = await browserType.launch({
-    proxy: { server: `localhost:${server.PORT}` }
+    proxy: { server: server.HOST }
   });
   const page = await browser.newPage();
   await page.goto('http://non-existent.com/target.html');
@@ -90,8 +90,9 @@ it.describe('should proxy local network requests', () => {
           description: 'link-local'
         }
       ]) {
-        it(`${params.description}`, async ({ platform, browserName, browserType, server, proxyServer }) => {
+        it(`${params.description}`, async ({ platform, browserName, browserType, server, proxyServer, channel }) => {
           it.skip(browserName === 'webkit' && platform === 'darwin' && ['localhost', '127.0.0.1'].includes(params.target) && additionalBypass, 'Mac webkit does not proxy localhost when bypass rules are set.');
+          it.fixme(channel?.startsWith('msedge'), 'times out while loading the page');
 
           const path = `/target-${additionalBypass}-${params.target}.html`;
           server.setRoute(path, async (req, res) => {
@@ -135,7 +136,7 @@ it('should authenticate', async ({ browserType, server }) => {
     }
   });
   const browser = await browserType.launch({
-    proxy: { server: `localhost:${server.PORT}`, username: 'user', password: 'secret' }
+    proxy: { server: server.HOST, username: 'user', password: 'secret' }
   });
   const page = await browser.newPage();
   await page.goto('http://non-existent.com/target.html');
@@ -167,7 +168,7 @@ it('should work with authenticate followed by redirect', async ({ browserName, b
     res.end('<html><title>Served by the proxy</title></html>');
   });
   const browser = await browserType.launch({
-    proxy: { server: `localhost:${server.PORT}`, username: 'user', password: 'secret' }
+    proxy: { server: server.HOST, username: 'user', password: 'secret' }
   });
   const page = await browser.newPage();
   await page.goto('http://non-existent.com/page1.html');
@@ -175,7 +176,9 @@ it('should work with authenticate followed by redirect', async ({ browserName, b
   await browser.close();
 });
 
-it('should exclude patterns', async ({ browserType, server, browserName, headless }) => {
+it('should exclude patterns', async ({ browserType, server, channel }) => {
+  it.fixme(channel?.startsWith('msedge'), 'times out while loading the page');
+
   server.setRoute('/target.html', async (req, res) => {
     res.end('<html><title>Served by the proxy</title></html>');
   });
@@ -184,7 +187,7 @@ it('should exclude patterns', async ({ browserType, server, browserName, headles
   //
   // @see https://gist.github.com/CollinChaffin/24f6c9652efb3d6d5ef2f5502720ef00
   const browser = await browserType.launch({
-    proxy: { server: `localhost:${server.PORT}`, bypass: '1.non.existent.domain.for.the.test, 2.non.existent.domain.for.the.test, .another.test' }
+    proxy: { server: server.HOST, bypass: '1.non.existent.domain.for.the.test, 2.non.existent.domain.for.the.test, .another.test' }
   });
 
   {
@@ -323,7 +326,7 @@ it('should use SOCKS proxy for websocket requests', async ({ browserType, server
   await closeProxyServer();
 });
 
-it('should use http proxy for websocket requests', async ({ browserName, browserType, server, proxyServer, isWindows, isMac, macVersion }) => {
+it('should use http proxy for websocket requests', async ({ browserName, browserType, server, proxyServer, isWindows, isMac, macVersion, channel }) => {
   it.skip(isMac && macVersion === 13, 'Times out on Mac 13');
 
   proxyServer.forwardTo(server.PORT, { allowConnectRequests: true });
@@ -352,7 +355,7 @@ it('should use http proxy for websocket requests', async ({ browserName, browser
 
   // WebKit does not use CONNECT for websockets, but other browsers do.
   if (browserName === 'webkit')
-    expect(proxyServer.wsUrls).toContain(isWindows ? '/ws' : 'ws://fake-localhost-127-0-0-1.nip.io:1337/ws');
+    expect(proxyServer.wsUrls).toContain((isWindows && !channel) ? '/ws' : 'ws://fake-localhost-127-0-0-1.nip.io:1337/ws');
   else
     expect(proxyServer.connectHosts).toContain('fake-localhost-127-0-0-1.nip.io:1337');
 

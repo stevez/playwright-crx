@@ -37,12 +37,24 @@ export function createMetadataValidator(): Validator {
   return tOptional(scheme['Metadata']);
 }
 
-export const tNumber: Validator = (arg: any, path: string, context: ValidatorContext) => {
+export const tFloat: Validator = (arg: any, path: string, context: ValidatorContext) => {
   if (arg instanceof Number)
     return arg.valueOf();
   if (typeof arg === 'number')
     return arg;
-  throw new ValidationError(`${path}: expected number, got ${typeof arg}`);
+  throw new ValidationError(`${path}: expected float, got ${typeof arg}`);
+};
+export const tInt: Validator = (arg: any, path: string, context: ValidatorContext) => {
+  let value: number;
+  if (arg instanceof Number)
+    value = arg.valueOf();
+  else if (typeof arg === 'number')
+    value = arg;
+  else
+    throw new ValidationError(`${path}: expected integer, got ${typeof arg}`);
+  if (!Number.isInteger(value))
+    throw new ValidationError(`${path}: expected integer, got float ${value}`);
+  return value;
 };
 export const tBoolean: Validator = (arg: any, path: string, context: ValidatorContext) => {
   if (arg instanceof Boolean)
@@ -72,7 +84,8 @@ export const tBinary: Validator = (arg: any, path: string, context: ValidatorCon
     return (arg as Buffer).toString('base64');
   }
   if (context.binary === 'buffer') {
-    if (!(arg instanceof Buffer))
+    // TODO: support custom binary types.
+    if (!(arg instanceof Buffer) && !(arg instanceof Object))
       throw new ValidationError(`${path}: expected Buffer, got ${typeof arg}`);
     return arg;
   }

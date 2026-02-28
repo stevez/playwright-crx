@@ -14,20 +14,34 @@
  * limitations under the License.
  */
 
-import type { TestResult } from '../../types/testReporter';
-import type { FullConfigInternal } from '../common/config';
+import type { TestResult, TestError } from '../../types/testReporter';
+import type { FullConfigInternal, FullProjectInternal } from '../common/config';
 import type { Suite, TestCase } from '../common/test';
 
+export type TestPausedParams = {
+  errors: TestError[];
+  sendMessage: (params: { request: any }) => Promise<{ response: any, error?: TestError }>;
+};
+
 export class FailureTracker {
+  private _config: FullConfigInternal;
   private _failureCount = 0;
   private _hasWorkerErrors = false;
   private _rootSuite: Suite | undefined;
+  private _topLevelProjects: FullProjectInternal[] = [];
+  private _pauseOnError: boolean;
+  private _pauseAtEnd: boolean;
+  onTestPaused?: (params: TestPausedParams) => void;
 
-  constructor(private _config: FullConfigInternal) {
+  constructor(config: FullConfigInternal, options?: { pauseOnError?: boolean, pauseAtEnd?: boolean }) {
+    this._config = config;
+    this._pauseOnError = !!options?.pauseOnError;
+    this._pauseAtEnd = !!options?.pauseAtEnd;
   }
 
-  onRootSuite(rootSuite: Suite) {
+  onRootSuite(rootSuite: Suite, topLevelProjects: FullProjectInternal[]) {
     this._rootSuite = rootSuite;
+    this._topLevelProjects = topLevelProjects;
   }
 
   onTestEnd(test: TestCase, result: TestResult) {
@@ -38,6 +52,14 @@ export class FailureTracker {
 
   onWorkerError() {
     this._hasWorkerErrors = true;
+  }
+
+  pauseOnError() {
+    return this._pauseOnError;
+  }
+
+  pauseAtEnd(inProject: FullProjectInternal) {
+    return this._topLevelProjects.includes(inProject) && this._pauseAtEnd;
   }
 
   hasReachedMaxFailures() {

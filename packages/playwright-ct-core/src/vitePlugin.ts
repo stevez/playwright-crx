@@ -17,26 +17,25 @@
 import fs from 'fs';
 import path from 'path';
 
+import { assert, calculateSha1, getPlaywrightVersion, isURLAvailable } from 'playwright-core/lib/utils';
+import { colors, debug } from 'playwright-core/lib/utilsBundle';
 import { setExternalDependencies } from 'playwright/lib/transform/compilationCache';
 import { resolveHook } from 'playwright/lib/transform/transform';
 import { removeDirAndLogToConsole } from 'playwright/lib/util';
 import { stoppable } from 'playwright/lib/utilsBundle';
-import { isURLAvailable } from 'playwright-core/lib/utils';
-import { assert, calculateSha1, getPlaywrightVersion } from 'playwright-core/lib/utils';
-import { debug } from 'playwright-core/lib/utilsBundle';
 
 import { runDevServer } from './devServer';
 import { source as injectedSource } from './generated/indexSource';
 import { createConfig, frameworkConfig, hasJSComponents, populateComponentsFromTests, resolveDirs, resolveEndpoint, transformIndexFile } from './viteUtils';
 
-import type { ImportInfo } from './tsxTransform';
-import type { ComponentRegistry } from './viteUtils';
-import type { TestRunnerPlugin } from '../../playwright/src/plugins';
 import type http from 'http';
 import type { AddressInfo } from 'net';
 import type { FullConfig, Suite } from 'playwright/types/testReporter';
 import type { PluginContext } from 'rollup';
 import type { Plugin, ResolveFn, ResolvedConfig } from 'vite';
+import type { TestRunnerPlugin } from '../../playwright/src/plugins';
+import type { ImportInfo } from './tsxTransform';
+import type { ComponentRegistry } from './viteUtils';
 
 
 const log = debug('pw:vite');
@@ -127,7 +126,7 @@ export async function buildBundle(config: FullConfig, configDir: string): Promis
   const dirs = await resolveDirs(configDir, config);
   if (!dirs) {
     // eslint-disable-next-line no-console
-    console.log(`Template file playwright/index.html is missing.`);
+    console.log(colors.red(`Component testing template file playwright/index.html is missing and there is no existing Vite server. Component tests will fail.\n`));
     return null;
   }
 
@@ -235,8 +234,16 @@ async function checkNewComponents(buildInfo: BuildInfo, componentRegistry: Compo
       break;
     }
   }
-  for (const c of oldComponents.values())
-    componentRegistry.set(c.id, c);
+  for (const c of oldComponents.values()) {
+    try {
+      if ((await fs.promises.stat(c.filename)))
+        componentRegistry.set(c.id, c);
+    } catch (e) {
+      if (e.code !== 'ENOENT')
+        throw e;
+      log('non existent file, skipping component registry:', c.filename);
+    }
+  }
 
   return hasNewComponents;
 }
@@ -282,9 +289,11 @@ function vitePlugin(registerSource: string, templateDir: string, buildInfo: Buil
 }
 
 function collectViteModuleDependencies(context: PluginContext, id: string, deps: Set<string>) {
-  if (!path.isAbsolute(id))
+  // Example: "src/Component.tsx?raw" or "src/Component.tsx?import" should resolve to the file path.
+  const cleanedId = id.split(/[?#]/)[0];
+  const normalizedId = path.normalize(cleanedId);
+  if (!path.isAbsolute(normalizedId))
     return;
-  const normalizedId = path.normalize(id);
   if (deps.has(normalizedId))
     return;
   deps.add(normalizedId);

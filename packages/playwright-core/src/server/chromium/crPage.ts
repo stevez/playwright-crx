@@ -15,10 +15,7 @@
  * limitations under the License.
  */
 
-import path from 'path';
-
 import { assert } from '../../utils/isomorphic/assert';
-import { createGuid } from '../utils/crypto';
 import { eventsHelper } from '../utils/eventsHelper';
 import { rewriteErrorMessage } from '../../utils/isomorphic/stackTrace';
 import * as dialog from '../dialog';
@@ -27,8 +24,6 @@ import * as frames from '../frames';
 import { helper } from '../helper';
 import * as network from '../network';
 import { Page, PageBinding, Worker } from '../page';
-import { registry } from '../registry';
-import { getAccessibilityTree } from './crAccessibility';
 import { CRBrowserContext } from './crBrowser';
 import { CRCoverage } from './crCoverage';
 import { DragManager } from './crDragDrop';
@@ -38,8 +33,6 @@ import { CRNetworkManager } from './crNetworkManager';
 import { CRPDF } from './crPdf';
 import { exceptionToError, releaseObject, toConsoleMessageLocation } from './crProtocolHelper';
 import { platformToFontFamilies } from './defaultFontFamilies';
-import { VideoRecorder } from './videoRecorder';
-import { BrowserContext } from '../browserContext';
 import { TargetClosedError } from '../errors';
 import { isSessionClosedError } from '../protocolError';
 
@@ -68,7 +61,6 @@ export class CRPage implements PageDelegate {
   private readonly _pdf: CRPDF;
   private readonly _coverage: CRCoverage;
   readonly _browserContext: CRBrowserContext;
-  private _isBackgroundPage: boolean;
 
   // Holds window features for the next popup being opened via window.open,
   // until the popup target arrives. This could be racy if two oopifs
@@ -82,10 +74,9 @@ export class CRPage implements PageDelegate {
     return crPage._mainFrameSession;
   }
 
-  constructor(client: CRSession, targetId: string, browserContext: CRBrowserContext, opener: CRPage | null, bits: { hasUIWindow: boolean, isBackgroundPage: boolean }) {
+  constructor(client: CRSession, targetId: string, browserContext: CRBrowserContext, opener: CRPage | null, bits: { hasUIWindow: boolean }) {
     this._targetId = targetId;
     this._opener = opener;
-    this._isBackgroundPage = bits.isBackgroundPage;
     const dragManager = new DragManager(this);
     this.rawKeyboard = new RawKeyboardImpl(client, browserContext._browser._platform() === 'mac', dragManager);
     this.rawMouse = new RawMouseImpl(this, client, dragManager);
@@ -113,10 +104,9 @@ export class CRPage implements PageDelegate {
         this._page.setEmulatedSizeFromWindowOpen({ viewport: viewportSize, screen: viewportSize });
     }
 
-    const createdEvent = this._isBackgroundPage ? CRBrowserContext.CREvents.BackgroundPage : BrowserContext.Events.Page;
     this._mainFrameSession._initialize(bits.hasUIWindow).then(
-        () => this._page.reportAsNew(this._opener?._page, undefined, createdEvent),
-        error => this._page.reportAsNew(this._opener?._page, error, createdEvent));
+        () => this._page.reportAsNew(this._opener?._page, undefined),
+        error => this._page.reportAsNew(this._opener?._page, error));
   }
 
   private async _forAllFrameSessions(cb: (frame: FrameSession) => Promise<any>) {
@@ -256,7 +246,7 @@ export class CRPage implements PageDelegate {
   }
 
   async takeScreenshot(progress: Progress, format: 'png' | 'jpeg', documentRect: types.Rect | undefined, viewportRect: types.Rect | undefined, quality: number | undefined, fitsViewport: boolean, scale: 'css' | 'device'): Promise<Buffer> {
-    const { visualViewport } = await this._mainFrameSession._client.send('Page.getLayoutMetrics');
+    const { visualViewport, contentSize, cssContentSize } = await progress.race(this._mainFrameSession._client.send('Page.getLayoutMetrics'));
     if (!documentRect) {
       documentRect = {
         x: visualViewport.pageX + viewportRect!.x,
@@ -271,11 +261,12 @@ export class CRPage implements PageDelegate {
     // ignore current page scale.
     const clip = { ...documentRect, scale: viewportRect ? visualViewport.scale : 1 };
     if (scale === 'css') {
-      const deviceScaleFactor = this._browserContext._options.deviceScaleFactor || 1;
+      // deviceScaleFactor override does not affect layout metrics, so if it is set,
+      // we use its value rather than computed one.
+      const deviceScaleFactor =  this._mainFrameSession._metricsOverride?.deviceScaleFactor || contentSize.width / cssContentSize.width || 1;
       clip.scale /= deviceScaleFactor;
     }
-    progress.throwIfAborted();
-    const result = await this._mainFrameSession._client.send('Page.captureScreenshot', { format, quality, clip, captureBeyondViewport: !fitsViewport });
+    const result = await progress.race(this._mainFrameSession._client.send('Page.captureScreenshot', { format, quality, clip, captureBeyondViewport: !fitsViewport }));
     return Buffer.from(result.data, 'base64');
   }
 
@@ -295,17 +286,17 @@ export class CRPage implements PageDelegate {
     return this._sessionForHandle(handle)._scrollRectIntoViewIfNeeded(handle, rect);
   }
 
-  async setScreencastOptions(options: { width: number, height: number, quality: number } | null): Promise<void> {
-    if (options) {
-      await this._mainFrameSession._startScreencast(this, {
-        format: 'jpeg',
-        quality: options.quality,
-        maxWidth: options.width,
-        maxHeight: options.height
-      });
-    } else {
-      await this._mainFrameSession._stopScreencast(this);
-    }
+  async startScreencast(options: { width: number; height: number; quality: number; }): Promise<void> {
+    await this._mainFrameSession._client.send('Page.startScreencast', {
+      format: 'jpeg',
+      quality: options.quality,
+      maxWidth: options.width,
+      maxHeight: options.height,
+    });
+  }
+
+  async stopScreencast() {
+    await this._mainFrameSession._client._sendMayFail('Page.stopScreencast');
   }
 
   rafCountForStablePosition(): number {
@@ -331,17 +322,13 @@ export class CRPage implements PageDelegate {
     return this._sessionForHandle(handle)._adoptElementHandle<T>(handle, to);
   }
 
-  async getAccessibilityTree(needle?: dom.ElementHandle) {
-    return getAccessibilityTree(this._mainFrameSession._client, needle);
-  }
-
   async inputActionEpilogue(): Promise<void> {
     await this._mainFrameSession._client.send('Page.enable').catch(e => {});
   }
 
-  async resetForReuse(): Promise<void> {
+  async resetForReuse(progress: Progress): Promise<void> {
     // See https://github.com/microsoft/playwright/issues/22432.
-    await this.rawMouse.move(-1, -1, 'none', new Set(), new Set(), true);
+    await this.rawMouse.move(progress, -1, -1, 'none', new Set(), new Set(), true);
   }
 
   async pdf(options: channels.PagePdfParams): Promise<Buffer> {
@@ -371,6 +358,10 @@ export class CRPage implements PageDelegate {
   shouldToggleStyleSheetToSyncAnimations(): boolean {
     return false;
   }
+
+  async setDockTile(image: Buffer): Promise<void> {
+    await this._mainFrameSession._client.send('Browser.setDockTile', { image: image.toString('base64') });
+  }
 }
 
 class FrameSession {
@@ -389,12 +380,10 @@ class FrameSession {
   // Marks the oopif session that remote -> local transition has happened in the parent.
   // See Target.detachedFromTarget handler for details.
   private _swappedIn = false;
-  private _videoRecorder: VideoRecorder | null = null;
-  private _screencastId: string | null = null;
-  private _screencastClients = new Set<any>();
-  private _metricsOverride: Protocol.Emulation.setDeviceMetricsOverrideParameters | undefined;
+  _metricsOverride: Protocol.Emulation.setDeviceMetricsOverrideParameters | undefined;
   private _workerSessions = new Map<string, CRSession>();
   private _initScriptIds = new Map<InitScript, string>();
+  private _bufferedAttachedToTargetEvents: Protocol.Target.attachedToTargetPayload[] | undefined;
 
   constructor(crPage: CRPage, client: CRSession, targetId: string, parentSession: FrameSession | null) {
     this._client = client;
@@ -433,13 +422,13 @@ class FrameSession {
       eventsHelper.addEventListener(this._client, 'Runtime.executionContextCreated', event => this._onExecutionContextCreated(event.context)),
       eventsHelper.addEventListener(this._client, 'Runtime.executionContextDestroyed', event => this._onExecutionContextDestroyed(event.executionContextId)),
       eventsHelper.addEventListener(this._client, 'Runtime.executionContextsCleared', event => this._onExecutionContextsCleared()),
-      eventsHelper.addEventListener(this._client, 'Target.attachedToTarget', event => this._onAttachedToTarget(event)),
-      eventsHelper.addEventListener(this._client, 'Target.detachedFromTarget', event => this._onDetachedFromTarget(event)),
     ]);
   }
 
   private _addBrowserListeners() {
     this._eventListeners.push(...[
+      eventsHelper.addEventListener(this._client, 'Target.attachedToTarget', event => this._onAttachedToTarget(event)),
+      eventsHelper.addEventListener(this._client, 'Target.detachedFromTarget', event => this._onDetachedFromTarget(event)),
       eventsHelper.addEventListener(this._client, 'Inspector.targetCrashed', event => this._onTargetCrashed()),
       eventsHelper.addEventListener(this._client, 'Page.screencastFrame', event => this._onScreencastFrame(event)),
       eventsHelper.addEventListener(this._client, 'Page.windowOpen', event => this._onWindowOpen(event)),
@@ -447,37 +436,28 @@ class FrameSession {
   }
 
   async _initialize(hasUIWindow: boolean) {
-    const isSettingStorageState = this._page.browserContext.isSettingStorageState();
-    if (!isSettingStorageState && hasUIWindow &&
+    if (!this._page.isStorageStatePage && hasUIWindow &&
       !this._crPage._browserContext._browser.isClank() &&
       !this._crPage._browserContext._options.noDefaultViewport) {
       const { windowId } = await this._client.send('Browser.getWindowForTarget');
       this._windowId = windowId;
     }
 
-    let screencastOptions: types.PageScreencastOptions | undefined;
-    if (!isSettingStorageState && this._isMainFrame() && this._crPage._browserContext._options.recordVideo && hasUIWindow) {
-      const screencastId = createGuid();
-      const outputFile = path.join(this._crPage._browserContext._options.recordVideo.dir, screencastId + '.webm');
-      screencastOptions = {
-        // validateBrowserContextOptions ensures correct video size.
-        ...this._crPage._browserContext._options.recordVideo.size!,
-        outputFile,
-      };
-      await this._crPage._browserContext._ensureVideosPath();
-      // Note: it is important to start video recorder before sending Page.startScreencast,
-      // and it is equally important to send Page.startScreencast before sending Runtime.runIfWaitingForDebugger.
-      await this._createVideoRecorder(screencastId, screencastOptions);
-      this._crPage._page.waitForInitializedOrError().then(p => {
-        if (p instanceof Error)
-          this._stopVideoRecording().catch(() => {});
-      });
-    }
+    let videoOptions: types.VideoOptions | undefined;
+    if (this._isMainFrame() && hasUIWindow && !this._page.isStorageStatePage)
+      videoOptions = this._crPage._page.screencast.launchAutomaticVideoRecorder();
 
     let lifecycleEventsEnabled: Promise<any>;
     if (!this._isMainFrame())
       this._addRendererListeners();
     this._addBrowserListeners();
+
+    // Buffer attachedToTarget events until we receive the frame tree.
+    // This way we'll know where to insert oopif targets in the frame hierarchy.
+    // Note that we cannot send Target.setAutoAttach after Runtime.runIfWaitingForDebugger,
+    // so we have to buffer events instead.
+    this._bufferedAttachedToTargetEvents = [];
+
     const promises: Promise<any>[] = [
       this._client.send('Page.enable'),
       this._client.send('Page.getFrameTree').then(({ frameTree }) => {
@@ -485,6 +465,12 @@ class FrameSession {
           this._handleFrameTree(frameTree);
           this._addRendererListeners();
         }
+
+        // Now that we have the frame tree, it is possible to insert oopif targets at the right place.
+        const attachedToTargetEvents = this._bufferedAttachedToTargetEvents || [];
+        this._bufferedAttachedToTargetEvents = undefined;
+        for (const event of attachedToTargetEvents)
+          this._onAttachedToTarget(event);
 
         const localFrames = this._isMainFrame() ? this._page.frames() : [this._page.frameManager.frame(this._targetId)!];
         for (const frame of localFrames) {
@@ -519,7 +505,7 @@ class FrameSession {
       this._crPage._networkManager.addSession(this._client, undefined, this._isMainFrame()),
       this._client.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }),
     ];
-    if (!isSettingStorageState) {
+    if (!this._page.isStorageStatePage) {
       if (this._crPage._browserContext.needsPlaywrightBinding())
         promises.push(this.exposePlaywrightBinding());
       if (this._isMainFrame())
@@ -548,8 +534,8 @@ class FrameSession {
       promises.push(this._updateFileChooserInterception(true));
       for (const initScript of this._crPage._page.allInitScripts())
         promises.push(this._evaluateOnNewDocument(initScript, 'main', true /* runImmediately */));
-      if (screencastOptions)
-        promises.push(this._startVideoRecording(screencastOptions));
+      if (videoOptions)
+        promises.push(this._crPage._page.screencast.startVideoRecording(videoOptions));
     }
     promises.push(this._client.send('Runtime.runIfWaitingForDebugger'));
     promises.push(this._firstNonInitialNavigationCommittedPromise);
@@ -557,7 +543,7 @@ class FrameSession {
   }
 
   dispose() {
-    this._firstNonInitialNavigationCommittedReject(new TargetClosedError());
+    this._firstNonInitialNavigationCommittedReject(new TargetClosedError(this._page.closeReason()));
     for (const childSession of this._childSessions)
       childSession.dispose();
     if (this._parentSession)
@@ -570,6 +556,8 @@ class FrameSession {
 
   async _navigate(frame: frames.Frame, url: string, referrer: string | undefined): Promise<frames.GotoResult> {
     const response = await this._client.send('Page.navigate', { url, referrer, frameId: frame._id, referrerPolicy: 'unsafeUrl' });
+    if (response.isDownload)
+      throw new frames.NavigationAbortedError(response.loaderId, 'Download is starting');
     if (response.errorText)
       throw new frames.NavigationAbortedError(response.loaderId, `${response.errorText} at ${url}`);
     return { newDocumentId: response.loaderId };
@@ -699,12 +687,22 @@ class FrameSession {
   }
 
   _onAttachedToTarget(event: Protocol.Target.attachedToTargetPayload) {
+    if (this._bufferedAttachedToTargetEvents) {
+      this._bufferedAttachedToTargetEvents.push(event);
+      return;
+    }
+
     const session = this._client.createChildSession(event.sessionId);
 
     if (event.targetInfo.type === 'iframe') {
       // Frame id equals target id.
       const targetId = event.targetInfo.targetId;
-      const frame = this._page.frameManager.frame(targetId);
+      let frame = this._page.frameManager.frame(targetId);
+      if (!frame && event.targetInfo.parentFrameId) {
+        // When connecting to an existing page with an iframe, there is an "iframe" target,
+        // but no local frame is reported in getFrameTree. We can create a remote frame here.
+        frame = this._page.frameManager.frameAttached(targetId, event.targetInfo.parentFrameId);
+      }
       if (!frame)
         return; // Subtree may be already gone due to renderer/browser race.
       this._page.frameManager.removeChildFramesRecursively(frame);
@@ -730,6 +728,10 @@ class FrameSession {
     session.once('Runtime.executionContextCreated', async event => {
       worker.createExecutionContext(new CRExecutionContext(session, event.context));
     });
+    if (this._crPage._browserContext._browser.majorVersion() >= 143)
+      session.on('Inspector.workerScriptLoaded', () => worker.workerScriptLoaded());
+    else
+      worker.workerScriptLoaded();
     // This might fail if the target is closed before we initialize.
     session._sendMayFail('Runtime.enable');
     // TODO: attribute workers to the right frame.
@@ -740,9 +742,9 @@ class FrameSession {
     session.on('Target.detachedFromTarget', event => this._onDetachedFromTarget(event));
     session.on('Runtime.consoleAPICalled', event => {
       const args = event.args.map(o => createHandle(worker.existingExecutionContext!, o));
-      this._page.addConsoleMessage(event.type, args, toConsoleMessageLocation(event.stackTrace));
+      this._page.addConsoleMessage(worker, event.type, args, toConsoleMessageLocation(event.stackTrace), undefined, event.timestamp);
     });
-    session.on('Runtime.exceptionThrown', exception => this._page.emitOnContextOnceInitialized(BrowserContext.Events.PageError, exceptionToError(exception.exceptionDetails), this._page));
+    session.on('Runtime.exceptionThrown', exception => this._page.addPageError(exceptionToError(exception.exceptionDetails)));
   }
 
   _onDetachedFromTarget(event: Protocol.Target.detachedFromTargetPayload) {
@@ -803,7 +805,7 @@ class FrameSession {
     if (!context)
       return;
     const values = event.args.map(arg => createHandle(context, arg));
-    this._page.addConsoleMessage(event.type, values, toConsoleMessageLocation(event.stackTrace));
+    this._page.addConsoleMessage(null, event.type, values, toConsoleMessageLocation(event.stackTrace), undefined, event.timestamp);
   }
 
   async _onBindingCalled(event: Protocol.Runtime.bindingCalledPayload) {
@@ -832,7 +834,7 @@ class FrameSession {
   }
 
   _handleException(exceptionDetails: Protocol.Runtime.ExceptionDetails) {
-    this._page.emitOnContextOnceInitialized(BrowserContext.Events.PageError, exceptionToError(exceptionDetails), this._page);
+    this._page.addPageError(exceptionToError(exceptionDetails));
   }
 
   async _onTargetCrashed() {
@@ -850,7 +852,7 @@ class FrameSession {
         lineNumber: lineNumber || 0,
         columnNumber: 0,
       };
-      this._page.addConsoleMessage(level, [], location, text);
+      this._page.addConsoleMessage(null, level, [], location, text, event.entry.timestamp);
     }
   }
 
@@ -880,67 +882,16 @@ class FrameSession {
   }
 
   _onScreencastFrame(payload: Protocol.Page.screencastFramePayload) {
-    this._page.throttleScreencastFrameAck(() => {
-      this._client.send('Page.screencastFrameAck', { sessionId: payload.sessionId }).catch(() => {});
+    this._page.screencast.throttleFrameAck(() => {
+      this._client._sendMayFail('Page.screencastFrameAck', { sessionId: payload.sessionId });
     });
     const buffer = Buffer.from(payload.data, 'base64');
     this._page.emit(Page.Events.ScreencastFrame, {
       buffer,
-      frameSwapWallTime: payload.metadata.timestamp ? payload.metadata.timestamp * 1000 : undefined,
+      frameSwapWallTime: payload.metadata.timestamp ? payload.metadata.timestamp * 1000 : Date.now(),
       width: payload.metadata.deviceWidth,
       height: payload.metadata.deviceHeight,
     });
-  }
-
-  async _createVideoRecorder(screencastId: string, options: types.PageScreencastOptions): Promise<void> {
-    assert(!this._screencastId);
-    const ffmpegPath = registry.findExecutable('ffmpeg')!.executablePathOrDie(this._page.attribution.playwright.options.sdkLanguage);
-    this._videoRecorder = await VideoRecorder.launch(this._crPage._page, ffmpegPath, options);
-    this._screencastId = screencastId;
-  }
-
-  async _startVideoRecording(options: types.PageScreencastOptions) {
-    const screencastId = this._screencastId;
-    assert(screencastId);
-    this._page.once(Page.Events.Close, () => this._stopVideoRecording().catch(() => {}));
-    const gotFirstFrame = new Promise(f => this._client.once('Page.screencastFrame', f));
-    await this._startScreencast(this._videoRecorder, {
-      format: 'jpeg',
-      quality: 90,
-      maxWidth: options.width,
-      maxHeight: options.height,
-    });
-    // Wait for the first frame before reporting video to the client.
-    gotFirstFrame.then(() => {
-      this._crPage._browserContext._browser._videoStarted(this._crPage._browserContext, screencastId, options.outputFile, this._crPage._page.waitForInitializedOrError());
-    });
-  }
-
-  async _stopVideoRecording(): Promise<void> {
-    if (!this._screencastId)
-      return;
-    const screencastId = this._screencastId;
-    this._screencastId = null;
-    const recorder = this._videoRecorder!;
-    this._videoRecorder = null;
-    await this._stopScreencast(recorder);
-    await recorder.stop().catch(() => {});
-    // Keep the video artifact in the map until encoding is fully finished, if the context
-    // starts closing before the video is fully written to disk it will wait for it.
-    const video = this._crPage._browserContext._browser._takeVideo(screencastId);
-    video?.reportFinished();
-  }
-
-  async _startScreencast(client: any, options: Protocol.Page.startScreencastParameters = {}) {
-    this._screencastClients.add(client);
-    if (this._screencastClients.size === 1)
-      await this._client.send('Page.startScreencast', options);
-  }
-
-  async _stopScreencast(client: any) {
-    this._screencastClients.delete(client);
-    if (!this._screencastClients.size)
-      await this._client._sendMayFail('Page.stopScreencast');
   }
 
   async _updateGeolocation(initial: boolean): Promise<void> {
