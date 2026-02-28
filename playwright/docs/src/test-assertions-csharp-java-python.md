@@ -24,7 +24,7 @@ title: "Assertions"
 | [`method: LocatorAssertions.toHaveAttribute`] | Element has a DOM attribute |
 | [`method: LocatorAssertions.toHaveClass`] | Element has a class property |
 | [`method: LocatorAssertions.toHaveCount`] | List has exact number of children |
-| [`method: LocatorAssertions.toHaveCSS`] | Element has CSS property |
+| [`method: LocatorAssertions.toHaveCSS#1`] | Element has CSS property |
 | [`method: LocatorAssertions.toHaveId`] | Element has an ID |
 | [`method: LocatorAssertions.toHaveJSProperty`] | Element has a JavaScript property |
 | [`method: LocatorAssertions.toHaveRole`] | Element has a specific [ARIA role](https://www.w3.org/TR/wai-aria-1.2/#roles) |
@@ -84,6 +84,7 @@ expect.set_options(timeout=10_000)
     {label: 'MSTest', value: 'mstest'},
     {label: 'NUnit', value: 'nunit'},
     {label: 'xUnit', value: 'xunit'},
+    {label: 'xUnit v3', value: 'xunit-v3'},
   ]
 }>
 <TabItem value="nunit">
@@ -136,6 +137,24 @@ public class UnitTest1 : PageTest
 ```csharp title="UnitTest1.cs"
 using Microsoft.Playwright;
 using Microsoft.Playwright.Xunit;
+
+namespace PlaywrightTests;
+
+public class UnitTest1: PageTest
+{
+    UnitTest1()
+    {
+        SetDefaultExpectTimeout(10_000);
+    }
+    // ...
+}
+```
+</TabItem>
+<TabItem value="xunit-v3">
+
+```csharp title="UnitTest1.cs"
+using Microsoft.Playwright;
+using Microsoft.Playwright.Xunit.v3;
 
 namespace PlaywrightTests;
 

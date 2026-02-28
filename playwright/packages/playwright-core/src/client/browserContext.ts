@@ -41,12 +41,19 @@ import { urlMatchesEqual } from '../utils/isomorphic/urlMatch';
 import { isRegExp, isString } from '../utils/isomorphic/rtti';
 import { rewriteErrorMessage } from '../utils/isomorphic/stackTrace';
 
-import type { BrowserContextOptions, Headers, StorageState, WaitForEventOptions } from './types';
+import type { BrowserContextOptions, Headers, SetStorageState, StorageState, WaitForEventOptions } from './types';
 import type * as structs from '../../types/structs';
 import type * as api from '../../types/types';
 import type { URLMatch } from '../utils/isomorphic/urlMatch';
 import type { Platform } from './platform';
 import type * as channels from '@protocol/channels';
+import type * as actions from '@recorder/actions';
+
+interface RecorderEventSink {
+  actionAdded?(page: Page, actionInContext: actions.ActionInContext, code: string): void;
+  actionUpdated?(page: Page, actionInContext: actions.ActionInContext, code: string): void;
+  signalAdded?(page: Page, signal: actions.SignalInContext): void;
+}
 
 export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel> implements api.BrowserContext {
   _pages = new Set<Page>();
@@ -57,6 +64,7 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
   readonly _bindings = new Map<string, (source: structs.BindingSource, ...args: any[]) => any>();
   _timeoutSettings: TimeoutSettings;
   _ownerPage: Page | undefined;
+  _forReuse = false;
   private _closedPromise: Promise<void>;
   readonly _options: channels.BrowserNewContextParams;
 
@@ -64,12 +72,14 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
   readonly tracing: Tracing;
   readonly clock: Clock;
 
-  readonly _backgroundPages = new Set<Page>();
   readonly _serviceWorkers = new Set<Worker>();
   private _harRecorders = new Map<string, { path: string, content: 'embed' | 'attach' | 'omit' | undefined }>();
   _closingStatus: 'none' | 'closing' | 'closed' = 'none';
   private _closeReason: string | undefined;
   private _harRouters: HarRouter[] = [];
+  private _onRecorderEventSink: RecorderEventSink | undefined;
+  private _allowedProtocols: string[] | undefined;
+  private _allowedDirectories: string[] | undefined;
 
   static from(context: channels.BrowserContextChannel): BrowserContext {
     return (context as any)._object;
@@ -86,6 +96,7 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
     this.tracing = Tracing.from(initializer.tracing);
     this.request = APIRequestContext.from(initializer.requestContext);
     this.request._timeoutSettings = this._timeoutSettings;
+    this.request._checkUrlAllowed = (url: string) => this._checkUrlAllowed(url);
     this.clock = new Clock(this);
 
     this._channel.on('bindingCall', ({ binding }) => this._onBinding(BindingCall.from(binding)));
@@ -93,11 +104,6 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
     this._channel.on('page', ({ page }) => this._onPage(Page.from(page)));
     this._channel.on('route', ({ route }) => this._onRoute(network.Route.from(route)));
     this._channel.on('webSocketRoute', ({ webSocketRoute }) => this._onWebSocketRoute(network.WebSocketRoute.from(webSocketRoute)));
-    this._channel.on('backgroundPage', ({ page }) => {
-      const backgroundPage = Page.from(page);
-      this._backgroundPages.add(backgroundPage);
-      this.emit(Events.BrowserContext.BackgroundPage, backgroundPage);
-    });
     this._channel.on('serviceWorker', ({ worker }) => {
       const serviceWorker = Worker.from(worker);
       serviceWorker._context = this;
@@ -105,11 +111,19 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
       this.emit(Events.BrowserContext.ServiceWorker, serviceWorker);
     });
     this._channel.on('console', event => {
-      const consoleMessage = new ConsoleMessage(this._platform, event);
+      const worker = Worker.fromNullable(event.worker);
+      const page = Page.fromNullable(event.page);
+      const consoleMessage = new ConsoleMessage(this._platform, event, page, worker);
+      worker?.emit(Events.Worker.Console, consoleMessage);
+      page?.emit(Events.Page.Console, consoleMessage);
+      if (worker && this._serviceWorkers.has(worker)) {
+        const scope = this._serviceWorkerScope(worker);
+        for (const page of this._pages) {
+          if (scope && page.url().startsWith(scope))
+            page.emit(Events.Page.Console, consoleMessage);
+        }
+      }
       this.emit(Events.BrowserContext.Console, consoleMessage);
-      const page = consoleMessage.page();
-      if (page)
-        page.emit(Events.Page.Console, consoleMessage);
     });
     this._channel.on('pageError', ({ error, page }) => {
       const pageObject = Page.from(page);
@@ -139,6 +153,14 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
     this._channel.on('requestFailed', ({ request, failureText, responseEndTiming, page }) => this._onRequestFailed(network.Request.from(request), responseEndTiming, failureText, Page.fromNullable(page)));
     this._channel.on('requestFinished', params => this._onRequestFinished(params));
     this._channel.on('response', ({ response, page }) => this._onResponse(network.Response.from(response), Page.fromNullable(page)));
+    this._channel.on('recorderEvent', ({ event, data, page, code }) => {
+      if (event === 'actionAdded')
+        this._onRecorderEventSink?.actionAdded?.(Page.from(page), data as actions.ActionInContext, code);
+      else if (event === 'actionUpdated')
+        this._onRecorderEventSink?.actionUpdated?.(Page.from(page), data as actions.ActionInContext, code);
+      else if (event === 'signalAdded')
+        this._onRecorderEventSink?.signalAdded?.(Page.from(page), data as actions.SignalInContext);
+    });
     this._closedPromise = new Promise(f => this.once(Events.BrowserContext.Close, f));
 
     this._setEventToSubscriptionMapping(new Map<string, channels.BrowserContextUpdateSubscriptionParams['event']>([
@@ -219,7 +241,7 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
         this._routes.splice(index, 1);
       const handled = await routeHandler.handle(route);
       if (!this._routes.length)
-        this._updateInterceptionPatterns().catch(() => {});
+        this._updateInterceptionPatterns({ internal: true }).catch(() => {});
       if (handled)
         return;
     }
@@ -241,6 +263,17 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
     if (!func)
       return;
     await bindingCall.call(func);
+  }
+
+  private _serviceWorkerScope(serviceWorker: Worker) {
+    try {
+      let url = new URL('.', serviceWorker.url()).href;
+      if (!url.endsWith('/'))
+        url += '/';
+      return url;
+    } catch {
+      return null;
+    }
   }
 
   setDefaultNavigationTimeout(timeout: number | undefined) {
@@ -334,12 +367,12 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
 
   async route(url: URLMatch, handler: network.RouteHandlerCallback, options: { times?: number } = {}): Promise<void> {
     this._routes.unshift(new network.RouteHandler(this._platform, this._options.baseURL, url, handler, options.times));
-    await this._updateInterceptionPatterns();
+    await this._updateInterceptionPatterns({ title: 'Route requests' });
   }
 
   async routeWebSocket(url: URLMatch, handler: network.WebSocketRouteHandlerCallback): Promise<void> {
     this._webSocketRoutes.unshift(new network.WebSocketRouteHandler(this._options.baseURL, url, handler));
-    await this._updateWebSocketInterceptionPatterns();
+    await this._updateWebSocketInterceptionPatterns({ title: 'Route WebSockets' });
   }
 
   async _recordIntoHAR(har: string, page: Page | null, options: { url?: string | RegExp, updateContent?: 'attach' | 'embed' | 'omit', updateMode?: 'minimal' | 'full'} = {}): Promise<void> {
@@ -394,21 +427,21 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
 
   private async _unrouteInternal(removed: network.RouteHandler[], remaining: network.RouteHandler[], behavior?: 'wait'|'ignoreErrors'|'default'): Promise<void> {
     this._routes = remaining;
-    await this._updateInterceptionPatterns();
-    if (!behavior || behavior === 'default')
-      return;
-    const promises = removed.map(routeHandler => routeHandler.stop(behavior));
-    await Promise.all(promises);
+    if (behavior && behavior !== 'default') {
+      const promises = removed.map(routeHandler => routeHandler.stop(behavior));
+      await Promise.all(promises);
+    }
+    await this._updateInterceptionPatterns({ title: 'Unroute requests' });
   }
 
-  private async _updateInterceptionPatterns() {
+  private async _updateInterceptionPatterns(options: { internal: true } | { title: string }) {
     const patterns = network.RouteHandler.prepareInterceptionPatterns(this._routes);
-    await this._channel.setNetworkInterceptionPatterns({ patterns });
+    await this._wrapApiCall(() => this._channel.setNetworkInterceptionPatterns({ patterns }), options);
   }
 
-  private async _updateWebSocketInterceptionPatterns() {
+  private async _updateWebSocketInterceptionPatterns(options: { internal: true } | { title: string }) {
     const patterns = network.WebSocketRouteHandler.prepareInterceptionPatterns(this._webSocketRoutes);
-    await this._channel.setWebSocketInterceptionPatterns({ patterns });
+    await this._wrapApiCall(() => this._channel.setWebSocketInterceptionPatterns({ patterns }), options);
   }
 
   _effectiveCloseReason(): string | undefined {
@@ -438,8 +471,13 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
     return state;
   }
 
+  async setStorageState(storageState: string | SetStorageState): Promise<void> {
+    const state = await prepareStorageState(this._platform, storageState);
+    await this._channel.setStorageState({ storageState: state });
+  }
+
   backgroundPages(): Page[] {
-    return [...this._backgroundPages];
+    return [];
   }
 
   serviceWorkers(): Worker[] {
@@ -474,8 +512,8 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
     this._closeReason = options.reason;
     this._closingStatus = 'closing';
     await this.request.dispose(options);
+    await this._instrumentation.runBeforeCloseBrowserContext(this);
     await this._wrapApiCall(async () => {
-      await this._instrumentation.runBeforeCloseBrowserContext(this);
       for (const [harId, harParams] of this._harRecorders) {
         const har = await this._channel.harExport({ harId });
         const artifact = Artifact.from(har.artifact);
@@ -498,18 +536,68 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
     await this._closedPromise;
   }
 
-  async _enableRecorder(params: channels.BrowserContextEnableRecorderParams) {
+  async _enableRecorder(params: channels.BrowserContextEnableRecorderParams, eventSink?: RecorderEventSink) {
+    if (eventSink)
+      this._onRecorderEventSink = eventSink;
     await this._channel.enableRecorder(params);
+  }
+
+  async _disableRecorder() {
+    this._onRecorderEventSink = undefined;
+    await this._channel.disableRecorder();
+  }
+
+  async _exposeConsoleApi() {
+    await this._channel.exposeConsoleApi();
+  }
+
+  _setAllowedProtocols(protocols: string[]) {
+    this._allowedProtocols = protocols;
+  }
+
+  _checkUrlAllowed(url: string) {
+    if (!this._allowedProtocols)
+      return;
+    let parsedURL;
+    try {
+      parsedURL = new URL(url);
+    } catch (e) {
+      throw new Error(`Access to ${url} is blocked. Invalid URL: ${e.message}`);
+    }
+    if (!this._allowedProtocols.includes(parsedURL.protocol))
+      throw new Error(`Access to "${parsedURL.protocol}" URL is blocked. Allowed protocols: ${this._allowedProtocols.join(', ')}. Attempted URL: ${url}`);
+  }
+
+  _setAllowedDirectories(rootDirectories: string[]) {
+    this._allowedDirectories = rootDirectories;
+  }
+
+  _checkFileAccess(filePath: string) {
+    if (!this._allowedDirectories)
+      return;
+    const path = this._platform.path().resolve(filePath);
+    const isInsideDir = (container: string, child: string): boolean => {
+      const path = this._platform.path();
+      const rel = path.relative(container, child);
+      return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+    };
+    if (this._allowedDirectories.some(root => isInsideDir(root, path)))
+      return;
+    throw new Error(`File access denied: ${filePath} is outside allowed roots. Allowed roots: ${this._allowedDirectories.length ? this._allowedDirectories.join(', ') : 'none'}`);
+  }
+
+  async _devtoolsStart(): Promise<{ url: string }> {
+    return await this._channel.devtoolsStart();
   }
 }
 
-async function prepareStorageState(platform: Platform, options: BrowserContextOptions): Promise<channels.BrowserNewContextParams['storageState']> {
-  if (typeof options.storageState !== 'string')
-    return options.storageState as any;
+async function prepareStorageState(platform: Platform, storageState: string | SetStorageState): Promise<NonNullable<channels.BrowserNewContextParams['storageState']>> {
+  if (typeof storageState !== 'string')
+    return storageState as any;
   try {
-    return JSON.parse(await platform.fs().promises.readFile(options.storageState, 'utf8'));
+    return JSON.parse(await platform.fs().promises.readFile(storageState, 'utf8'));
   } catch (e) {
-    rewriteErrorMessage(e, `Error reading storage state from ${options.storageState}:\n` + e.message);
+    rewriteErrorMessage(e, `Error reading storage state from ${storageState}:\n` + e.message);
     throw e;
   }
 }
@@ -524,7 +612,7 @@ export async function prepareBrowserContextParams(platform: Platform, options: B
     viewport: options.viewport === null ? undefined : options.viewport,
     noDefaultViewport: options.viewport === null,
     extraHTTPHeaders: options.extraHTTPHeaders ? headersObjectToArray(options.extraHTTPHeaders) : undefined,
-    storageState: await prepareStorageState(platform, options),
+    storageState: options.storageState ? await prepareStorageState(platform, options.storageState) : undefined,
     serviceWorkers: options.serviceWorkers,
     colorScheme: options.colorScheme === null ? 'no-override' : options.colorScheme,
     reducedMotion: options.reducedMotion === null ? 'no-override' : options.reducedMotion,

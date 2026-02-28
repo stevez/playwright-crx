@@ -18,14 +18,14 @@
 import { test as it, expect } from './pageTest';
 import util from 'util';
 
-it('should work @smoke', async ({ page, browserName }) => {
+it('should work @smoke', async ({ page, browserName, channel }) => {
   let message = null;
   page.once('console', m => message = m);
   await Promise.all([
     page.evaluate(() => console.log('hello', 5, { foo: 'bar' })),
     page.waitForEvent('console')
   ]);
-  if (browserName !== 'firefox')
+  if (browserName !== 'firefox' || channel?.startsWith('moz-firefox'))
     expect(message.text()).toEqual('hello 5 {foo: bar}');
   else
     expect(message.text()).toEqual('hello 5 JSHandle@object');
@@ -114,14 +114,14 @@ it('should format the message correctly with time/timeLog/timeEnd', async ({ pag
   expect(messages[1].text()).toMatch(/foo time: \d+.\d+ ?ms/);
 });
 
-it('should not fail for window object', async ({ page, browserName }) => {
+it('should not fail for window object', async ({ page, browserName, channel }) => {
   let message = null;
   page.once('console', msg => message = msg);
   await Promise.all([
     page.evaluate(() => console.error(window)),
     page.waitForEvent('console')
   ]);
-  if (browserName !== 'firefox')
+  if (browserName !== 'firefox' || channel?.startsWith('moz-firefox'))
     expect(message.text()).toEqual('Window');
   else
     expect(message.text()).toEqual('JSHandle@object');
@@ -134,7 +134,7 @@ it('should trigger correct Log', async ({ page, server, browserName, isWindows }
     page.waitForEvent('console'),
     page.evaluate(async url => fetch(url).catch(e => {}), server.EMPTY_PAGE)
   ]);
-  expect(message.text()).toContain('Access-Control-Allow-Origin');
+  expect(message.text()).toMatch(/Access-Control-Allow-Origin|CORS/);
   expect(message.type()).toEqual('error');
 });
 
@@ -178,31 +178,31 @@ it('should not throw when there are console messages in detached iframes', async
   expect(await popup.evaluate('1 + 1')).toBe(2);
 });
 
-it('should use object previews for arrays and objects', async ({ page, browserName }) => {
+it('should use object previews for arrays and objects', async ({ page, browserName, channel }) => {
   let text: string;
   page.on('console', message => {
     text = message.text();
   });
   await page.evaluate(() => console.log([1, 2, 3], { a: 1 }, window));
 
-  if (browserName !== 'firefox')
+  if (browserName !== 'firefox' || channel?.startsWith('moz-firefox'))
     expect(text).toEqual('[1, 2, 3] {a: 1} Window');
   else
     expect(text).toEqual('Array JSHandle@object JSHandle@object');
 });
 
-it('should use object previews for errors', async ({ page, browserName }) => {
+it('should use object previews for errors', async ({ page, browserName, isBidi }) => {
   let text: string;
   page.on('console', message => {
     text = message.text();
   });
   await page.evaluate(() => console.log(new Error('Exception')));
-  if (browserName === 'chromium')
-    expect(text).toContain('.evaluate');
-  if (browserName === 'webkit')
-    expect(text).toEqual('Error: Exception');
-  if (browserName === 'firefox')
+  if (isBidi || browserName === 'firefox')
     expect(text).toEqual('Error');
+  else if (browserName === 'chromium')
+    expect(text).toContain('.evaluate');
+  else if (browserName === 'webkit')
+    expect(text).toEqual('Error: Exception');
 });
 
 it('do not update console count on unhandled rejections', async ({ page }) => {
@@ -221,4 +221,82 @@ it('do not update console count on unhandled rejections', async ({ page }) => {
   });
 
   await expect.poll(() => messages).toEqual(['begin', 'end']);
+});
+
+it('should have timestamp', async ({ page, isAndroid }) => {
+  it.skip(isAndroid, 'there is a time difference between android emulator and host machine');
+
+  const before = Date.now() - 1;  // Account for the rounding of fractional timestamps.
+  const [message] = await Promise.all([
+    page.waitForEvent('console'),
+    page.evaluate(() => console.log('timestamp test')),
+  ]);
+  const after = Date.now() + 1;  // Account for the rounding of fractional timestamps.
+  expect(message.timestamp()).toBeGreaterThanOrEqual(before);
+  expect(message.timestamp()).toBeLessThanOrEqual(after);
+});
+
+it('should have increasing timestamps', async ({ page }) => {
+  const messages = [];
+  page.on('console', msg => messages.push(msg));
+  await page.evaluate(() => {
+    console.log('first');
+    console.log('second');
+    console.log('third');
+  });
+  expect(messages.length).toBe(3);
+  for (let i = 1; i < messages.length; i++)
+    expect(messages[i].timestamp()).toBeGreaterThanOrEqual(messages[i - 1].timestamp());
+});
+
+it('should have timestamp in consoleMessages', async ({ page, isAndroid }) => {
+  it.skip(isAndroid, 'there is a time difference between android emulator and host machine');
+
+  const before = Date.now() - 1;  // Account for the rounding of fractional timestamps.
+  await page.evaluate(() => console.log('stored message'));
+  const after = Date.now() + 1;  // Account for the rounding of fractional timestamps.
+  const messages = await page.consoleMessages();
+  expect(messages.length).toBeGreaterThanOrEqual(1);
+  const last = messages[messages.length - 1];
+  expect(last.text()).toBe('stored message');
+  expect(last.timestamp()).toBeGreaterThanOrEqual(before);
+  expect(last.timestamp()).toBeLessThanOrEqual(after);
+});
+
+it('consoleMessages should work', async ({ page }) => {
+  await page.evaluate(() => {
+    for (let i = 0; i < 301; i++)
+      console.log('message' + i);
+  });
+
+  const messages = await page.consoleMessages();
+  const objects = messages.map(m => ({ text: m.text(), type: m.type(), page: m.page() }));
+
+  const expected = [];
+  for (let i = 201; i < 301; i++)
+    expected.push(expect.objectContaining({ text: 'message' + i, type: 'log', page }));
+
+  expect(objects.length, 'should be at least 100 messages').toBeGreaterThanOrEqual(100);
+  expect(objects.slice(objects.length - expected.length), 'should return last messages').toEqual(expected);
+});
+
+it('clearConsoleMessages should work', async ({ page }) => {
+  await page.evaluate(() => {
+    console.log('message1');
+    console.log('message2');
+  });
+
+  let messages = await page.consoleMessages();
+  expect(messages.map(m => m.text())).toContain('message1');
+  expect(messages.map(m => m.text())).toContain('message2');
+
+  await page.clearConsoleMessages();
+
+  messages = await page.consoleMessages();
+  expect(messages).toEqual([]);
+
+  await page.evaluate(() => console.log('message3'));
+  messages = await page.consoleMessages();
+  expect(messages.length).toBe(1);
+  expect(messages[0].text()).toBe('message3');
 });

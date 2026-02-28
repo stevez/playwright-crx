@@ -28,7 +28,7 @@ You can also edit the locators in VS Code and Playwright will show you the chang
 
 ### Picking a Locator
 
-Pick a [locator](./locators.md) and copy it into your test file by clicking the **Pick locator** button form the testing sidebar. Then in the browser click the element you require and it will now show up in the **Pick locator** box in VS Code. Press 'enter' on your keyboard to copy the locator into the clipboard and then paste anywhere in your code. Or press 'escape' if you want to cancel.
+Pick a [locator](./locators.md) and copy it into your test file by clicking the **Pick locator** button from the testing sidebar. Then in the browser click the element you require and it will now show up in the **Pick locator** box in VS Code. Press 'enter' on your keyboard to copy the locator into the clipboard and then paste anywhere in your code. Or press 'escape' if you want to cancel.
 
 <img width="1394" alt="Pick locators" src="https://user-images.githubusercontent.com/13063165/212741666-6479a702-2517-44a3-9eca-e719e13b379c.png" />
 
@@ -240,8 +240,6 @@ When running in Debug Mode with `PWDEBUG=console`, a `playwright` object is avai
 - Inspect the DOM tree and **find element selectors**
 - **See console logs** during execution (or learn how to [read logs via API](./api/class-page.md#page-event-console))
 - Check **network activity** and other developer tools features
-
-This will also set the default timeouts of Playwright to 0 (= no timeout).
 
 <img width="1399" alt="Browser Developer Tools with Playwright object" src="https://user-images.githubusercontent.com/13063165/219128002-898f604d-9697-4b7f-95b5-a6a8260b7282.png" />
 

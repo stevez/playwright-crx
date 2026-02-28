@@ -26,7 +26,7 @@ import * as React from 'react';
 import { CallLogView } from './callLog';
 import './recorder.css';
 import { asLocator } from '@isomorphic/locatorGenerators';
-import { toggleTheme } from '@web/theme';
+import { currentDocumentTheme } from '@web/theme';
 import { copy, useSetting } from '@web/uiUtils';
 import yaml from 'yaml';
 import { parseAriaSnapshot } from '@isomorphic/ariaSnapshot';
@@ -194,18 +194,22 @@ export const Recorder: React.FC<RecorderProps> = ({
       <ToolbarButton icon='clear-all' title='Clear' disabled={!source || !source.text} onClick={() => {
         window.dispatch({ event: 'clear' });
       }}></ToolbarButton>
-      <ToolbarButton icon='color-mode' title='Toggle color mode' toggled={false} onClick={() => toggleTheme()}></ToolbarButton>
+      <ToolbarButton icon='color-mode' title='Toggle color mode' toggled={false} onClick={() => {
+        const isDark = currentDocumentTheme() === 'dark-mode';
+        document.documentElement.classList.remove('dark-mode', 'light-mode');
+        document.documentElement.classList.add(isDark ? 'light-mode' : 'dark-mode');
+      }}></ToolbarButton>
     </Toolbar>
     <SplitView
       sidebarSize={200}
-      main={<CodeMirrorWrapper text={source.text} language={source.language} highlight={source.highlight} revealLine={source.revealLine} readOnly={source.id !== 'playwright-test'} onChange={onEditedCode} onCursorActivity={onCursorActivity} lineNumbers={true} />}
+      main={<CodeMirrorWrapper text={source.text} highlighter={source.language} highlight={source.highlight} revealLine={source.revealLine} readOnly={source.id !== 'playwright-test'} onChange={onEditedCode} onCursorActivity={onCursorActivity} lineNumbers={true} />}
       sidebar={<TabbedPane
         rightToolbar={selectedTab === 'locator' || selectedTab === 'aria' ? [<ToolbarButton key={1} icon='files' title='Copy' onClick={() => copy((selectedTab === 'locator' ? locator : ariaSnapshot) || '')} />] : []}
         tabs={[
           {
             id: 'locator',
             title: 'Locator',
-            render: () => <CodeMirrorWrapper text={locator} placeholder='Type locator to inspect' language={source.language} focusOnChange={selectorFocusOnChange} onChange={onEditorChange} wrapLines={true} />
+            render: () => <CodeMirrorWrapper text={locator} placeholder='Type locator to inspect' highlighter={source.language} focusOnChange={selectorFocusOnChange} onChange={onEditorChange} wrapLines={true} />
           },
           {
             id: 'log',
@@ -215,7 +219,7 @@ export const Recorder: React.FC<RecorderProps> = ({
           {
             id: 'aria',
             title: 'Aria',
-            render: () => <CodeMirrorWrapper text={ariaSnapshot || ''} placeholder='Type aria template to match' language={'yaml'} onChange={onAriaEditorChange} highlight={ariaSnapshotErrors} wrapLines={true} />
+            render: () => <CodeMirrorWrapper text={ariaSnapshot || ''} placeholder='Type aria template to match' highlighter={'yaml'} onChange={onAriaEditorChange} highlight={ariaSnapshotErrors} wrapLines={true} />
           },
         ]}
         selectedTab={selectedTab}

@@ -14,15 +14,14 @@
  * limitations under the License.
  */
 
-import playwright from './index.js';
-
-export const chromium = playwright.chromium;
-export const firefox = playwright.firefox;
-export const webkit = playwright.webkit;
-export const selectors = playwright.selectors;
-export const devices = playwright.devices;
-export const errors = playwright.errors;
-export const request = playwright.request;
-export const _electron = playwright._electron;
-export const _android = playwright._android;
-export default playwright;
+// playwright-crx: this file is not used in the extension build, stub it out
+export const chromium = undefined;
+export const firefox = undefined;
+export const webkit = undefined;
+export const selectors = undefined;
+export const devices = undefined;
+export const errors = undefined;
+export const request = undefined;
+export const _electron = undefined;
+export const _android = undefined;
+export default undefined;

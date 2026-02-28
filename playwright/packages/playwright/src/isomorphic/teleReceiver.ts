@@ -25,7 +25,11 @@ export type JsonStackFrame = { file: string, line: number, column: number };
 
 export type JsonStdIOType = 'stdout' | 'stderr';
 
-export type JsonConfig = Pick<reporterTypes.FullConfig, 'configFile' | 'globalTimeout' | 'maxFailures' | 'metadata' | 'rootDir' | 'version' | 'workers'>;
+export type JsonConfig = Pick<reporterTypes.FullConfig, 'configFile' | 'globalTimeout' | 'maxFailures' | 'metadata' | 'rootDir' | 'version' | 'workers' | 'globalSetup' | 'globalTeardown' | 'shard'> & {
+  // optional for backwards compatibility
+  tags?: reporterTypes.FullConfig['tags'],
+  webServer?: reporterTypes.FullConfig['webServer'],
+};
 
 export type JsonPattern = {
   s?: string;
@@ -52,6 +56,7 @@ export type JsonProject = {
   testMatch: JsonPattern[];
   timeout: number;
   use: { [key: string]: any };
+  ignoreSnapshots?: boolean;
 };
 
 export type JsonSuite = {
@@ -127,9 +132,118 @@ export type JsonFullResult = {
   duration: number;
 };
 
-export type JsonEvent = {
-  method: string;
-  params: any
+export type JsonEvent = JsonOnConfigureEvent | JsonOnBlobReportMetadataEvent | JsonOnEndEvent | JsonOnExitEvent | JsonOnProjectEvent | JsonOnBeginEvent | JsonOnTestBeginEvent
+  | JsonOnTestEndEvent | JsonOnStepBeginEvent | JsonOnStepEndEvent | JsonOnAttachEvent | JsonOnErrorEvent | JsonOnTestPausedEvent | JsonOnStdIOEvent;
+
+export type JsonOnConfigureEvent = {
+  method: 'onConfigure';
+  params: {
+    config: JsonConfig;
+  };
+};
+
+export type JsonOnBlobReportMetadataEvent = {
+  method: 'onBlobReportMetadata';
+  params: BlobReportMetadata;
+};
+
+export type JsonOnProjectEvent = {
+  method: 'onProject';
+  params: {
+    project: JsonProject;
+  };
+};
+
+export type JsonOnBeginEvent = {
+  method: 'onBegin';
+  params: undefined;
+};
+
+export type JsonOnTestBeginEvent = {
+  method: 'onTestBegin';
+  params: {
+    testId: string;
+    result: JsonTestResultStart;
+  };
+};
+
+export type JsonOnTestPausedEvent = {
+  method: 'onTestPaused';
+  params: {
+    testId: string;
+    resultId: string;
+    errors: reporterTypes.TestError[];
+  };
+};
+
+export type JsonOnTestEndEvent = {
+  method: 'onTestEnd';
+  params: {
+    test: JsonTestEnd;
+    testId?: string;
+    result: JsonTestResultEnd;
+  };
+};
+
+export type JsonOnStepBeginEvent = {
+  method: 'onStepBegin';
+  params: {
+    testId: string;
+    resultId: string;
+    step: JsonTestStepStart;
+  };
+};
+
+export type JsonOnStepEndEvent = {
+  method: 'onStepEnd';
+  params: {
+    testId: string;
+    resultId: string;
+    step: JsonTestStepEnd;
+  };
+};
+
+export type JsonOnAttachEvent = {
+  method: 'onAttach';
+  params: JsonTestResultOnAttach;
+};
+
+export type JsonOnErrorEvent = {
+  method: 'onError';
+  params: {
+    error: reporterTypes.TestError;
+  };
+};
+
+export type JsonOnStdIOEvent = {
+  method: 'onStdIO';
+  params: {
+    type: JsonStdIOType;
+    testId?: string;
+    resultId?: string;
+    data: string;
+    isBase64: boolean;
+  };
+};
+
+export type JsonOnEndEvent = {
+  method: 'onEnd';
+  params: {
+    result: JsonFullResult;
+  };
+};
+
+export type JsonOnExitEvent = {
+  method: 'onExit';
+  params: undefined;
+};
+
+export type BlobReportMetadata = {
+  version: number;
+  userAgent: string;
+  name?: string;
+  shard?: { total: number, current: number };
+  pathSeparator?: string;
 };
 
 type TeleReporterReceiverOptions = {
@@ -178,6 +292,10 @@ export class TeleReporterReceiver {
       this._onTestBegin(params.testId, params.result);
       return;
     }
+    if (method === 'onTestPaused') {
+      this._onTestPaused(params.testId, params.resultId, params.errors);
+      return;
+    }
     if (method === 'onTestEnd') {
       this._onTestEnd(params.test, params.result);
       return;
@@ -220,8 +338,19 @@ export class TeleReporterReceiver {
       projectSuite = new TeleSuite(project.name, 'project');
       this._rootSuite._addSuite(projectSuite);
     }
+
+    const parsed = this._parseProject(project);
     // Always update project in watch mode.
-    projectSuite._project = this._parseProject(project);
+    projectSuite._project = parsed;
+
+    let index = -1;
+    if (this._options.mergeProjects)
+      index = this._config.projects.findIndex(p => p.name === project.name);
+    if (index === -1)
+      this._config.projects.push(parsed);
+    else
+      this._config.projects[index] = parsed;
+
     for (const suite of project.suites)
       this._mergeSuiteInto(suite, projectSuite);
   }
@@ -242,6 +371,15 @@ export class TeleReporterReceiver {
     this._reporter.onTestBegin?.(test, testResult);
   }
 
+  private _onTestPaused(testId: string, resultId: string, errors: reporterTypes.TestError[]) {
+    const test = this._tests.get(testId)!;
+    const result = test.results.find(r => r._id === resultId)!;
+
+    result.errors.push(...errors);
+    result.error = result.errors[0];
+    void this._reporter.onTestPaused?.(test, result);
+  }
+
   private _onTestEnd(testEndPayload: JsonTestEnd, payload: JsonTestResultEnd) {
     const test = this._tests.get(testEndPayload.testId)!;
     test.timeout = testEndPayload.timeout;
@@ -249,14 +387,15 @@ export class TeleReporterReceiver {
     const result = test.results.find(r => r._id === payload.id)!;
     result.duration = payload.duration;
     result.status = payload.status;
-    result.errors = payload.errors;
-    result.error = result.errors?.[0];
+    result.errors.push(...payload.errors ?? []);
+    result.error = result.errors[0];
     // Attachments are only present here from legacy blobs. These override all _onAttach events
     if (!!payload.attachments)
       result.attachments = this._parseAttachments(payload.attachments);
     if (payload.annotations) {
+      this._absoluteAnnotationLocationsInplace(payload.annotations);
       result.annotations = payload.annotations;
-      test.annotations = result.annotations;
+      test.annotations = payload.annotations;
     }
     this._reporter.onTestEnd?.(test, result);
     // Free up the memory as won't see these step ids.
@@ -317,11 +456,7 @@ export class TeleReporterReceiver {
   }
 
   private async _onEnd(result: JsonFullResult): Promise<void> {
-    await this._reporter.onEnd?.({
-      status: result.status,
-      startTime: new Date(result.startTime),
-      duration: result.duration,
-    });
+    await this._reporter.onEnd?.(asFullResult(result));
   }
 
   private _onExit(): Promise<void> | void {
@@ -329,7 +464,7 @@ export class TeleReporterReceiver {
   }
 
   private _parseConfig(config: JsonConfig): reporterTypes.FullConfig {
-    const result = { ...baseFullConfig, ...config };
+    const result = asFullConfig(config);
     if (this._options.configOverrides) {
       result.configFile = this._options.configOverrides.configFile;
       result.reportSlowTests = this._options.configOverrides.reportSlowTests;
@@ -355,6 +490,7 @@ export class TeleReporterReceiver {
       dependencies: project.dependencies,
       teardown: project.teardown,
       snapshotDir: this._absolutePath(project.snapshotDir),
+      ignoreSnapshots: project.ignoreSnapshots ?? false,
       use: project.use,
     };
   }
@@ -399,7 +535,15 @@ export class TeleReporterReceiver {
     test.retries = payload.retries;
     test.tags = payload.tags ?? [];
     test.annotations = payload.annotations ?? [];
+    this._absoluteAnnotationLocationsInplace(test.annotations);
     return test;
+  }
+
+  private _absoluteAnnotationLocationsInplace(annotations: TestAnnotation[]) {
+    for (const annotation of annotations) {
+      if (annotation.location)
+        annotation.location = this._absoluteLocation(annotation.location);
+    }
   }
 
   private _absoluteLocation(location: reporterTypes.Location): reporterTypes.Location;
@@ -639,8 +783,10 @@ export const baseFullConfig: reporterTypes.FullConfig = {
   rootDir: '',
   quiet: false,
   shard: null,
+  tags: [],
   updateSnapshots: 'missing',
   updateSourceMethod: 'patch',
+  runAgents: 'none',
   version: '',
   workers: 0,
   webServer: null,
@@ -706,4 +852,16 @@ export function computeTestCaseOutcome(test: reporterTypes.TestCase) {
   if (expected === 0 && skipped === 0)
     return 'unexpected';  // only failures
   return 'flaky';  // expected+unexpected or skipped+unexpected
+}
+
+export function asFullResult(result: JsonFullResult): reporterTypes.FullResult {
+  return {
+    status: result.status,
+    startTime: new Date(result.startTime),
+    duration: result.duration,
+  };
+}
+
+export function asFullConfig(config: JsonConfig): reporterTypes.FullConfig {
+  return { ...baseFullConfig, ...config };
 }

@@ -15,32 +15,39 @@
  */
 
 import { JSHandle } from './jsHandle';
-import { Page } from './page';
 
 import type * as api from '../../types/types';
 import type { Platform } from './platform';
 import type * as channels from '@protocol/channels';
+import type { Page } from './page';
+import type { Worker } from './worker';
 
 type ConsoleMessageLocation = channels.BrowserContextConsoleEvent['location'];
 
 export class ConsoleMessage implements api.ConsoleMessage {
 
   private _page: Page | null;
+  private _worker: Worker | null;
   private _event: channels.BrowserContextConsoleEvent | channels.ElectronApplicationConsoleEvent;
 
-  constructor(platform: Platform, event: channels.BrowserContextConsoleEvent | channels.ElectronApplicationConsoleEvent) {
-    this._page = ('page' in event && event.page) ? Page.from(event.page) : null;
+  constructor(platform: Platform, event: channels.BrowserContextConsoleEvent | channels.ElectronApplicationConsoleEvent, page: Page | null, worker: Worker | null) {
+    this._page = page;
+    this._worker = worker;
     this._event = event;
     if (platform.inspectCustom)
       (this as any)[platform.inspectCustom] = () => this._inspect();
+  }
+
+  worker() {
+    return this._worker;
   }
 
   page() {
     return this._page;
   }
 
-  type(): string {
-    return this._event.type;
+  type(): ReturnType<api.ConsoleMessage['type']> {
+    return this._event.type as ReturnType<api.ConsoleMessage['type']>;
   }
 
   text(): string {
@@ -53,6 +60,10 @@ export class ConsoleMessage implements api.ConsoleMessage {
 
   location(): ConsoleMessageLocation {
     return this._event.location;
+  }
+
+  timestamp(): number {
+    return this._event.timestamp;
   }
 
   private _inspect() {

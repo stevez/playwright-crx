@@ -19,12 +19,23 @@ import { ReadStream } from 'fs';
 import { Protocol } from './protocol';
 import { Serializable, EvaluationArgument, PageFunction, PageFunctionOn, SmartHandle, ElementHandleForTag, BindingSource } from './structs';
 
+// Use the global URLPattern type if available (Node.js 22+, modern browsers),
+// otherwise fall back to `never` so it disappears from union types.
+type URLPattern = typeof globalThis extends { URLPattern: infer T } ? T : never;
+
 type PageWaitForSelectorOptionsNotHidden = PageWaitForSelectorOptions & {
   state?: 'visible'|'attached';
 };
 type ElementHandleWaitForSelectorOptionsNotHidden = ElementHandleWaitForSelectorOptions & {
   state?: 'visible'|'attached';
 };
+
+// @ts-ignore this will be any if zod is not installed
+import { ZodTypeAny, z } from 'zod';
+// @ts-ignore this will be any if zod is not installed
+import * as z3 from 'zod/v3';
+type ZodSchema = ZodTypeAny | z3.ZodTypeAny;
+type InferZodSchema<T extends ZodSchema> = T extends z3.ZodTypeAny ? z3.infer<T> : T extends ZodTypeAny ? z.infer<T> : never;
 
 export interface Page {
   evaluate<R, Arg>(pageFunction: PageFunction<Arg, R>, arg: Arg): Promise<R>;
@@ -72,6 +83,10 @@ export interface Page {
      */
     behavior?: 'wait'|'ignoreErrors'|'default'
   }): Promise<void>;
+}
+
+export interface PageAgent {
+  extract<Schema extends ZodSchema>(query: string, schema: Schema): Promise<{ result: InferZodSchema<Schema>, usage: { turns: number, inputTokens: number, outputTokens: number } }>;  
 }
 
 export interface Frame {
@@ -193,6 +208,7 @@ export interface Locator {
   elementHandle(options?: {
     timeout?: number;
   }): Promise<null|ElementHandle<SVGElement | HTMLElement>>;
+  toString(): string;
 }
 
 export interface BrowserType<Unused = {}> {
@@ -242,39 +258,6 @@ export namespace errors {
 
 class TimeoutError extends Error {}
 
-}
-
-export interface Accessibility {
-  snapshot(options?: AccessibilitySnapshotOptions): Promise<null|AccessibilityNode>;
-}
-
-type AccessibilityNode = {
-  role: string;
-  name: string;
-  value?: string|number;
-  description?: string;
-  keyshortcuts?: string;
-  roledescription?: string;
-  valuetext?: string;
-  disabled?: boolean;
-  expanded?: boolean;
-  focused?: boolean;
-  modal?: boolean;
-  multiline?: boolean;
-  multiselectable?: boolean;
-  readonly?: boolean;
-  required?: boolean;
-  selected?: boolean;
-  checked?: boolean|"mixed";
-  pressed?: boolean|"mixed";
-  level?: number;
-  valuemin?: number;
-  valuemax?: number;
-  autocomplete?: string;
-  haspopup?: string;
-  invalid?: string;
-  orientation?: string;
-  children?: AccessibilityNode[];
 }
 
 export const devices: Devices;
@@ -334,18 +317,16 @@ export type AndroidKey =
   'Home' |
   'Back' |
   'Call' | 'EndCall' |
-  '0' |  '1' |  '2' |  '3' |  '4' |  '5' |  '6' |  '7' |  '8' |  '9' |
-  'Star' | 'Pound' | '*' | '#' |
+  '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' |
+  'Star' | '*' | 'Pound' | '#' |
   'DialUp' | 'DialDown' | 'DialLeft' | 'DialRight' | 'DialCenter' |
   'VolumeUp' | 'VolumeDown' |
-  'ChannelUp' | 'ChannelDown' |
   'Power' |
   'Camera' |
   'Clear' |
   'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' |
   'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T' | 'U' | 'V' | 'W' | 'X' | 'Y' | 'Z' |
-  'Comma' | ',' |
-  'Period' | '.' |
+  'Comma' | ',' | 'Period' | '.' |
   'AltLeft' | 'AltRight' |
   'ShiftLeft' | 'ShiftRight' |
   'Tab' | '\t' |
@@ -373,16 +354,32 @@ export type AndroidKey =
   'Notification' |
   'Search' |
   'RecentApps' |
+  'MediaPlayPause' |
+  'MediaStop' |
+  'MediaNext' |
+  'MediaPrevious' |
+  'MediaRewind' |
+  'MediaFastForward' |
+  'MediaPlay' |
+  'MediaPause' |
+  'MediaClose' |
+  'MediaEject' |
+  'MediaRecord' |
+  'ChannelUp' | 'ChannelDown' |
   'AppSwitch' |
   'Assist' |
+  'MediaAudioTrack' |
+  'MediaTopMenu' |
+  'MediaSkipForward' |
+  'MediaSkipBackward' |
+  'MediaStepForward' |
+  'MediaStepBackward' |
   'Cut' |
   'Copy' |
   'Paste';
 
 export const _electron: Electron;
 export const _android: Android;
-export const _bidiChromium: BrowserType;
-export const _bidiFirefox: BrowserType;
 
 // This is required to not export everything by default. See https://github.com/Microsoft/TypeScript/issues/19545#issuecomment-340490459
 export {};

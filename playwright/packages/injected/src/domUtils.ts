@@ -16,7 +16,6 @@
 
 type GlobalOptions = {
   browserNameForWorkarounds?: string;
-  inputFileRoleTextbox?: boolean;
 };
 let globalOptions: GlobalOptions = {};
 export function setGlobalOptions(options: GlobalOptions) {
@@ -77,7 +76,12 @@ export function closestCrossShadow(element: Element | undefined, css: string, sc
 }
 
 export function getElementComputedStyle(element: Element, pseudo?: string): CSSStyleDeclaration | undefined {
-  return element.ownerDocument && element.ownerDocument.defaultView ? element.ownerDocument.defaultView.getComputedStyle(element, pseudo) : undefined;
+  const cache = pseudo === '::before' ? cacheStyleBefore : pseudo === '::after' ? cacheStyleAfter : cacheStyle;
+  if (cache && cache.has(element))
+    return cache.get(element);
+  const style = element.ownerDocument && element.ownerDocument.defaultView ? element.ownerDocument.defaultView.getComputedStyle(element, pseudo) : undefined;
+  cache?.set(element, style);
+  return style;
 }
 
 export function isElementStyleVisibilityVisible(element: Element, style?: CSSStyleDeclaration): boolean {
@@ -104,35 +108,30 @@ export function isElementStyleVisibilityVisible(element: Element, style?: CSSSty
   return true;
 }
 
-export type Box = {
-  visible: boolean;
-  rect?: DOMRect;
-  style?: CSSStyleDeclaration;
-};
-
-export function box(element: Element): Box {
+export function computeBox(element: Element) {
   // Note: this logic should be similar to waitForDisplayedAtStablePosition() to avoid surprises.
   const style = getElementComputedStyle(element);
   if (!style)
-    return { visible: true };
+    return { visible: true, inline: false };
+  const cursor = style.cursor;
   if (style.display === 'contents') {
     // display:contents is not rendered itself, but its child nodes are.
     for (let child = element.firstChild; child; child = child.nextSibling) {
       if (child.nodeType === 1 /* Node.ELEMENT_NODE */ && isElementVisible(child as Element))
-        return { visible: true, style };
+        return { visible: true, inline: false, cursor };
       if (child.nodeType === 3 /* Node.TEXT_NODE */ && isVisibleTextNode(child as Text))
-        return { visible: true, style };
+        return { visible: true, inline: true, cursor };
     }
-    return { visible: false, style };
+    return { visible: false, inline: false, cursor };
   }
   if (!isElementStyleVisibilityVisible(element, style))
-    return { style, visible: false };
+    return { cursor, visible: false, inline: false };
   const rect = element.getBoundingClientRect();
-  return { rect, style, visible: rect.width > 0 && rect.height > 0 };
+  return { cursor, visible: rect.width > 0 && rect.height > 0, inline: style.display === 'inline' };
 }
 
 export function isElementVisible(element: Element): boolean {
-  return box(element).visible;
+  return computeBox(element).visible;
 }
 
 export function isVisibleTextNode(node: Text) {
@@ -144,10 +143,33 @@ export function isVisibleTextNode(node: Text) {
 }
 
 export function elementSafeTagName(element: Element) {
+  const tagName = element.tagName;
+  if (typeof tagName === 'string')  // Fast path.
+    return tagName.toUpperCase();
   // Named inputs, e.g. <input name=tagName>, will be exposed as fields on the parent <form>
   // and override its properties.
   if (element instanceof HTMLFormElement)
     return 'FORM';
   // Elements from the svg namespace do not have uppercase tagName right away.
   return element.tagName.toUpperCase();
+}
+
+let cacheStyle: Map<Element, CSSStyleDeclaration | undefined> | undefined;
+let cacheStyleBefore: Map<Element, CSSStyleDeclaration | undefined> | undefined;
+let cacheStyleAfter: Map<Element, CSSStyleDeclaration | undefined> | undefined;
+let cachesCounter = 0;
+
+export function beginDOMCaches() {
+  ++cachesCounter;
+  cacheStyle ??= new Map();
+  cacheStyleBefore ??= new Map();
+  cacheStyleAfter ??= new Map();
+}
+
+export function endDOMCaches() {
+  if (!--cachesCounter) {
+    cacheStyle = undefined;
+    cacheStyleBefore = undefined;
+    cacheStyleAfter = undefined;
+  }
 }

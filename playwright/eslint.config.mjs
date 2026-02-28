@@ -44,12 +44,14 @@ const ignores = [
   "node_modules/",
   "output/",
   "**/playwright-report/",
+  "examples",
   "packages/*/lib/",
   "packages/playwright-core/bundles/zip/src/third_party/",
   "packages/playwright-core/src/generated/*",
   "packages/playwright-core/src/third_party/",
   "packages/playwright-core/types/*",
   "packages/playwright-ct-core/src/generated/*",
+  "packages/playwright/bundles/expect/third_party/",
   "packages/html-reporter/bundle.ts",
   "packages/html-reporter/playwright.config.ts",
   "packages/html-reporter/playwright/*",
@@ -145,7 +147,6 @@ export const baseRules = {
   "space-in-parens": [2, "never"],
   "array-bracket-spacing": [2, "never"],
   "comma-spacing": [2, { before: false, after: true }],
-  "keyword-spacing": [2, "always"],
   "space-before-function-paren": [
     2,
     {
@@ -176,7 +177,7 @@ export const baseRules = {
       before: true,
     },
   ],
-  "@stylistic/func-call-spacing": 2,
+  "@stylistic/function-call-spacing": 2,
   "@stylistic/type-annotation-spacing": 2,
 
   // file whitespace
@@ -184,7 +185,7 @@ export const baseRules = {
   "no-mixed-spaces-and-tabs": 2,
   "no-trailing-spaces": 2,
   "linebreak-style": [process.platform === "win32" ? 0 : 2, "unix"],
-  indent: [
+  "@stylistic/indent": [
     2,
     2,
     { SwitchCase: 1, CallExpression: { arguments: 2 }, MemberExpression: 2 },
@@ -243,14 +244,12 @@ const importOrderRules = {
     2,
     {
       groups: [
-        "builtin",
-        "external",
+        ["builtin", "external"],
         "internal",
         ["parent", "sibling"],
         "index",
         "type",
       ],
-      "newlines-between": "always",
     },
   ],
   "import/consistent-type-specifier-style": [2, "prefer-top-level"],
@@ -298,17 +297,17 @@ function reactPackageSection(packageName) {
       `packages/web/src/**/*.ts`,
       `packages/web/src/**/*.tsx`,
     ],
-    languageOptions: {
-      parser: tsParser,
-      ecmaVersion: 9,
-      sourceType: "module",
-      parserOptions: {
-        project: path.join(__dirname, "packages", packageName, "tsconfig.json"),
-      },
-    },
+    languageOptions: languageOptionsWithTsConfig,
     rules: {
       ...baseRules,
       "no-console": 2,
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "JSXElement > JSXText[value=/^;\n/]",
+          message: 'Unexpected semicolon after JSX element',
+        },
+      ]
     },
   };
 }
@@ -339,6 +338,8 @@ export default [
           message:
             "Please use gracefullyProcessExitDoNotHang function to exit the process.",
         },
+        { object: "process", property: "stdout" },
+        { object: "process", property: "stderr" },
       ],
     },
   },
@@ -352,13 +353,6 @@ export default [
     files: ["packages/playwright/**/*.ts"],
     rules: {
       ...noFloatingPromisesRules,
-    },
-  },
-  {
-    files: ["packages/playwright/src/reporters/**/*.ts"],
-    languageOptions: languageOptionsWithTsConfig,
-    rules: {
-      "no-console": "off",
     },
   },
   {

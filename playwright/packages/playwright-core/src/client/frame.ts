@@ -110,6 +110,7 @@ export class Frame extends ChannelOwner<channels.FrameChannel> implements api.Fr
 
   async goto(url: string, options: channels.FrameGotoOptions & TimeoutOptions = {}): Promise<network.Response | null> {
     const waitUntil = verifyLoadState('waitUntil', options.waitUntil === undefined ? 'load' : options.waitUntil);
+    this.page().context()._checkUrlAllowed(url);
     return network.Response.fromNullable((await this._channel.goto({ url, ...options, waitUntil, timeout: this._navigationTimeout(options) })).response);
   }
 
@@ -199,6 +200,11 @@ export class Frame extends ChannelOwner<channels.FrameChannel> implements api.Fr
     return parseResult(result.value);
   }
 
+  async _evaluateFunction(functionDeclaration: string) {
+    const result = await this._channel.evaluateExpression({ expression: functionDeclaration, isFunction: true, arg: serializeArgument(undefined) });
+    return parseResult(result.value);
+  }
+
   async _evaluateExposeUtilityScript<R, Arg>(pageFunction: structs.PageFunction<Arg, R>, arg?: Arg): Promise<R> {
     assertMaxArguments(arguments.length, 2);
     const result = await this._channel.evaluateExpression({ expression: String(pageFunction), isFunction: typeof pageFunction === 'function', arg: serializeArgument(arg) });
@@ -242,8 +248,8 @@ export class Frame extends ChannelOwner<channels.FrameChannel> implements api.Fr
     return result.elements.map(e => ElementHandle.from(e) as ElementHandle<SVGElement | HTMLElement>);
   }
 
-  async _queryCount(selector: string): Promise<number> {
-    return (await this._channel.queryCount({ selector })).value;
+  async _queryCount(selector: string, options?: {}): Promise<number> {
+    return (await this._channel.queryCount({ selector, ...options })).value;
   }
 
   async content(): Promise<string> {
@@ -440,7 +446,7 @@ export class Frame extends ChannelOwner<channels.FrameChannel> implements api.Fr
   }
 
   async waitForTimeout(timeout: number) {
-    await this._channel.waitForTimeout({ timeout });
+    await this._channel.waitForTimeout({ waitTimeout: timeout });
   }
 
   async waitForFunction<R, Arg>(pageFunction: structs.PageFunction<Arg, R>, arg?: Arg, options: WaitForFunctionOptions = {}): Promise<structs.SmartHandle<R>> {
@@ -459,6 +465,15 @@ export class Frame extends ChannelOwner<channels.FrameChannel> implements api.Fr
 
   async title(): Promise<string> {
     return (await this._channel.title()).value;
+  }
+
+  async _expect(expression: string, options: Omit<channels.FrameExpectParams, 'expression'>): Promise<{ matches: boolean, received?: any, log?: string[], timedOut?: boolean, errorMessage?: string }> {
+    const params: channels.FrameExpectParams = { expression, ...options, isNot: !!options.isNot };
+    params.expectedValue = serializeArgument(options.expectedValue);
+    const result = (await this._channel.expect(params));
+    if (result.received !== undefined)
+      result.received = parseResult(result.received);
+    return result;
   }
 }
 

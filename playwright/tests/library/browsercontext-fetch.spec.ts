@@ -400,7 +400,7 @@ it('should remove cookie with expires far in the past', async ({ page, server })
   expect(serverRequest.headers.cookie).toBeFalsy();
 });
 
-it('should handle cookies on redirects', async ({ context, server, browserName, isWindows }) => {
+it('should handle cookies on redirects', async ({ context, server, browserName, isWindows, channel }) => {
   server.setRoute('/redirect1', (req, res) => {
     res.setHeader('Set-Cookie', 'r1=v1;SameSite=Lax');
     res.writeHead(301, { location: '/a/b/redirect2' });
@@ -436,20 +436,20 @@ it('should handle cookies on redirects', async ({ context, server, browserName, 
   const cookies = await context.cookies();
   expect(new Set(cookies)).toEqual(new Set([
     {
-      'sameSite': (browserName === 'webkit' && isWindows) ? 'None' : 'Lax',
+      'sameSite': (browserName === 'webkit' && isWindows && channel !== 'webkit-wsl') ? 'None' : 'Lax',
       'name': 'r2',
       'value': 'v2',
-      'domain': 'localhost',
+      'domain': server.HOSTNAME,
       'path': '/a/b',
       'expires': -1,
       'httpOnly': false,
       'secure': false
     },
     {
-      'sameSite': (browserName === 'webkit' && isWindows) ? 'None' : 'Lax',
+      'sameSite': (browserName === 'webkit' && isWindows && channel !== 'webkit-wsl') ? 'None' : 'Lax',
       'name': 'r1',
       'value': 'v1',
-      'domain': 'localhost',
+      'domain': server.HOSTNAME,
       'path': '/',
       'expires': -1,
       'httpOnly': false,
@@ -877,7 +877,7 @@ it('should support timeout option', async function({ context, server }) {
   });
 
   const error = await context.request.get(server.PREFIX + '/slow', { timeout: 10 }).catch(e => e);
-  expect(error.message).toContain(`Request timed out after 10ms`);
+  expect(error.message).toContain(`apiRequestContext.get: Timeout 10ms exceeded`);
 });
 
 it('should support a timeout of 0', async function({ context, server }) {
@@ -908,7 +908,7 @@ it('should respect timeout after redirects', async function({ context, server })
 
   context.setDefaultTimeout(100);
   const error = await context.request.get(server.PREFIX + '/redirect').catch(e => e);
-  expect(error.message).toContain(`Request timed out after 100ms`);
+  expect(error.message).toContain(`apiRequestContext.get: Timeout 100ms exceeded`);
 });
 
 it('should not hang on a brotli encoded Range request', async ({ context, server, nodeVersion }) => {
@@ -1201,7 +1201,8 @@ it('context request should export same storage state as context', async ({ conte
   expect(pageState).toEqual(contextState);
 });
 
-it('should send secure cookie over http for localhost', async ({ page, server }) => {
+it('should send secure cookie over http for localhost', async ({ page, server, channel }) => {
+  it.skip(channel === 'webkit-wsl');
   server.setRoute('/setcookie.html', (req, res) => {
     res.setHeader('Set-Cookie', ['a=v; secure']);
     res.end();
@@ -1277,7 +1278,7 @@ it('should work with connectOverCDP', async ({ browserName, browserType, server 
   }
 });
 
-it('should support SameSite cookie attribute over https', async ({ contextFactory, httpsServer, browserName, isWindows }) => {
+it('should support SameSite cookie attribute over https', async ({ contextFactory, httpsServer, browserName, isWindows, channel }) => {
   // Cookies with SameSite=None must also specify the Secure attribute. WebKit navigation
   // to HTTP url will fail if the response contains a cookie with Secure attribute, so
   // we do HTTPS navigation.
@@ -1291,7 +1292,7 @@ it('should support SameSite cookie attribute over https', async ({ contextFactor
       });
       await page.request.get(httpsServer.EMPTY_PAGE);
       const [cookie] = await page.context().cookies();
-      if (browserName === 'webkit' && isWindows)
+      if (browserName === 'webkit' && isWindows && channel !== 'webkit-wsl')
         expect(cookie.sameSite).toBe('None');
       else
         expect(cookie.sameSite).toBe(value);
@@ -1301,7 +1302,7 @@ it('should support SameSite cookie attribute over https', async ({ contextFactor
 
 it('should set domain=localhost cookie', async ({ context, server, browserName, isWindows }) => {
   server.setRoute('/empty.html', (req, res) => {
-    res.setHeader('Set-Cookie', `name=val; Domain=localhost; Path=/;`);
+    res.setHeader('Set-Cookie', `name=val; Domain=${server.HOSTNAME}; Path=/;`);
     res.end();
   });
   await context.request.get(server.EMPTY_PAGE);
@@ -1322,7 +1323,7 @@ it('fetch should not throw on long set-cookie value', async ({ context, server }
   expect(cookies.map(c => c.name)).toContain('bar');
 });
 
-it('should support set-cookie with SameSite and without Secure attribute over HTTP', async ({ page, server, browserName, isWindows, isLinux }) => {
+it('should support set-cookie with SameSite and without Secure attribute over HTTP', async ({ page, server, browserName, isWindows, isLinux, channel }) => {
   for (const value of ['None', 'Lax', 'Strict']) {
     await it.step(`SameSite=${value}`, async () => {
       server.setRoute('/empty.html', (req, res) => {
@@ -1333,9 +1334,9 @@ it('should support set-cookie with SameSite and without Secure attribute over HT
       const [cookie] = await page.context().cookies();
       if (browserName === 'chromium' && value === 'None')
         expect(cookie).toBeFalsy();
-      else if (browserName === 'webkit' && isLinux && value === 'None')
+      else if (browserName === 'webkit' && (isLinux || channel === 'webkit-wsl') && value === 'None')
         expect(cookie).toBeFalsy();
-      else if (browserName === 'webkit' && isWindows)
+      else if (browserName === 'webkit' && isWindows && channel !== 'webkit-wsl')
         expect(cookie.sameSite).toBe('None');
       else
         expect(cookie.sameSite).toBe(value);

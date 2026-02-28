@@ -32,8 +32,9 @@ const test = testBase.extend<{ crash: () => void }, { dummy: string }>({
   dummy: ['', { scope: 'worker' }],
 });
 
-test.beforeEach(({ platform, browserName }) => {
-  test.slow(platform === 'linux' && browserName === 'webkit', 'WebKit/Linux tests are consistently slower on some Linux environments. Most likely WebContent process is not getting terminated properly and is causing the slowdown.');
+test.beforeEach(({ platform, browserName, channel }) => {
+  test.slow(platform === 'linux' && (browserName === 'webkit'), 'WebKit/Linux tests are consistently slower on some Linux environments. Most likely WebContent process is not getting terminated properly and is causing the slowdown.');
+  test.fixme(channel === 'webkit-wsl', 'WebKit on WSL is even slower than above ^^ - skipping for now');
 });
 
 test('should emit crash event when page crashes', async ({ page, crash }) => {
@@ -74,9 +75,8 @@ test('should cancel navigation when page crashes', async ({ server, page, crash 
   expect(error.message).toContain('page.goto: Page crashed');
 });
 
-test('should be able to close context when page crashes', async ({ isAndroid, isWebView2, page, crash }) => {
+test('should be able to close context when page crashes', async ({ isAndroid, page, crash }) => {
   test.skip(isAndroid);
-  test.skip(isWebView2, 'Page.close() is not supported in WebView2');
 
   await page.setContent(`<div>This page should crash</div>`);
   crash();

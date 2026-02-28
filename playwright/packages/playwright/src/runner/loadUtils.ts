@@ -15,12 +15,14 @@
  */
 
 import path from 'path';
+import fs from 'fs';
+import { toPosixPath } from 'playwright-core/lib/utils';
 
 import { InProcessLoaderHost, OutOfProcessLoaderHost } from './loaderHost';
-import { createFileFiltersFromArguments, createFileMatcherFromArguments, createTitleMatcher, errorWithFile, forceRegExp } from '../util';
+import { createFileFiltersFromArguments, createFileMatcherFromArguments, createTitleMatcher, errorWithFile, forceRegExp, parseLocationArg } from '../util';
 import { buildProjectsClosure, collectFilesForProject, filterProjects } from './projectUtils';
 import {  createTestGroups, filterForShard } from './testGroups';
-import { applyRepeatEachIndex, bindFileSuiteToProject, filterByFocusedLine, filterByTestIds, filterOnly, filterTestsRemoveEmptySuites } from '../common/suiteUtils';
+import { applyRepeatEachIndex, bindFileSuiteToProject, filterByFocusedLine, filterOnly, filterTestsRemoveEmptySuites } from '../common/suiteUtils';
 import { Suite } from '../common/test';
 import { dependenciesForTestFile } from '../transform/compilationCache';
 import { requireOrImport } from '../transform/transform';
@@ -32,7 +34,7 @@ import type { FullConfig, Reporter, TestError } from '../../types/testReporter';
 import type { FullProjectInternal } from '../common/config';
 import type { FullConfigInternal } from '../common/config';
 import type { TestCase } from '../common/test';
-import type { Matcher, TestFileFilter } from '../util';
+import type { Matcher, TestCaseFilter, TestFileFilter } from '../util';
 import type { RawSourceMap } from '../utilsBundle';
 
 
@@ -120,7 +122,7 @@ export async function loadFileSuites(testRun: TestRun, mode: 'out-of-process' | 
   }
 }
 
-export async function createRootSuite(testRun: TestRun, errors: TestError[], shouldFilterOnly: boolean, additionalFileMatcher?: Matcher): Promise<Suite> {
+export async function createRootSuite(testRun: TestRun, errors: TestError[], shouldFilterOnly: boolean): Promise<{ rootSuite: Suite, topLevelProjects: FullProjectInternal[] }> {
   const config = testRun.config;
   // Create root suite, where each child will be a project suite with cloned file suites inside it.
   const rootSuite = new Suite('', 'root');
@@ -140,7 +142,7 @@ export async function createRootSuite(testRun: TestRun, errors: TestError[], sho
       const projectSuite = createProjectSuite(project, fileSuites);
       projectSuites.set(project, projectSuite);
 
-      const filteredProjectSuite = filterProjectSuite(projectSuite, { cliFileFilters, cliTitleMatcher, testIdMatcher: config.testIdMatcher, additionalFileMatcher });
+      const filteredProjectSuite = filterProjectSuite(projectSuite, { cliFileFilters, cliTitleMatcher, testFilters: config.preOnlyTestFilters });
       filteredProjectSuites.set(project, filteredProjectSuite);
     }
   }
@@ -182,11 +184,12 @@ export async function createRootSuite(testRun: TestRun, errors: TestError[], sho
     for (const projectSuite of rootSuite.suites) {
       // Split beforeAll-grouped tests into "config.shard.total" groups when needed.
       // Later on, we'll re-split them between workers by using "config.workers" instead.
-      testGroups.push(...createTestGroups(projectSuite, config.config.shard.total));
+      for (const group of createTestGroups(projectSuite, config.config.shard.total))
+        testGroups.push(group);
     }
 
     // Shard test groups.
-    const testGroupsInThisShard = filterForShard(config.config.shard, testGroups);
+    const testGroupsInThisShard = filterForShard(config.config.shard, config.configCLIOverrides.shardWeights, testGroups);
     const testsInThisShard = new Set<TestCase>();
     for (const group of testGroupsInThisShard) {
       for (const test of group.tests)
@@ -197,10 +200,10 @@ export async function createRootSuite(testRun: TestRun, errors: TestError[], sho
     filterTestsRemoveEmptySuites(rootSuite, test => testsInThisShard.has(test));
   }
 
-  // Explicitly apply --last-failed filter after sharding.
-  if (config.lastFailedTestIdMatcher)
-    filterByTestIds(rootSuite, config.lastFailedTestIdMatcher);
+  if (config.postShardTestFilters.length)
+    filterTestsRemoveEmptySuites(rootSuite, test => config.postShardTestFilters.every(filter => filter(test)));
 
+  const topLevelProjects = [];
   // Now prepend dependency projects without filtration.
   {
     // Filtering 'only' and sharding might have reduced the number of top-level projects.
@@ -211,10 +214,12 @@ export async function createRootSuite(testRun: TestRun, errors: TestError[], sho
     for (const [project, level] of projectClosure.entries()) {
       if (level === 'dependency')
         rootSuite._prependSuite(buildProjectSuite(project, projectSuites.get(project)!));
+      else
+        topLevelProjects.push(project);
     }
   }
 
-  return rootSuite;
+  return { rootSuite, topLevelProjects };
 }
 
 function createProjectSuite(project: FullProjectInternal, fileSuites: Suite[]): Suite {
@@ -225,7 +230,7 @@ function createProjectSuite(project: FullProjectInternal, fileSuites: Suite[]): 
   const grepMatcher = createTitleMatcher(project.project.grep);
   const grepInvertMatcher = project.project.grepInvert ? createTitleMatcher(project.project.grepInvert) : null;
   filterTestsRemoveEmptySuites(projectSuite, (test: TestCase) => {
-    const grepTitle = test._grepTitle();
+    const grepTitle = test._grepTitleWithTags();
     if (grepInvertMatcher?.(grepTitle))
       return false;
     return grepMatcher(grepTitle);
@@ -233,20 +238,18 @@ function createProjectSuite(project: FullProjectInternal, fileSuites: Suite[]): 
   return projectSuite;
 }
 
-function filterProjectSuite(projectSuite: Suite, options: { cliFileFilters: TestFileFilter[], cliTitleMatcher?: Matcher, testIdMatcher?: Matcher, additionalFileMatcher?: Matcher }): Suite {
+function filterProjectSuite(projectSuite: Suite, options: { cliFileFilters: TestFileFilter[], cliTitleMatcher?: Matcher, testFilters: TestCaseFilter[] }): Suite {
   // Fast path.
-  if (!options.cliFileFilters.length && !options.cliTitleMatcher && !options.testIdMatcher && !options.additionalFileMatcher)
+  if (!options.cliFileFilters.length && !options.cliTitleMatcher && !options.testFilters.length)
     return projectSuite;
 
   const result = projectSuite._deepClone();
   if (options.cliFileFilters.length)
     filterByFocusedLine(result, options.cliFileFilters);
-  if (options.testIdMatcher)
-    filterByTestIds(result, options.testIdMatcher);
   filterTestsRemoveEmptySuites(result, (test: TestCase) => {
-    if (options.cliTitleMatcher && !options.cliTitleMatcher(test._grepTitle()))
+    if (!options.testFilters.every(filter => filter(test)))
       return false;
-    if (options.additionalFileMatcher && !options.additionalFileMatcher(test.location.file))
+    if (options.cliTitleMatcher && !options.cliTitleMatcher(test._grepTitleWithTags()))
       return false;
     return true;
   });
@@ -344,5 +347,36 @@ function sourceMapSources(file: string, cache: Map<string, string[]>): string[] 
   } finally {
     cache.set(file, sources);
     return sources;
+  }
+}
+
+export async function loadTestList(config: FullConfigInternal, filePath: string): Promise<TestCaseFilter> {
+  try {
+    const content = await fs.promises.readFile(filePath, 'utf-8');
+    const lines = content.split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('#'));
+    const descriptions = lines.map(line => {
+      const delimiter = line.includes('›') ? '›' : '>';
+      const tokens = line.split(delimiter).map(token => token.trim());
+      let project: string | undefined;
+      if (tokens[0].startsWith('[')) {
+        if (!tokens[0].endsWith(']'))
+          throw new Error(`Malformed test description: ${line}`);
+        project = tokens[0].substring(1, tokens[0].length - 1);
+        tokens.shift();
+      }
+      return { project, file: toPosixPath(parseLocationArg(tokens[0]).file), titlePath: tokens.slice(1) };
+    });
+    return (test: TestCase) => descriptions.some(d => {
+      // Note: there is no root yet at the time of filtering.
+      const [projectName, , ...titles] = test.titlePath();
+      if (d.project !== undefined && d.project !== projectName)
+        return false;
+      const relativeFile = toPosixPath(path.relative(config.config.rootDir, test.location.file));
+      if (relativeFile !== d.file)
+        return false;
+      return d.titlePath.length <= titles.length && d.titlePath.every((_, index) => titles[index] === d.titlePath[index]);
+    });
+  } catch (e) {
+    throw errorWithFile(filePath, 'Cannot read test list file: ' + e.message);
   }
 }

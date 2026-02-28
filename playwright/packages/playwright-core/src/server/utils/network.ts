@@ -18,100 +18,102 @@
 import http from 'http';
 import http2 from 'http2';
 import https from 'https';
-import url from 'url';
 
 import { HttpsProxyAgent, SocksProxyAgent, getProxyForUrl } from '../../utilsBundle';
 import { httpHappyEyeballsAgent, httpsHappyEyeballsAgent } from './happyEyeballs';
+import { ManualPromise } from '../../utils/isomorphic/manualPromise';
 
 import type net from 'net';
 import type { ProxySettings } from '../types';
+import type { Progress } from '../progress';
 
 export type HTTPRequestParams = {
   url: string,
   method?: string,
   headers?: http.OutgoingHttpHeaders,
   data?: string | Buffer,
-  timeout?: number,
   rejectUnauthorized?: boolean,
+  socketTimeout?: number,
 };
 
 export const NET_DEFAULT_TIMEOUT = 30_000;
 
-export function httpRequest(params: HTTPRequestParams, onResponse: (r: http.IncomingMessage) => void, onError: (error: Error) => void) {
-  const parsedUrl = url.parse(params.url);
-  let options: https.RequestOptions = {
-    ...parsedUrl,
-    agent: parsedUrl.protocol === 'https:' ? httpsHappyEyeballsAgent : httpHappyEyeballsAgent,
+export function httpRequest(params: HTTPRequestParams, onResponse: (r: http.IncomingMessage) => void, onError: (error: Error) => void): { cancel(error: Error | undefined): void } {
+  let url = new URL(params.url);
+  const options: https.RequestOptions = {
     method: params.method || 'GET',
     headers: params.headers,
   };
   if (params.rejectUnauthorized !== undefined)
     options.rejectUnauthorized = params.rejectUnauthorized;
 
-  const timeout = params.timeout ?? NET_DEFAULT_TIMEOUT;
-
   const proxyURL = getProxyForUrl(params.url);
   if (proxyURL) {
-    const parsedProxyURL = url.parse(proxyURL);
+    const parsedProxyURL = normalizeProxyURL(proxyURL);
     if (params.url.startsWith('http:')) {
-      options = {
-        path: parsedUrl.href,
-        host: parsedProxyURL.hostname,
-        port: parsedProxyURL.port,
-        headers: options.headers,
-        method: options.method
-      };
+      parsedProxyURL.pathname = url.toString();
+      url = parsedProxyURL;
     } else {
-      (parsedProxyURL as any).secureProxy = parsedProxyURL.protocol === 'https:';
-
       options.agent = new HttpsProxyAgent(parsedProxyURL);
       options.rejectUnauthorized = false;
     }
   }
 
+  options.agent ??= url.protocol === 'https:' ? httpsHappyEyeballsAgent : httpHappyEyeballsAgent;
+
+  let cancelRequest: (e: Error | undefined) => void;
   const requestCallback = (res: http.IncomingMessage) => {
     const statusCode = res.statusCode || 0;
     if (statusCode >= 300 && statusCode < 400 && res.headers.location) {
       // Close the original socket before following the redirect. Otherwise
       // it may stay idle and cause a timeout error.
       request.destroy();
-      httpRequest({ ...params, url: new URL(res.headers.location, params.url).toString() }, onResponse, onError);
+      cancelRequest = httpRequest({ ...params, url: new URL(res.headers.location, params.url).toString() }, onResponse, onError).cancel;
     } else {
       onResponse(res);
     }
   };
-  const request = options.protocol === 'https:' ?
-    https.request(options, requestCallback) :
-    http.request(options, requestCallback);
+  const request = url.protocol === 'https:' ?
+    https.request(url, options, requestCallback) :
+    http.request(url, options, requestCallback);
   request.on('error', onError);
-  if (timeout !== undefined) {
-    const rejectOnTimeout = () =>  {
-      onError(new Error(`Request to ${params.url} timed out after ${timeout}ms`));
+  if (params.socketTimeout !== undefined) {
+    request.setTimeout(params.socketTimeout, () =>  {
+      onError(new Error(`Request to ${params.url} timed out after ${params.socketTimeout}ms`));
       request.abort();
-    };
-    if (timeout <= 0) {
-      rejectOnTimeout();
-      return;
-    }
-    request.setTimeout(timeout, rejectOnTimeout);
+    });
   }
+  cancelRequest = e => {
+    try {
+      request.destroy(e);
+    } catch {
+    }
+  };
   request.end(params.data);
+  return { cancel: e => cancelRequest(e) };
 }
 
-export function fetchData(params: HTTPRequestParams, onError?: (params: HTTPRequestParams, response: http.IncomingMessage) => Promise<Error>): Promise<string> {
-  return new Promise((resolve, reject) => {
-    httpRequest(params, async response => {
-      if (response.statusCode !== 200) {
-        const error = onError ? await onError(params, response) : new Error(`fetch failed: server returned code ${response.statusCode}. URL: ${params.url}`);
-        reject(error);
-        return;
-      }
-      let body = '';
-      response.on('data', (chunk: string) => body += chunk);
-      response.on('error', (error: any) => reject(error));
-      response.on('end', () => resolve(body));
-    }, reject);
-  });
+export async function fetchData(progress: Progress | undefined, params: HTTPRequestParams, onError?: (params: HTTPRequestParams, response: http.IncomingMessage) => Promise<Error>): Promise<string> {
+  const promise = new ManualPromise<string>();
+  const { cancel } = httpRequest(params, async response => {
+    if (response.statusCode !== 200) {
+      const error = onError ? await onError(params, response) : new Error(`fetch failed: server returned code ${response.statusCode}. URL: ${params.url}`);
+      promise.reject(error);
+      return;
+    }
+    let body = '';
+    response.on('data', (chunk: string) => body += chunk);
+    response.on('error', (error: any) => promise.reject(error));
+    response.on('end', () => promise.resolve(body));
+  }, error => promise.reject(error));
+  if (!progress)
+    return promise;
+  try {
+    return await progress.race(promise);
+  } catch (error) {
+    cancel(error);
+    throw error;
+  }
 }
 
 function shouldBypassProxy(url: URL, bypass?: string): boolean {
@@ -127,34 +129,44 @@ function shouldBypassProxy(url: URL, bypass?: string): boolean {
   return domains.some(d => domain.endsWith(d));
 }
 
+function normalizeProxyURL(proxy: string): URL {
+  proxy = proxy.trim();
+  // Browsers allow to specify proxy without a protocol, defaulting to http.
+  if (!/^\w+:\/\//.test(proxy))
+    proxy = 'http://' + proxy;
+  return new URL(proxy);
+}
+
 export function createProxyAgent(proxy?: ProxySettings, forUrl?: URL) {
   if (!proxy)
     return;
   if (forUrl && proxy.bypass && shouldBypassProxy(forUrl, proxy.bypass))
     return;
 
-  // Browsers allow to specify proxy without a protocol, defaulting to http.
-  let proxyServer = proxy.server.trim();
-  if (!/^\w+:\/\//.test(proxyServer))
-    proxyServer = 'http://' + proxyServer;
+  const proxyURL = normalizeProxyURL(proxy.server);
+  if (proxyURL.protocol?.startsWith('socks')) {
+    // SocksProxyAgent distinguishes between socks5 and socks5h.
+    // socks5h is what we want, it means that hostnames are resolved by the proxy.
+    // browsers behave the same way, even if socks5 is specified.
+    if (proxyURL.protocol === 'socks5:')
+      proxyURL.protocol = 'socks5h:';
+    else if (proxyURL.protocol === 'socks4:')
+      proxyURL.protocol = 'socks4a:';
 
-  const proxyOpts = url.parse(proxyServer);
-  if (proxyOpts.protocol?.startsWith('socks')) {
-    return new SocksProxyAgent({
-      host: proxyOpts.hostname,
-      port: proxyOpts.port || undefined,
-    });
+    return new SocksProxyAgent(proxyURL);
   }
-  if (proxy.username)
-    proxyOpts.auth = `${proxy.username}:${proxy.password || ''}`;
+  if (proxy.username) {
+    proxyURL.username = proxy.username;
+    proxyURL.password = proxy.password || '';
+  }
 
   if (forUrl && ['ws:', 'wss:'].includes(forUrl.protocol)) {
     // Force CONNECT method for WebSockets.
-    return new HttpsProxyAgent(proxyOpts);
+    return new HttpsProxyAgent(proxyURL);
   }
 
-  // TODO: We should use HttpProxyAgent conditional on proxyOpts.protocol instead of always using CONNECT method.
-  return new HttpsProxyAgent(proxyOpts);
+  // TODO: This branch should be different from above. We should use HttpProxyAgent conditional on proxyURL.protocol instead of always using CONNECT method.
+  return new HttpsProxyAgent(proxyURL);
 }
 
 export function createHttpServer(requestListener?: (req: http.IncomingMessage, res: http.ServerResponse) => void): http.Server;
@@ -179,6 +191,22 @@ export function createHttp2Server(...args: any[]): http2.Http2SecureServer {
   const server = http2.createSecureServer(...args);
   decorateServer(server);
   return server;
+}
+
+export async function startHttpServer(server: http.Server, options: { host?: string, port?: number }) {
+  const { host = 'localhost', port = 0 } = options;
+  const errorPromise = new ManualPromise();
+  const errorListener = (error: Error) => errorPromise.reject(error);
+  server.on('error', errorListener);
+  try {
+    server.listen(port, host);
+    await Promise.race([
+      new Promise(cb => server.once('listening', cb)),
+      errorPromise,
+    ]);
+  } finally {
+    server.removeListener('error', errorListener);
+  }
 }
 
 export async function isURLAvailable(url: URL, ignoreHTTPSErrors: boolean, onLog?: (data: string) => void, onStdErr?: (data: string) => void) {
@@ -212,7 +240,7 @@ async function httpStatusCode(url: URL, ignoreHTTPSErrors: boolean, onLog?: (dat
   });
 }
 
-function decorateServer(server: net.Server) {
+export function decorateServer(server: net.Server) {
   const sockets = new Set<net.Socket>();
   server.on('connection', socket => {
     sockets.add(socket);

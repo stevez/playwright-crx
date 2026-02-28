@@ -17,12 +17,11 @@
 import fs from 'fs';
 import path from 'path';
 
-import { compareBuffersOrStrings, getComparator, isString } from 'playwright-core/lib/utils';
+import { callLogText, formatMatcherMessage, compareBuffersOrStrings, getComparator, isString } from 'playwright-core/lib/utils';
 import { colors } from 'playwright-core/lib/utils';
 import { mime } from 'playwright-core/lib/utilsBundle';
 
-import { addSuffixToFilePath, callLogText, expectTypes } from '../util';
-import {  matcherHint } from './matcherHint';
+import { addSuffixToFilePath, expectTypes } from '../util';
 import { currentTestInfo } from '../common/globals';
 
 import type { MatcherResult } from './matcherHint';
@@ -68,6 +67,7 @@ const NonConfigProperties: (keyof ToHaveScreenshotOptions)[] = [
 
 class SnapshotHelper {
   readonly testInfo: TestInfoImpl;
+  readonly name: string;
   readonly attachmentBaseName: string;
   readonly legacyExpectedPath: string;
   readonly previousPath: string;
@@ -81,8 +81,10 @@ class SnapshotHelper {
   readonly options: Omit<ToHaveScreenshotOptions, '_comparator'> & { comparator?: string };
   readonly matcherName: string;
   readonly locator: Locator | undefined;
+  readonly state: ExpectMatcherStateInternal;
 
   constructor(
+    state: ExpectMatcherStateInternal,
     testInfo: TestInfoImpl,
     matcherName: 'toMatchSnapshot' | 'toHaveScreenshot',
     locator: Locator | undefined,
@@ -101,6 +103,7 @@ class SnapshotHelper {
       name = nameFromOptions;
     }
 
+    this.name = Array.isArray(name) ? name.join(path.sep) : name || '';
     const resolvedPaths = testInfo._resolveSnapshotPaths(matcherName === 'toHaveScreenshot' ? 'screenshot' : 'snapshot', name, 'updateSnapshotIndex', anonymousSnapshotExtension);
     this.expectedPath = resolvedPaths.absoluteSnapshotPath;
     this.attachmentBaseName = resolvedPaths.relativeOutputPath;
@@ -135,10 +138,11 @@ class SnapshotHelper {
     this.locator = locator;
 
     this.updateSnapshots = testInfo.config.updateSnapshots;
-    this.mimeType = mime.getType(path.basename(this.expectedPath)) ?? 'application/octet-string';
+    this.mimeType = mime.getType(path.basename(this.expectedPath)) ?? 'application/octet-stream';
     this.comparator = getComparator(this.mimeType);
 
     this.testInfo = testInfo;
+    this.state = state;
     this.kind = this.mimeType.startsWith('image/') ? 'Screenshot' : 'Snapshot';
   }
 
@@ -208,31 +212,31 @@ class SnapshotHelper {
     log: string[] | undefined,
     step: TestStepInfoImpl | undefined): ImageMatcherResult {
     const output = [`${header}${indent(diffError, '  ')}`];
+    if (this.name) {
+      output.push('');
+      output.push(`  Snapshot: ${this.name}`);
+    }
     if (expected !== undefined) {
       // Copy the expectation inside the `test-results/` folder for backwards compatibility,
       // so that one can upload `test-results/` directory and have all the data inside.
       writeFileSync(this.legacyExpectedPath, expected);
       step?._attachToStep({ name: addSuffixToFilePath(this.attachmentBaseName, '-expected'), contentType: this.mimeType, path: this.expectedPath });
-      output.push(`\nExpected: ${colors.yellow(this.expectedPath)}`);
     }
     if (previous !== undefined) {
       writeFileSync(this.previousPath, previous);
       step?._attachToStep({ name: addSuffixToFilePath(this.attachmentBaseName, '-previous'), contentType: this.mimeType, path: this.previousPath });
-      output.push(`Previous: ${colors.yellow(this.previousPath)}`);
     }
     if (actual !== undefined) {
       writeFileSync(this.actualPath, actual);
       step?._attachToStep({ name: addSuffixToFilePath(this.attachmentBaseName, '-actual'), contentType: this.mimeType, path: this.actualPath });
-      output.push(`Received: ${colors.yellow(this.actualPath)}`);
     }
     if (diff !== undefined) {
       writeFileSync(this.diffPath, diff);
       step?._attachToStep({ name: addSuffixToFilePath(this.attachmentBaseName, '-diff'), contentType: this.mimeType, path: this.diffPath });
-      output.push(`    Diff: ${colors.yellow(this.diffPath)}`);
     }
 
     if (log?.length)
-      output.push(callLogText(log));
+      output.push(callLogText(this.state.utils, log));
     else
       output.push('');
 
@@ -256,12 +260,12 @@ export function toMatchSnapshot(
   if (received instanceof Promise)
     throw new Error('An unresolved Promise was passed to toMatchSnapshot(), make sure to resolve it by adding await to it.');
 
-  if (testInfo._projectInternal.ignoreSnapshots)
+  if (testInfo._projectInternal.project.ignoreSnapshots)
     return { pass: !this.isNot, message: () => '', name: 'toMatchSnapshot', expected: nameOrOptions };
 
   const configOptions = testInfo._projectInternal.expect?.toMatchSnapshot || {};
   const helper = new SnapshotHelper(
-      testInfo, 'toMatchSnapshot', undefined, '.' + determineFileExtension(received),
+      this, testInfo, 'toMatchSnapshot', undefined, '.' + determineFileExtension(received),
       configOptions, nameOrOptions, optOptions);
 
   if (this.isNot) {
@@ -299,8 +303,7 @@ export function toMatchSnapshot(
   if (!result)
     return helper.handleMatching();
 
-  const receiver = isString(received) ? 'string' : 'Buffer';
-  const header = matcherHint(this, undefined, 'toMatchSnapshot', receiver, undefined, undefined);
+  const header = formatMatcherMessage(this.utils, { promise: this.promise, isNot: this.isNot, matcherName: 'toMatchSnapshot', receiver: isString(received) ? 'string' : 'Buffer', expectation: 'expected' });
   return helper.handleDifferent(received, expected, undefined, result.diff, header, result.errorMessage, undefined, this._stepInfo);
 }
 
@@ -326,13 +329,13 @@ export async function toHaveScreenshot(
   if (!testInfo)
     throw new Error(`toHaveScreenshot() must be called during the test`);
 
-  if (testInfo._projectInternal.ignoreSnapshots)
+  if (testInfo._projectInternal.project.ignoreSnapshots)
     return { pass: !this.isNot, message: () => '', name: 'toHaveScreenshot', expected: nameOrOptions };
 
   expectTypes(pageOrLocator, ['Page', 'Locator'], 'toHaveScreenshot');
   const [page, locator] = pageOrLocator.constructor.name === 'Page' ? [(pageOrLocator as PageEx), undefined] : [(pageOrLocator as Locator).page() as PageEx, pageOrLocator as Locator];
   const configOptions = testInfo._projectInternal.expect?.toHaveScreenshot || {};
-  const helper = new SnapshotHelper(testInfo, 'toHaveScreenshot', locator, undefined, configOptions, nameOrOptions, optOptions);
+  const helper = new SnapshotHelper(this, testInfo, 'toHaveScreenshot', locator, undefined, configOptions, nameOrOptions, optOptions);
   if (!helper.expectedPath.toLowerCase().endsWith('.png'))
     throw new Error(`Screenshot name "${path.basename(helper.expectedPath)}" must have '.png' extension`);
   expectTypes(pageOrLocator, ['Page', 'Locator'], 'toHaveScreenshot');
@@ -374,14 +377,13 @@ export async function toHaveScreenshot(
   if (helper.updateSnapshots === 'none' && !hasSnapshot)
     return helper.createMatcherResult(`A snapshot doesn't exist at ${helper.expectedPath}.`, false);
 
-  const receiver = locator ? 'locator' : 'page';
   if (!hasSnapshot) {
     // Regenerate a new screenshot by waiting until two screenshots are the same.
     const { actual, previous, diff, errorMessage, log, timedOut } = await page._expectScreenshot(expectScreenshotOptions);
     // We tried re-generating new snapshot but failed.
     // This can be due to e.g. spinning animation, so we want to show it as a diff.
     if (errorMessage) {
-      const header = matcherHint(this, locator, 'toHaveScreenshot', receiver, undefined, undefined, timedOut ? timeout : undefined);
+      const header = formatMatcherMessage(this.utils, { promise: this.promise, isNot: this.isNot, matcherName: 'toHaveScreenshot', locator: locator?.toString(), expectation: 'expected', timeout, timedOut });
       return helper.handleDifferent(actual, undefined, previous, diff, header, errorMessage, log, this._stepInfo);
     }
 
@@ -396,9 +398,9 @@ export async function toHaveScreenshot(
   expectScreenshotOptions.expected = helper.updateSnapshots === 'all' ? undefined : expected;
 
   const { actual, previous, diff, errorMessage, log, timedOut } = await page._expectScreenshot(expectScreenshotOptions);
-  const writeFiles = () => {
-    writeFileSync(helper.expectedPath, actual!);
-    writeFileSync(helper.actualPath, actual!);
+  const writeFiles = (actualBuffer: Buffer) => {
+    writeFileSync(helper.expectedPath, actualBuffer);
+    writeFileSync(helper.actualPath, actualBuffer);
     /* eslint-disable no-console */
     console.log(helper.expectedPath + ' is re-generated, writing actual.');
     return helper.createMatcherResult(helper.expectedPath + ' running with --update-snapshots, writing actual.', true);
@@ -408,15 +410,20 @@ export async function toHaveScreenshot(
     // Screenshot is matching, but is not necessarily the same as the expected.
     if (helper.updateSnapshots === 'all' && actual && compareBuffersOrStrings(actual, expected)) {
       console.log(helper.expectedPath + ' is re-generated, writing actual.');
-      return writeFiles();
+      return writeFiles(actual);
     }
     return helper.handleMatching();
   }
 
-  if (helper.updateSnapshots === 'changed' || helper.updateSnapshots === 'all')
-    return writeFiles();
+  if (helper.updateSnapshots === 'changed' || helper.updateSnapshots === 'all') {
+    if (actual)
+      return writeFiles(actual);
+    let header = formatMatcherMessage(this.utils, { promise: this.promise, isNot: this.isNot, matcherName: 'toHaveScreenshot', locator: locator?.toString(), expectation: 'expected', timeout, timedOut });
+    header += '  Failed to re-generate expected.\n';
+    return helper.handleDifferent(actual, expectScreenshotOptions.expected, previous, diff, header, errorMessage, log, this._stepInfo);
+  }
 
-  const header = matcherHint(this, undefined, 'toHaveScreenshot', receiver, undefined, undefined, timedOut ? timeout : undefined);
+  const header = formatMatcherMessage(this.utils, { promise: this.promise, isNot: this.isNot, matcherName: 'toHaveScreenshot', locator: locator?.toString(), expectation: 'expected', timeout, timedOut });
   return helper.handleDifferent(actual, expectScreenshotOptions.expected, previous, diff, header, errorMessage, log, this._stepInfo);
 }
 

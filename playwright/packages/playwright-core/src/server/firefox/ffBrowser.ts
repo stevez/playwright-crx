@@ -18,7 +18,6 @@
 import { assert } from '../../utils';
 import { Browser } from '../browser';
 import { BrowserContext, verifyGeolocation } from '../browserContext';
-import { TargetClosedError } from '../errors';
 import * as network from '../network';
 import { ConnectionEvents, FFConnection  } from './ffConnection';
 import { FFPage } from './ffPage';
@@ -78,7 +77,6 @@ export class FFBrowser extends Browser {
     this.session.on('Browser.detachedFromTarget', this._onDetachedFromTarget.bind(this));
     this.session.on('Browser.downloadCreated', this._onDownloadCreated.bind(this));
     this.session.on('Browser.downloadFinished', this._onDownloadFinished.bind(this));
-    this.session.on('Browser.videoRecordingFinished', this._onVideoRecordingFinished.bind(this));
   }
 
   async _initVersion() {
@@ -143,7 +141,7 @@ export class FFBrowser extends Browser {
     if (!originPage) {
       // Resume the page creation with an error. The page will automatically close right
       // after the download begins.
-      ffPage._markAsError(new Error('Starting new page download'));
+      ffPage._reportAsNew(new Error('Starting new page download'));
       if (ffPage._opener)
         originPage = ffPage._opener._page.initializedOrUndefined();
     }
@@ -157,14 +155,7 @@ export class FFBrowser extends Browser {
     this._downloadFinished(payload.uuid, error);
   }
 
-  _onVideoRecordingFinished(payload: Protocol.Browser.videoRecordingFinishedPayload) {
-    this._takeVideo(payload.screencastId)?.reportFinished();
-  }
-
   _onDisconnect() {
-    for (const video of this._idToVideo.values())
-      video.artifact.reportFinished(new TargetClosedError());
-    this._idToVideo.clear();
     for (const ffPage of this._ffPages.values())
       ffPage.didClose();
     this._ffPages.clear();
@@ -195,13 +186,7 @@ export class FFBrowserContext extends BrowserContext {
         },
       }));
     }
-    if (this._options.viewport) {
-      const viewport = {
-        viewportSize: { width: this._options.viewport.width, height: this._options.viewport.height },
-        deviceScaleFactor: this._options.deviceScaleFactor || 1,
-      };
-      promises.push(this._browser.session.send('Browser.setDefaultViewport', { browserContextId, viewport }));
-    }
+    promises.push(this.doUpdateDefaultViewport());
     if (this._options.hasTouch)
       promises.push(this._browser.session.send('Browser.setTouchOverride', { browserContextId, hasTouch: true }));
     if (this._options.userAgent)
@@ -217,47 +202,22 @@ export class FFBrowserContext extends BrowserContext {
     if (this._options.timezoneId)
       promises.push(this._browser.session.send('Browser.setTimezoneOverride', { browserContextId, timezoneId: this._options.timezoneId }));
     if (this._options.extraHTTPHeaders || this._options.locale)
-      promises.push(this.setExtraHTTPHeaders(this._options.extraHTTPHeaders || []));
+      promises.push(this.doUpdateExtraHTTPHeaders());
     if (this._options.httpCredentials)
       promises.push(this.setHTTPCredentials(this._options.httpCredentials));
     if (this._options.geolocation)
       promises.push(this.setGeolocation(this._options.geolocation));
     if (this._options.offline)
-      promises.push(this.setOffline(this._options.offline));
-    if (this._options.colorScheme !== 'no-override') {
-      promises.push(this._browser.session.send('Browser.setColorScheme', {
-        browserContextId,
-        colorScheme: this._options.colorScheme !== undefined  ? this._options.colorScheme : 'light',
-      }));
-    }
-    if (this._options.reducedMotion !== 'no-override') {
-      promises.push(this._browser.session.send('Browser.setReducedMotion', {
-        browserContextId,
-        reducedMotion: this._options.reducedMotion !== undefined  ? this._options.reducedMotion : 'no-preference',
-      }));
-    }
-    if (this._options.forcedColors !== 'no-override') {
-      promises.push(this._browser.session.send('Browser.setForcedColors', {
-        browserContextId,
-        forcedColors: this._options.forcedColors !== undefined  ? this._options.forcedColors : 'none',
-      }));
-    }
-    if (this._options.contrast !== 'no-override') {
-      promises.push(this._browser.session.send('Browser.setContrast', {
-        browserContextId,
-        contrast: this._options.contrast !== undefined  ? this._options.contrast : 'no-preference',
-      }));
-    }
+      promises.push(this.doUpdateOffline());
+    promises.push(this.doUpdateDefaultEmulatedMedia());
     if (this._options.recordVideo) {
-      promises.push(this._ensureVideosPath().then(() => {
-        return this._browser.session.send('Browser.setVideoRecordingOptions', {
-          // validateBrowserContextOptions ensures correct video size.
-          options: {
-            ...this._options.recordVideo!.size!,
-            dir: this._options.recordVideo!.dir,
-          },
-          browserContextId: this._browserContextId
-        });
+      promises.push(this._browser.session.send('Browser.setScreencastOptions', {
+        // validateBrowserContextOptions ensures correct video size.
+        options: {
+          ...this._options.recordVideo!.size!,
+          quality: 90,
+        },
+        browserContextId: this._browserContextId
       }));
     }
     const proxy = this._options.proxyOverride || this._options.proxy;
@@ -279,7 +239,7 @@ export class FFBrowserContext extends BrowserContext {
     return this._ffPages().map(ffPage => ffPage._page);
   }
 
-  override async doCreateNewPage(markAsServerSideOnly?: boolean): Promise<Page> {
+  override async doCreateNewPage(): Promise<Page> {
     const { targetId } = await this._browser.session.send('Browser.newPage', {
       browserContextId: this._browserContextId
     }).catch(e =>  {
@@ -287,28 +247,41 @@ export class FFBrowserContext extends BrowserContext {
         throw new Error(`Invalid timezone ID: ${this._options.timezoneId}`);
       throw e;
     });
-    const page = this._browser._ffPages.get(targetId)!._page;
-    if (markAsServerSideOnly)
-      page.markAsServerSideOnly();
-    return page;
-
+    return this._browser._ffPages.get(targetId)!._page;
   }
 
   async doGetCookies(urls: string[]): Promise<channels.NetworkCookie[]> {
     const { cookies } = await this._browser.session.send('Browser.getCookies', { browserContextId: this._browserContextId });
     return network.filterCookies(cookies.map(c => {
-      const copy: any = { ... c };
-      delete copy.size;
-      delete copy.session;
-      return copy as channels.NetworkCookie;
+      const { name, value, domain, path, expires, httpOnly, secure, sameSite } = c;
+      return {
+        name,
+        value,
+        domain,
+        path,
+        expires,
+        httpOnly,
+        secure,
+        sameSite,
+      };
     }), urls);
   }
 
   async addCookies(cookies: channels.SetNetworkCookie[]) {
-    const cc = network.rewriteCookies(cookies).map(c => ({
-      ...c,
-      expires: c.expires === -1 ? undefined : c.expires,
-    }));
+    const cc = network.rewriteCookies(cookies).map(c => {
+      const { name, value, url, domain, path, expires, httpOnly, secure, sameSite } = c;
+      return {
+        name,
+        value,
+        url,
+        domain,
+        path,
+        expires: expires === -1 ? undefined : expires,
+        httpOnly,
+        secure,
+        sameSite
+      };
+    });
     await this._browser.session.send('Browser.setCookies', { browserContextId: this._browserContextId, cookies: cc });
   }
 
@@ -317,11 +290,12 @@ export class FFBrowserContext extends BrowserContext {
   }
 
   async doGrantPermissions(origin: string, permissions: string[]) {
-    const webPermissionToProtocol = new Map<string, 'geo' | 'desktop-notification' | 'persistent-storage' | 'push'>([
+    const webPermissionToProtocol = new Map<string, string>([
       ['geolocation', 'geo'],
       ['persistent-storage', 'persistent-storage'],
       ['push', 'push'],
       ['notifications', 'desktop-notification'],
+      ['screen-wake-lock', 'screen-wake-lock'],
     ]);
     const filtered = permissions.map(permission => {
       const protocolPermission = webPermissionToProtocol.get(permission);
@@ -342,9 +316,8 @@ export class FFBrowserContext extends BrowserContext {
     await this._browser.session.send('Browser.setGeolocationOverride', { browserContextId: this._browserContextId, geolocation: geolocation || null });
   }
 
-  async setExtraHTTPHeaders(headers: types.HeadersArray): Promise<void> {
-    this._options.extraHTTPHeaders = headers;
-    let allHeaders = this._options.extraHTTPHeaders;
+  async doUpdateExtraHTTPHeaders(): Promise<void> {
+    let allHeaders = this._options.extraHTTPHeaders || [];
     if (this._options.locale)
       allHeaders = network.mergeHeaders([allHeaders, network.singleHeader('Accept-Language', this._options.locale)]);
     await this._browser.session.send('Browser.setExtraHTTPHeaders', { browserContextId: this._browserContextId, headers: allHeaders });
@@ -354,9 +327,8 @@ export class FFBrowserContext extends BrowserContext {
     await this._browser.session.send('Browser.setUserAgentOverride', { browserContextId: this._browserContextId, userAgent: userAgent || null });
   }
 
-  async setOffline(offline: boolean): Promise<void> {
-    this._options.offline = offline;
-    await this._browser.session.send('Browser.setOnlineOverride', { browserContextId: this._browserContextId, override: offline ? 'offline' : 'online' });
+  async doUpdateOffline(): Promise<void> {
+    await this._browser.session.send('Browser.setOnlineOverride', { browserContextId: this._browserContextId, override: this._options.offline ? 'offline' : 'online' });
   }
 
   async doSetHTTPCredentials(httpCredentials?: types.Credentials): Promise<void> {
@@ -392,6 +364,43 @@ export class FFBrowserContext extends BrowserContext {
     ]);
   }
 
+  override async doUpdateDefaultViewport() {
+    if (!this._options.viewport)
+      return;
+    const viewport = {
+      viewportSize: { width: this._options.viewport.width, height: this._options.viewport.height },
+      deviceScaleFactor: this._options.deviceScaleFactor || 1,
+    };
+    await this._browser.session.send('Browser.setDefaultViewport', { browserContextId: this._browserContextId, viewport });
+  }
+
+  override async doUpdateDefaultEmulatedMedia() {
+    if (this._options.colorScheme !== 'no-override') {
+      await this._browser.session.send('Browser.setColorScheme', {
+        browserContextId: this._browserContextId,
+        colorScheme: this._options.colorScheme !== undefined  ? this._options.colorScheme : 'light',
+      });
+    }
+    if (this._options.reducedMotion !== 'no-override') {
+      await this._browser.session.send('Browser.setReducedMotion', {
+        browserContextId: this._browserContextId,
+        reducedMotion: this._options.reducedMotion !== undefined  ? this._options.reducedMotion : 'no-preference',
+      });
+    }
+    if (this._options.forcedColors !== 'no-override') {
+      await this._browser.session.send('Browser.setForcedColors', {
+        browserContextId: this._browserContextId,
+        forcedColors: this._options.forcedColors !== undefined  ? this._options.forcedColors : 'none',
+      });
+    }
+    if (this._options.contrast !== 'no-override') {
+      await this._browser.session.send('Browser.setContrast', {
+        browserContextId: this._browserContextId,
+        contrast: this._options.contrast !== undefined  ? this._options.contrast : 'no-preference',
+      });
+    }
+  }
+
   override async doExposePlaywrightBinding() {
     this._browser.session.send('Browser.addBinding', { browserContextId: this._browserContextId, name: PageBinding.kBindingName, script: '' });
   }
@@ -405,12 +414,8 @@ export class FFBrowserContext extends BrowserContext {
 
   async doClose(reason: string | undefined) {
     if (!this._browserContextId) {
-      if (this._options.recordVideo) {
-        await this._browser.session.send('Browser.setVideoRecordingOptions', {
-          options: undefined,
-          browserContextId: this._browserContextId
-        });
-      }
+      if (this._options.recordVideo)
+        await Promise.all(this._ffPages().map(ffPage => ffPage._page.screencast.stopVideoRecording()));
       // Closing persistent context should close the browser.
       await this._browser.close({ reason });
     } else {

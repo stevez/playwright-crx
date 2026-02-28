@@ -91,13 +91,14 @@ export class BrowserType extends ChannelOwner<channels.BrowserTypeChannel> imple
   }
 
   async launchPersistentContext(userDataDir: string, options: LaunchPersistentContextOptions = {}): Promise<BrowserContext> {
-    const logger = options.logger || this._playwright._defaultLaunchOptions?.logger;
     assert(!(options as any).port, 'Cannot specify a port without launching as a server.');
     options = this._playwright.selectors._withSelectorOptions({
       ...this._playwright._defaultLaunchOptions,
-      ...this._playwright._defaultContextOptions,
       ...options,
     });
+    await this._instrumentation.runBeforeCreateBrowserContext(options);
+
+    const logger = options.logger || this._playwright._defaultLaunchOptions?.logger;
     const contextParams = await prepareBrowserContextParams(this._platform, options);
     const persistentParams: channels.BrowserTypeLaunchPersistentContextParams = {
       ...contextParams,
@@ -108,23 +109,25 @@ export class BrowserType extends ChannelOwner<channels.BrowserTypeChannel> imple
       userDataDir: (this._platform.path().isAbsolute(userDataDir) || !userDataDir) ? userDataDir : this._platform.path().resolve(userDataDir),
       timeout: new TimeoutSettings(this._platform).launchTimeout(options),
     };
-    return await this._wrapApiCall(async () => {
+    const context = await this._wrapApiCall(async () => {
       const result = await this._channel.launchPersistentContext(persistentParams);
       const browser = Browser.from(result.browser);
       browser._connectToBrowserType(this, options, logger);
       const context = BrowserContext.from(result.context);
       await context._initializeHarFromOptions(options.recordHar);
-      await this._instrumentation.runAfterCreateBrowserContext(context);
       return context;
     });
+    await this._instrumentation.runAfterCreateBrowserContext(context);
+    return context;
   }
 
-  connect(options: api.ConnectOptions & { wsEndpoint: string }): Promise<api.Browser>;
-  connect(wsEndpoint: string, options?: api.ConnectOptions): Promise<api.Browser>;
-  async connect(optionsOrWsEndpoint: string | (api.ConnectOptions & { wsEndpoint: string }), options?: api.ConnectOptions): Promise<Browser>{
+  connect(options: api.ConnectOptions & { wsEndpoint: string }): Promise<Browser>;
+  connect(options: api.ConnectOptions & { pipeName: string }): Promise<Browser>;
+  connect(wsEndpoint: string, options?: api.ConnectOptions): Promise<Browser>;
+  async connect(optionsOrWsEndpoint: string | (api.ConnectOptions & { wsEndpoint?: string, pipeName?: string }), options?: api.ConnectOptions): Promise<Browser>{
     if (typeof optionsOrWsEndpoint === 'string')
       return await this._connect({ ...options, wsEndpoint: optionsOrWsEndpoint });
-    assert(optionsOrWsEndpoint.wsEndpoint, 'options.wsEndpoint is required');
+    assert(optionsOrWsEndpoint.wsEndpoint || optionsOrWsEndpoint.pipeName, 'Either options.wsEndpoint or options.pipeName is required');
     return await this._connect(optionsOrWsEndpoint);
   }
 
@@ -135,6 +138,7 @@ export class BrowserType extends ChannelOwner<channels.BrowserTypeChannel> imple
       const headers = { 'x-playwright-browser': this.name(), ...params.headers };
       const connectParams: channels.LocalUtilsConnectParams = {
         wsEndpoint: params.wsEndpoint,
+        pipeName: params.pipeName,
         headers,
         exposeNetwork: params.exposeNetwork ?? params._exposeNetwork,
         slowMo: params.slowMo,
@@ -199,9 +203,21 @@ export class BrowserType extends ChannelOwner<channels.BrowserTypeChannel> imple
       headers,
       slowMo: params.slowMo,
       timeout: new TimeoutSettings(this._platform).timeout(params),
+      isLocal: params.isLocal,
     });
     const browser = Browser.from(result.browser);
     browser._connectToBrowserType(this, {}, params.logger);
+    if (result.defaultContext)
+      await this._instrumentation.runAfterCreateBrowserContext(BrowserContext.from(result.defaultContext));
+    return browser;
+  }
+
+  async _connectOverCDPTransport(transport: /* ConnectionTransport */ any) {
+    if (this.name() !== 'chromium')
+      throw new Error('Connecting over CDP is only supported in Chromium.');
+    const result = await this._channel.connectOverCDPTransport({ transport });
+    const browser = Browser.from(result.browser);
+    browser._connectToBrowserType(this, {}, undefined);
     if (result.defaultContext)
       await this._instrumentation.runAfterCreateBrowserContext(BrowserContext.from(result.defaultContext));
     return browser;

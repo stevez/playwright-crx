@@ -112,9 +112,24 @@ export function TreeView<T extends TreeItem>({
     setTreeState({ ...treeState });
   }, [treeItems, selectedItem, onSelected, treeState, setTreeState]);
 
-  return <div className={clsx(`tree-view vbox`, name + '-tree-view')} role={'tree'} data-testid={dataTestId || (name + '-tree')}>
+  const toggleSubtree = React.useCallback((item: T) => {
+    const { expanded } = treeItems.get(item)!;
+
+    const stack: TreeItem[] = [item];
+    while (stack.length) {
+      const current = stack.pop()!;
+      stack.push(...current.children);
+
+      treeState.expandedItems.set(current.id, !expanded);
+    }
+
+    setTreeState({ ...treeState });
+  }, [treeItems, treeState, setTreeState]);
+
+  return <div className={clsx(`tree-view vbox`, name + '-tree-view')} data-testid={dataTestId || (name + '-tree')}>
     <div
       className={clsx('tree-view-content')}
+      role={treeItems.size > 0 ? 'tree' : undefined}
       tabIndex={0}
       onKeyDown={event => {
         if (selectedItem && event.key === 'Enter') {
@@ -187,6 +202,7 @@ export function TreeView<T extends TreeItem>({
           onAccepted={onAccepted}
           isError={isError}
           toggleExpanded={toggleExpanded}
+          toggleSubtree={toggleSubtree}
           highlightedItem={highlightedItem}
           setHighlightedItem={setHighlightedItem}
           render={render}
@@ -205,6 +221,7 @@ type TreeItemHeaderProps<T> = {
   selectedItem: T | undefined,
   onSelected?: (item: T) => void,
   toggleExpanded: (item: T) => void,
+  toggleSubtree: (item: T) => void,
   highlightedItem: T | undefined,
   isError?: (item: T) => boolean,
   onAccepted?: (item: T) => void,
@@ -226,6 +243,7 @@ export function TreeItemHeader<T extends TreeItem>({
   isError,
   onAccepted,
   toggleExpanded,
+  toggleSubtree,
   render,
   title,
   icon,
@@ -276,7 +294,10 @@ export function TreeItemHeader<T extends TreeItem>({
         onClick={e => {
           e.stopPropagation();
           e.preventDefault();
-          toggleExpanded(item);
+          if (e.altKey)
+            toggleSubtree(item);
+          else
+            toggleExpanded(item);
         }}
       />
       {icon && <div className={'codicon ' + iconed} style={{ minWidth: 16, marginRight: 4 }} aria-label={'[' + iconed.replace('codicon', 'icon') + ']'}></div>}
@@ -294,6 +315,7 @@ export function TreeItemHeader<T extends TreeItem>({
           onAccepted={onAccepted}
           isError={isError}
           toggleExpanded={toggleExpanded}
+          toggleSubtree={toggleSubtree}
           highlightedItem={highlightedItem}
           setHighlightedItem={setHighlightedItem}
           render={render}

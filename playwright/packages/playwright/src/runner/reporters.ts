@@ -13,13 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-import path from 'path';
-
+import fs from 'fs';
 import { calculateSha1 } from 'playwright-core/lib/utils';
 
 import { loadReporter } from './loadUtils';
-import { formatError, terminalScreen } from '../reporters/base';
+import { formatError } from '../reporters/base';
 import { BlobReporter } from '../reporters/blob';
 import DotReporter from '../reporters/dot';
 import EmptyReporter from '../reporters/empty';
@@ -29,16 +27,16 @@ import JSONReporter from '../reporters/json';
 import JUnitReporter from '../reporters/junit';
 import LineReporter from '../reporters/line';
 import ListReporter from '../reporters/list';
-import {  wrapReporterAsV2 } from '../reporters/reporterV2';
+import ListModeReporter from '../reporters/listModeReporter';
+import { wrapReporterAsV2 } from '../reporters/reporterV2';
 
 import type { ReporterDescription } from '../../types/test';
-import type { FullConfig, TestError } from '../../types/testReporter';
+import type { TestError } from '../../types/testReporter';
 import type { BuiltInReporter, FullConfigInternal } from '../common/config';
-import type { Suite } from '../common/test';
 import type { CommonReporterOptions, Screen } from '../reporters/base';
 import type { ReporterV2 } from '../reporters/reporterV2';
 
-export async function createReporters(config: FullConfigInternal, mode: 'list' | 'test' | 'merge', isTestServer: boolean, descriptions?: ReporterDescription[]): Promise<ReporterV2[]> {
+export async function createReporters(config: FullConfigInternal, mode: 'list' | 'test' | 'merge', descriptions?: ReporterDescription[]): Promise<ReporterV2[]> {
   const defaultReporters: { [key in BuiltInReporter]: new(arg: any) => ReporterV2 } = {
     blob: BlobReporter,
     dot: mode === 'list' ? ListModeReporter : DotReporter,
@@ -54,7 +52,7 @@ export async function createReporters(config: FullConfigInternal, mode: 'list' |
   descriptions ??= config.config.reporter;
   if (config.configCLIOverrides.additionalReporters)
     descriptions = [...descriptions, ...config.configCLIOverrides.additionalReporters];
-  const runOptions = reporterOptions(config, mode, isTestServer);
+  const runOptions = reporterOptions(config, mode);
   for (const r of descriptions) {
     const [name, arg] = r;
     const options = { ...runOptions, ...arg };
@@ -93,24 +91,22 @@ interface ErrorCollectingReporter extends ReporterV2 {
   errors(): TestError[];
 }
 
-export function createErrorCollectingReporter(screen: Screen, writeToConsole?: boolean): ErrorCollectingReporter {
+export function createErrorCollectingReporter(screen: Screen): ErrorCollectingReporter {
   const errors: TestError[] = [];
   return {
     version: () => 'v2',
     onError(error: TestError) {
       errors.push(error);
-      if (writeToConsole)
-        process.stdout.write(formatError(screen, error).message + '\n');
+      screen.stderr?.write(formatError(screen, error).message + '\n');
     },
     errors: () => errors,
   };
 }
 
-function reporterOptions(config: FullConfigInternal, mode: 'list' | 'test' | 'merge', isTestServer: boolean): CommonReporterOptions {
+function reporterOptions(config: FullConfigInternal, mode: 'list' | 'test' | 'merge'): CommonReporterOptions {
   return {
     configDir: config.configDir,
     _mode: mode,
-    _isTestServer: isTestServer,
     _commandHash: computeCommandHash(config),
   };
 }
@@ -129,42 +125,13 @@ function computeCommandHash(config: FullConfigInternal) {
     command.cliGrepInvert = config.cliGrepInvert;
   if (config.cliOnlyChanged)
     command.cliOnlyChanged = config.cliOnlyChanged;
+  if (config.config.tags.length)
+    command.tags = config.config.tags.join(' ');
+  if (config.cliTestList)
+    command.cliTestList = calculateSha1(fs.readFileSync(config.cliTestList));
+  if (config.cliTestListInvert)
+    command.cliTestListInvert = calculateSha1(fs.readFileSync(config.cliTestListInvert));
   if (Object.keys(command).length)
     parts.push(calculateSha1(JSON.stringify(command)).substring(0, 7));
   return parts.join('-');
-}
-
-class ListModeReporter implements ReporterV2 {
-  private config!: FullConfig;
-
-  version(): 'v2' {
-    return 'v2';
-  }
-
-  onConfigure(config: FullConfig) {
-    this.config = config;
-  }
-
-  onBegin(suite: Suite): void {
-    // eslint-disable-next-line no-console
-    console.log(`Listing tests:`);
-    const tests = suite.allTests();
-    const files = new Set<string>();
-    for (const test of tests) {
-      // root, project, file, ...describes, test
-      const [, projectName, , ...titles] = test.titlePath();
-      const location = `${path.relative(this.config.rootDir, test.location.file)}:${test.location.line}:${test.location.column}`;
-      const projectTitle = projectName ? `[${projectName}] › ` : '';
-      // eslint-disable-next-line no-console
-      console.log(`  ${projectTitle}${location} › ${titles.join(' › ')}`);
-      files.add(test.location.file);
-    }
-    // eslint-disable-next-line no-console
-    console.log(`Total: ${tests.length} ${tests.length === 1 ? 'test' : 'tests'} in ${files.size} ${files.size === 1 ? 'file' : 'files'}`);
-  }
-
-  onError(error: TestError) {
-    // eslint-disable-next-line no-console
-    console.error('\n' + formatError(terminalScreen, error).message);
-  }
 }

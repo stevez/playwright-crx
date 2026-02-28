@@ -33,6 +33,7 @@ export default defineConfig({
       // for bundles, we use relative paths because different utilsBundleImpl exists in both playwright-core and playwright
       './utilsBundleImpl': '../bundles/utils/src/utilsBundleImpl',
       './zipBundleImpl': '../bundles/zip/src/zipBundleImpl',
+      './mcpBundleImpl': path.resolve(__dirname, './src/shims/mcpBundleImpl'),
       './babelBundleImpl': '../../bundles/babel/src/babelBundleImpl',
       './expectBundleImpl': '../../bundles/expect/src/expectBundleImpl',
 

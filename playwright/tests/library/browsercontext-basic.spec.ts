@@ -255,8 +255,8 @@ it('should be able to navigate after disabling javascript', async ({ browser, se
   await context.close();
 });
 
-it('should not hang on promises after disabling javascript', async ({ browserName, contextFactory }) => {
-  it.fixme(browserName === 'firefox');
+it('should not hang on promises after disabling javascript', async ({ browserName, contextFactory, isBidi }) => {
+  it.fixme(browserName === 'firefox' && !isBidi);
   const context = await contextFactory({ javaScriptEnabled: false });
   const page = await context.newPage();
   expect(await page.evaluate(() => 1)).toBe(1);
@@ -329,6 +329,22 @@ it('should emulate navigator.onLine', async ({ browser, server }) => {
   expect(await page.evaluate(() => window.navigator.onLine)).toBe(false);
   await context.setOffline(false);
   expect(await page.evaluate(() => window.navigator.onLine)).toBe(true);
+  await context.close();
+});
+
+it('should emulate offline event', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/37295' } }, async ({ browser }) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const events = await page.evaluateHandle(() => {
+    const events = [];
+    window.addEventListener('offline', () => events.push('offline'));
+    window.addEventListener('online', () => events.push('online'));
+    return events;
+  });
+  await context.setOffline(true);
+  expect(await events.jsonValue()).toEqual(['offline']);
+  await context.setOffline(false);
+  expect(await events.jsonValue()).toEqual(['offline', 'online']);
   await context.close();
 });
 

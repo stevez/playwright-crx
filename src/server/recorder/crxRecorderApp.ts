@@ -21,13 +21,26 @@ import type * as channels from '../../protocol/channels';
 import type { ActionInContextWithLocation } from './parser';
 import { PopupRecorderWindow } from './popupRecorderWindow';
 import { SidepanelRecorderWindow } from './sidepanelRecorderWindow';
-import type { IRecorderApp } from 'playwright-core/lib/server/recorder/recorderFrontend';
 import type { ActionInContext, ActionWithSelector } from '@recorder/actions';
 import { parse } from './parser';
 import { languageSet } from 'playwright-core/lib/server/codegen/languages';
 import type { Crx } from '../crx';
 import type { LanguageGeneratorOptions } from 'playwright-core/lib/server/codegen/types';
-import { serverSideCallMetadata } from 'playwright-core/lib/server';
+import { createGuid, monotonicTime } from 'playwright-core/lib/utils';
+import type { CallMetadata } from 'playwright-core/lib/server/instrumentation';
+
+function serverSideCallMetadata(): CallMetadata {
+  return {
+    id: `call@${createGuid()}`,
+    startTime: monotonicTime(),
+    endTime: 0,
+    type: '',
+    method: '',
+    params: {},
+    log: [],
+    internal: true,
+  };
+}
 
 export type RecorderMessage = { type: 'recorder' } & (
   | { method: 'resetCallLogs' }
@@ -51,7 +64,7 @@ export interface RecorderWindow {
   hideApp?: () => any;
 }
 
-export class CrxRecorderApp extends EventEmitter implements IRecorderApp {
+export class CrxRecorderApp extends EventEmitter {
   readonly wsEndpointForTest: string | undefined;
   private _crx: Crx;
   readonly _recorder: Recorder;

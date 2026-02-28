@@ -49,7 +49,7 @@ export class FrameSelectors {
     return this.frame._page.browserContext.selectors().parseSelector(selector, strict);
   }
 
-  async query(selector: string, options?: types.StrictOptions, scope?: ElementHandle): Promise<ElementHandle<Element> | null> {
+  async query(selector: string, options?: types.StrictOptions & { mainWorld?: boolean }, scope?: ElementHandle): Promise<ElementHandle<Element> | null> {
     const resolved = await this.resolveInjectedForSelector(selector, options, scope);
     // Be careful, |this.frame| can be different from |resolved.frame|.
     if (!resolved)
@@ -71,17 +71,22 @@ export class FrameSelectors {
     if (!resolved)
       throw new Error(`Failed to find frame for selector "${selector}"`);
     return await resolved.injected.evaluateHandle((injected, { info, scope }) => {
-      return injected.querySelectorAll(info.parsed, scope || document);
+      const elements = injected.querySelectorAll(info.parsed, scope || document);
+      injected.checkDeprecatedSelectorUsage(info.parsed, elements);
+      return elements;
     }, { info: resolved.info, scope: resolved.scope });
   }
 
-  async queryCount(selector: string): Promise<number> {
+  async queryCount(selector: string, options: any): Promise<number> {
     const resolved = await this.resolveInjectedForSelector(selector);
     // Be careful, |this.frame| can be different from |resolved.frame|.
     if (!resolved)
       throw new Error(`Failed to find frame for selector "${selector}"`);
+    await options.__testHookBeforeQuery?.();
     return await resolved.injected.evaluate((injected, { info }) => {
-      return injected.querySelectorAll(info.parsed, document).length;
+      const elements = injected.querySelectorAll(info.parsed, document);
+      injected.checkDeprecatedSelectorUsage(info.parsed, elements);
+      return elements.length;
     }, { info: resolved.info });
   }
 
@@ -91,7 +96,9 @@ export class FrameSelectors {
     if (!resolved)
       return [];
     const arrayHandle = await resolved.injected.evaluateHandle((injected, { info, scope }) => {
-      return injected.querySelectorAll(info.parsed, scope || document);
+      const elements = injected.querySelectorAll(info.parsed, scope || document);
+      injected.checkDeprecatedSelectorUsage(info.parsed, elements);
+      return elements;
     }, { info: resolved.info, scope: resolved.scope });
 
     const properties = await arrayHandle.getProperties();
@@ -118,10 +125,8 @@ export class FrameSelectors {
     const match = body.match(/^f(\d+)e\d+$/);
     if (!match)
       return frame;
-    const frameIndex = +match[1];
-    const page = this.frame._page;
-    const frameId = page.lastSnapshotFrameIds[frameIndex - 1];
-    const jumptToFrame = frameId ? page.frameManager.frame(frameId) : null;
+    const frameSeq = +match[1];
+    const jumptToFrame = this.frame._page.frameManager.frames().find(frame => frame.seq === frameSeq);
     if (!jumptToFrame)
       throw new InvalidSelectorError(`Invalid frame in aria-ref selector "${selector}"`);
     return jumptToFrame;
@@ -134,7 +139,7 @@ export class FrameSelectors {
     for (const chunk of frameChunks) {
       visitAllSelectorParts(chunk, (part, nested) => {
         if (nested && part.name === 'internal:control' && part.body === 'enter-frame') {
-          const locator = asLocator(this.frame._page.attribution.playwright.options.sdkLanguage, selector);
+          const locator = asLocator(this.frame._page.browserContext._browser.sdkLanguage(), selector);
           throw new InvalidSelectorError(`Frame locators are not allowed inside composite locators, while querying "${locator}"`);
         }
       });

@@ -36,15 +36,27 @@ export type Location = {
   column: number;
 };
 
+export type HTMLReportOptions = {
+  title?: string;
+  noCopyPrompt?: boolean;
+  noSnippets?: boolean;
+};
+
 export type HTMLReport = {
   metadata: Metadata;
-  title: string | undefined;
   files: TestFileSummary[];
   stats: Stats;
   projectNames: string[];
   startTime: number;
   duration: number;
+  machines: {
+    shardIndex?: number;
+    tag: string[];
+    startTime: number;
+    duration: number;
+  }[];
   errors: string[];  // Top-level errors that are not attributed to any test.
+  options: HTMLReportOptions;
 };
 
 export type TestFile = {
@@ -76,6 +88,8 @@ export type TestCaseSummary = {
 
 export type TestResultSummary = {
   attachments: { name: string, contentType: string, path?: string }[];
+  startTime: string;
+  workerIndex: number;
 };
 
 export type TestCase = Omit<TestCaseSummary, 'results'> & {
@@ -98,6 +112,7 @@ export type TestResult = {
   attachments: TestAttachment[];
   status: 'passed' | 'failed' | 'timedOut' | 'skipped' | 'interrupted';
   annotations: TestAnnotation[];
+  workerIndex: number;
 };
 
 export type TestStep = {

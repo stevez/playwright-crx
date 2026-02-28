@@ -41,6 +41,7 @@ import { Worker } from './worker';
 import { WritableStream } from './writableStream';
 import { ValidationError, findValidator  } from '../protocol/validator';
 import { rewriteErrorMessage } from '../utils/isomorphic/stackTrace';
+import { PageAgent } from './pageAgent';
 
 import type { ClientInstrumentation } from './clientInstrumentation';
 import type { HeadersArray } from './types';
@@ -74,7 +75,7 @@ export class Connection extends EventEmitter {
   private _localUtils?: LocalUtils;
   private _rawBuffers = false;
   // Some connections allow resolving in-process dispatchers.
-  toImpl: ((client: ChannelOwner) => any) | undefined;
+  toImpl: ((client: ChannelOwner | Connection) => any) | undefined;
   private _tracingCount = 0;
   readonly _instrumentation: ClientInstrumentation;
   // Used from @playwright/test fixtures -> TODO remove?
@@ -294,6 +295,9 @@ export class Connection extends EventEmitter {
         break;
       case 'Page':
         result = new Page(parent, type, guid, initializer);
+        break;
+      case 'PageAgent':
+        result = new PageAgent(parent, type, guid, initializer);
         break;
       case 'Playwright':
         result = new Playwright(parent, type, guid, initializer);

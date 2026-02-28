@@ -18,11 +18,13 @@ import {
   captureRawStack,
   createGuid,
   currentZone,
+  escapeWithQuotes,
   isString,
   pollAgainstDeadline } from 'playwright-core/lib/utils';
 
 import { ExpectError, isJestError } from './matcherHint';
 import {
+  computeMatcherTitleSuffix,
   toBeAttached,
   toBeChecked,
   toBeDisabled,
@@ -54,12 +56,9 @@ import {
   toPass
 } from './matchers';
 import { toMatchAriaSnapshot } from './toMatchAriaSnapshot';
-import { toHaveScreenshot, toHaveScreenshotStepTitle, toMatchSnapshot } from './toMatchSnapshot';
+import { toHaveScreenshot, toMatchSnapshot } from './toMatchSnapshot';
 import {
-  INVERTED_COLOR,
-  RECEIVED_COLOR,
   expect as expectLibrary,
-  printReceived,
 } from '../common/expectBundle';
 import { currentTestInfo } from '../common/globals';
 import { filteredStackTrace } from '../util';
@@ -68,53 +67,11 @@ import { TestInfoImpl } from '../worker/testInfo';
 import type { ExpectMatcherStateInternal } from './matchers';
 import type { Expect } from '../../types/test';
 import type { TestStepInfoImpl } from '../worker/testInfo';
-import type { TestStepCategory } from '../util';
-
-
-// #region
-// Mirrored from https://github.com/facebook/jest/blob/f13abff8df9a0e1148baf3584bcde6d1b479edc7/packages/expect/src/print.ts
-/**
- * Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
- *
- * This source code is licensed under the MIT license found here
- * https://github.com/facebook/jest/blob/1547740bbc26400d69f4576bf35645163e942829/LICENSE
- */
-
-// Format substring but do not enclose in double quote marks.
-// The replacement is compatible with pretty-format package.
-const printSubstring = (val: string): string => val.replace(/"|\\/g, '\\$&');
-
-export const printReceivedStringContainExpectedSubstring = (
-  received: string,
-  start: number,
-  length: number, // not end
-): string =>
-  RECEIVED_COLOR(
-      '"' +
-      printSubstring(received.slice(0, start)) +
-      INVERTED_COLOR(printSubstring(received.slice(start, start + length))) +
-      printSubstring(received.slice(start + length)) +
-      '"',
-  );
-
-export const printReceivedStringContainExpectedResult = (
-  received: string,
-  result: RegExpExecArray | null,
-): string =>
-  result === null
-    ? printReceived(received)
-    : printReceivedStringContainExpectedSubstring(
-        received,
-        result.index,
-        result[0].length,
-    );
-
-// #endregion
 
 type ExpectMessage = string | { message?: string };
 
 function createMatchers(actual: unknown, info: ExpectMetaInfo, prefix: string[]): any {
-  return new Proxy(expectLibrary(actual), new ExpectMetaInfoProxyHandler(info, prefix));
+  return new Proxy(expectLibrary(actual), new ExpectMetaInfoProxyHandler(actual, info, prefix));
 }
 
 const userMatchersSymbol = Symbol('userMatchers');
@@ -300,15 +257,19 @@ type ExpectMetaInfo = {
 };
 
 class ExpectMetaInfoProxyHandler implements ProxyHandler<any> {
+  private _actual: any;
   private _info: ExpectMetaInfo;
   private _prefix: string[];
 
-  constructor(info: ExpectMetaInfo, prefix: string[]) {
+  constructor(actual: any, info: ExpectMetaInfo, prefix: string[]) {
+    this._actual = actual;
     this._info = { ...info };
     this._prefix = prefix;
   }
 
   get(target: Object, matcherName: string | symbol, receiver: any): any {
+    if (matcherName === 'toThrowError')
+      matcherName = 'toThrow';
     let matcher = Reflect.get(target, matcherName, receiver);
     if (typeof matcherName !== 'string')
       return matcher;
@@ -342,24 +303,23 @@ class ExpectMetaInfoProxyHandler implements ProxyHandler<any> {
         return matcher.call(target, ...args);
 
       const customMessage = this._info.message || '';
-      const argsSuffix = computeArgsSuffix(matcherName, args);
-
-      const defaultTitle = `${this._info.poll ? 'poll ' : ''}${this._info.isSoft ? 'soft ' : ''}${this._info.isNot ? 'not ' : ''}${matcherName}${argsSuffix}`;
-      const title = customMessage || defaultTitle;
-      const apiName = `expect${this._info.poll ? '.poll ' : ''}${this._info.isSoft ? '.soft ' : ''}${this._info.isNot ? '.not' : ''}.${matcherName}${argsSuffix}`;
+      const suffixes = computeMatcherTitleSuffix(matcherName, this._actual, args);
+      const defaultTitle = `${this._info.poll ? 'poll ' : ''}${this._info.isSoft ? 'soft ' : ''}${this._info.isNot ? 'not ' : ''}${matcherName}${suffixes.short || ''}`;
+      const shortTitle = customMessage || `Expect ${escapeWithQuotes(defaultTitle, '"')}`;
+      const longTitle = shortTitle + (suffixes.long || '');
+      const apiName = `expect${this._info.poll ? '.poll ' : ''}${this._info.isSoft ? '.soft ' : ''}${this._info.isNot ? '.not' : ''}.${matcherName}${suffixes.short || ''}`;
 
       // This looks like it is unnecessary, but it isn't - we need to filter
       // out all the frames that belong to the test runner from caught runtime errors.
       const stackFrames = filteredStackTrace(captureRawStack());
-      const category = matcherName === 'toPass' || this._info.poll ? 'test.step' : 'expect' as TestStepCategory;
-      const formattedTitle = category === 'expect' ? title : `Expect "${title}"`;
 
       // toPass and poll matchers can contain other steps, expects and API calls,
       // so they behave like a retriable step.
       const stepInfo = {
-        category,
+        category: 'expect' as const,
         apiName,
-        title: formattedTitle,
+        title: longTitle,
+        shortTitle,
         params: args[0] ? { expected: args[0] } : undefined,
         infectParentStepsWithError: this._info.isSoft,
       };
@@ -368,14 +328,17 @@ class ExpectMetaInfoProxyHandler implements ProxyHandler<any> {
 
       const reportStepError = (e: Error | unknown) => {
         const jestError = isJestError(e) ? e : null;
-        const error = jestError ? new ExpectError(jestError, customMessage, stackFrames) : e;
+        const expectError = jestError ? new ExpectError(jestError, customMessage, stackFrames) : undefined;
         if (jestError?.matcherResult.suggestedRebaseline) {
           // NOTE: this is a workaround for the fact that we can't pass the suggested rebaseline
           // for passing matchers. See toMatchAriaSnapshot for a counterpart.
           step.complete({ suggestedRebaseline: jestError?.matcherResult.suggestedRebaseline });
           return;
         }
+
+        const error = expectError ?? e;
         step.complete({ error });
+
         if (this._info.isSoft)
           testInfo._failWithError(error);
         else
@@ -395,7 +358,7 @@ class ExpectMetaInfoProxyHandler implements ProxyHandler<any> {
         finalizer();
         return result;
       } catch (e) {
-        reportStepError(e);
+        void reportStepError(e);
       }
     };
   }
@@ -440,14 +403,7 @@ async function pollMatcher(qualifiedMatcherName: string, info: ExpectMetaInfo, p
   }
 }
 
-function computeArgsSuffix(matcherName: string, args: any[]) {
-  let value = '';
-  if (matcherName === 'toHaveScreenshot')
-    value = toHaveScreenshotStepTitle(...args);
-  return value ? `(${value})` : '';
-}
-
-export const expect: Expect<{}> = createExpect({}, [], {}).extend(customMatchers);
+export const expect: Expect<{}> = createExpect({}, [], {}).extend(customMatchers as any);
 
 export function mergeExpects(...expects: any[]) {
   let merged = expect;

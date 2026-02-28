@@ -19,17 +19,20 @@
 
 import type { TraceViewerFixtures } from '../config/traceViewerFixtures';
 import { traceViewerFixtures } from '../config/traceViewerFixtures';
+import extractZip from '../../packages/playwright-core/bundles/zip/src/third_party/extract-zip';
 import fs from 'fs';
 import path from 'path';
+import type http from 'http';
 import { pathToFileURL } from 'url';
 import { expect, playwrightTest } from '../config/browserTest';
 import type { FrameLocator } from '@playwright/test';
-import { rafraf, roundBox } from 'tests/page/pageTest';
+import { parseTrace, rafraf, roundBox } from '../config/utils';
 
 const test = playwrightTest.extend<TraceViewerFixtures>(traceViewerFixtures);
 
 test.skip(({ trace }) => trace === 'on');
 test.skip(({ mode }) => mode.startsWith('service'));
+test.skip(process.env.PW_CLOCK === 'frozen');
 test.slow();
 
 let traceFile: string;
@@ -40,7 +43,9 @@ test.beforeAll(async function recordTrace({ browser, browserName, browserType, s
   });
   await context.tracing.start({ name: 'test', screenshots: true, snapshots: true, sources: true });
   const page = await context.newPage();
-  await page.goto(`data:text/html,<!DOCTYPE html><html>Hello world</html>`);
+  await page.goto(`data:text/html,<!DOCTYPE html><html><title>Hello</title><body>Hello world</body></html>`);
+  await expect(page).toHaveTitle('Hello');
+  await expect(page).toHaveURL('data:text/html,<!DOCTYPE html><html><title>Hello</title><body>Hello world</body></html>');
   await page.setContent('<!DOCTYPE html><button>Click</button>');
   await expect(page.locator('button')).toHaveText('Click');
   await expect(page.getByTestId('amazing-btn')).toBeHidden();
@@ -88,45 +93,57 @@ test.beforeAll(async function recordTrace({ browser, browserName, browserType, s
 });
 
 test('should show empty trace viewer', async ({ showTraceViewer }, testInfo) => {
-  const traceViewer = await showTraceViewer([testInfo.outputPath()]);
+  const traceViewer = await showTraceViewer(testInfo.outputPath());
   await expect(traceViewer.page).toHaveTitle('Playwright Trace Viewer');
 });
 
 test('should open two trace viewers', async ({ showTraceViewer }, testInfo) => {
   const port = testInfo.workerIndex + 48321;
-  const traceViewer1 = await showTraceViewer([testInfo.outputPath()], { host: 'localhost', port });
+  const traceViewer1 = await showTraceViewer(testInfo.outputPath(), { host: 'localhost', port });
   await expect(traceViewer1.page).toHaveTitle('Playwright Trace Viewer');
-  const traceViewer2 = await showTraceViewer([testInfo.outputPath()], { host: 'localhost', port });
+  const traceViewer2 = await showTraceViewer(testInfo.outputPath(), { host: 'localhost', port });
   await expect(traceViewer2.page).toHaveTitle('Playwright Trace Viewer');
 });
 
 test('should open trace viewer on specific host', async ({ showTraceViewer }, testInfo) => {
-  const traceViewer = await showTraceViewer([testInfo.outputPath()], { host: '127.0.0.1' });
+  const traceViewer = await showTraceViewer(testInfo.outputPath(), { host: '127.0.0.1' });
   await expect(traceViewer.page).toHaveTitle('Playwright Trace Viewer');
   await expect(traceViewer.page).toHaveURL(/127.0.0.1/);
 });
 
 test('should show tracing.group in the action list with location', async ({ runAndTrace, page, context }) => {
+  test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36483' });
+  test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/39302' });
+
+  const sourceFile = test.info().outputPath('source.js');
+  await fs.promises.writeFile(sourceFile, 'buddy beaver');
+
   const traceViewer = await test.step('create trace with groups', async () => {
     await page.context().tracing.group('ignored group');
     return await runAndTrace(async () => {
       await context.tracing.group('outer group');
       await page.goto(`data:text/html,<!DOCTYPE html><body><div>Hello world</div></body>`);
-      await context.tracing.group('inner group 1', { location: { file: __filename, line: 17, column: 1 } });
+      await context.tracing.group('inner group 1 {{ eager_beaver }}', { location: { file: __filename, line: 17, column: 1 } });
       await page.locator('body').click();
       await context.tracing.groupEnd();
       await context.tracing.group('inner group 2');
+      await expect(page.getByText('Hello')).toBeVisible();
+      await context.tracing.groupEnd();
+      await context.tracing.group('inner group 3', { location: { file: sourceFile, line: 1, column: 1 } });
       await expect(page.getByText('Hello')).toBeVisible();
       await context.tracing.groupEnd();
       await context.tracing.groupEnd();
     });
   });
 
+  await fs.promises.rm(sourceFile);
+
   await expect(traceViewer.actionTitles).toHaveText([
     /outer group/,
     /Navigate/,
-    /inner group 1/,
+    /inner group 1 {{ eager_beaver }}/,
     /inner group 2/,
+    /inner group 3/,
     /toBeVisible/,
   ]);
 
@@ -135,22 +152,28 @@ test('should show tracing.group in the action list with location', async ({ runA
   await expect(traceViewer.actionTitles).toHaveText([
     /outer group/,
     /Navigate/,
-    /inner group 1/,
+    /inner group 1 {{ eager_beaver }}/,
     /Click.*locator/,
     /inner group 2/,
+    /inner group 3/,
   ]);
   await traceViewer.showSourceTab();
   await expect(traceViewer.sourceCodeTab.locator('.source-line-running')).toHaveText(/DO NOT TOUCH THIS LINE/);
 
   await traceViewer.selectAction('inner group 2');
   await expect(traceViewer.sourceCodeTab.locator('.source-line-running')).toContainText("await context.tracing.group('inner group 2');");
+
+  await traceViewer.selectAction('inner group 3');
+  await expect(traceViewer.sourceCodeTab.locator('.source-line-running')).toContainText('buddy beaver');
 });
 
 test('should open simple trace viewer', async ({ showTraceViewer }) => {
-  const traceViewer = await showTraceViewer([traceFile]);
+  const traceViewer = await showTraceViewer(traceFile);
   await expect(traceViewer.actionTitles).toHaveText([
     /Create page/,
     /Navigate to "data:"/,
+    /^Expect "toHaveTitle"[\d]+ms$/,
+    /^Expect "toHaveURL"[\d]+ms$/,
     /Set content/,
     /toHaveText.*locator/,
     /toBeHidden.*getByTestId/,
@@ -163,6 +186,34 @@ test('should open simple trace viewer', async ({ showTraceViewer }) => {
     /Wait for timeout/,
     /Navigate to "\/frames\/frame.html"/,
     /Set viewport size/,
+    /Hover/,
+    /Close page/,
+  ]);
+});
+
+test('should open uncompressed trace directory', async ({ showTraceViewer }) => {
+  const traceDir = test.info().outputPath('unzipped-trace');
+  await extractZip(traceFile, { dir: traceDir });
+  const traceViewer = await showTraceViewer(traceDir);
+  await expect(traceViewer.actionTitles).toHaveText([
+    /Create page/,
+    /Navigate to "data:"/,
+    /^Expect "toHaveTitle"[\d]+ms$/,
+    /^Expect "toHaveURL"[\d]+ms$/,
+    /Set content/,
+    /toHaveText.*locator/,
+    /toBeHidden.*getByTestId/,
+    /toBeHidden.*getByTestId/,
+    /Evaluate/,
+    /Evaluate/,
+    /Click/,
+    /Wait for navigation/,
+    /Wait for event "response"/,
+    /Wait for timeout/,
+    /Navigate to "\/frames\/frame.html"/,
+    /Set viewport size/,
+    /Hover/,
+    /Close page/,
   ]);
 });
 
@@ -222,12 +273,12 @@ test('should show action context on locators and other common actions', async ({
 });
 
 test('should complain about newer version of trace in old viewer', async ({ showTraceViewer, asset }, testInfo) => {
-  const traceViewer = await showTraceViewer([asset('trace-from-the-future.zip')]);
+  const traceViewer = await showTraceViewer(asset('trace-from-the-future.zip'));
   await expect(traceViewer.page.getByText('The trace was created by a newer version of Playwright and is not supported by this version of the viewer.')).toBeVisible();
 });
 
 test('should properly synchronize local and remote time', async ({ showTraceViewer, asset }, testInfo) => {
-  const traceViewer = await showTraceViewer([asset('trace-remote-time-diff.zip')]);
+  const traceViewer = await showTraceViewer(asset('trace-remote-time-diff.zip'));
   // The total duration should be sub 10s, rather than 16h.
   await expect.poll(async () =>
     parseInt(await traceViewer.page.locator('.timeline-time').last().innerText(), 10)
@@ -235,7 +286,7 @@ test('should properly synchronize local and remote time', async ({ showTraceView
 });
 
 test('should contain action info', async ({ showTraceViewer }) => {
-  const traceViewer = await showTraceViewer([traceFile]);
+  const traceViewer = await showTraceViewer(traceFile);
   await traceViewer.selectAction('Click');
   await traceViewer.page.getByText('Log', { exact: true }).click();
   await expect(traceViewer.logLines).toContainText([
@@ -252,7 +303,7 @@ test('should render network bars', async ({ page, runAndTrace, server }) => {
 });
 
 test('should render console', async ({ showTraceViewer, browserName }) => {
-  const traceViewer = await showTraceViewer([traceFile]);
+  const traceViewer = await showTraceViewer(traceFile);
   await traceViewer.showConsoleTab();
 
   await expect(traceViewer.consoleLineMessages.nth(0)).toHaveText('Info');
@@ -282,19 +333,19 @@ test('should render console', async ({ showTraceViewer, browserName }) => {
   await expect(listViews.filter({ hasText: 'Cheers!' })).toHaveClass('list-view-entry');
 });
 
-test('should open console errors on click', async ({ showTraceViewer, browserName }) => {
-  const traceViewer = await showTraceViewer([traceFile]);
-  expect(await traceViewer.actionIconsText('Evaluate')).toEqual(['2', '1']);
-  expect(await traceViewer.page.isHidden('.console-tab')).toBeTruthy();
-  await (await traceViewer.actionIcons('Evaluate')).click();
-  expect(await traceViewer.page.waitForSelector('.console-tab')).toBeTruthy();
+test('should open console errors on click', async ({ showTraceViewer }) => {
+  const traceViewer = await showTraceViewer(traceFile);
+  await expect(traceViewer.actionIconsText('Evaluate')).toHaveText(['2', '1']);
+  await expect(traceViewer.page.getByRole('tabpanel', { name: 'Console' })).toBeHidden();
+  await traceViewer.actionIcons('Evaluate').click();
+  await traceViewer.page.getByRole('tabpanel', { name: 'Console' }).waitFor();
 });
 
 test('should show params and return value', async ({ showTraceViewer }) => {
-  const traceViewer = await showTraceViewer([traceFile]);
+  const traceViewer = await showTraceViewer(traceFile);
   await traceViewer.selectAction('Evaluate');
   await expect(traceViewer.callLines).toHaveText([
-    '',
+    /Evaluate/,
     /start:[\d\.]+m?s/,
     /duration:[\d]+ms/,
     /expression:"\({↵    a↵  }\) => {↵    console\.log\(\'Info\'\);↵    console\.warn\(\'Warning\'\);↵    console/,
@@ -317,10 +368,10 @@ test('should show params and return value', async ({ showTraceViewer }) => {
 });
 
 test('should show null as a param', async ({ showTraceViewer, browserName }) => {
-  const traceViewer = await showTraceViewer([traceFile]);
+  const traceViewer = await showTraceViewer(traceFile);
   await traceViewer.selectAction('Evaluate', 1);
   await expect(traceViewer.callLines).toHaveText([
-    '',
+    /Evaluate/,
     /start:[\d\.]+m?s/,
     /duration:[\d]+ms/,
     'expression:"() => 1 + 1"',
@@ -331,7 +382,7 @@ test('should show null as a param', async ({ showTraceViewer, browserName }) => 
 });
 
 test('should have correct snapshot size', async ({ showTraceViewer }, testInfo) => {
-  const traceViewer = await showTraceViewer([traceFile]);
+  const traceViewer = await showTraceViewer(traceFile);
   await traceViewer.selectAction('SET VIEWPORT');
   await traceViewer.selectSnapshot('Before');
   await expect(traceViewer.snapshotContainer).toHaveCSS('width', '1280px');
@@ -342,18 +393,18 @@ test('should have correct snapshot size', async ({ showTraceViewer }, testInfo) 
 });
 
 test('should have correct stack trace', async ({ showTraceViewer }) => {
-  const traceViewer = await showTraceViewer([traceFile]);
+  const traceViewer = await showTraceViewer(traceFile);
 
   await traceViewer.selectAction('Click');
   await traceViewer.showSourceTab();
-  await expect(traceViewer.stackFrames).toContainText([
+  await expect(traceViewer.stackFrames()).toContainText([
     /doClick\s+trace-viewer.spec.ts\s+:\d+/,
     /recordTrace\s+trace-viewer.spec.ts\s+:\d+/,
   ], { useInnerText: true });
 });
 
 test('should have network requests', async ({ showTraceViewer }) => {
-  const traceViewer = await showTraceViewer([traceFile]);
+  const traceViewer = await showTraceViewer(traceFile);
   await traceViewer.selectAction('Navigate');
   await traceViewer.showNetworkTab();
   await expect(traceViewer.networkRequests).toContainText([/frame.htmlGET200text\/html/]);
@@ -397,6 +448,39 @@ test('should filter network requests by resource type', async ({ page, runAndTra
   await expect(traceViewer.networkRequests.getByText('font.woff2')).toBeVisible();
 });
 
+test('should filter network requests by multiple resource types', async ({ page, runAndTrace, server }) => {
+  const traceViewer = await runAndTrace(async () => {
+    server.setRoute('/api/endpoint', (_, res) => res.setHeader('Content-Type', 'application/json').end());
+    await page.goto(`${server.PREFIX}/network-tab/network.html`);
+    await page.evaluate(() => (window as any).donePromise);
+  });
+  await traceViewer.selectAction('Navigate');
+  await traceViewer.showNetworkTab();
+
+  const { networkRequests } = traceViewer;
+
+  await traceViewer.page.getByText('JS', { exact: true }).click();
+  await expect(networkRequests).toHaveCount(1);
+  await expect(networkRequests.getByText('script.js')).toBeVisible();
+
+  await traceViewer.page.getByText('CSS', { exact: true }).click({ modifiers: ['ControlOrMeta'] });
+  await expect(networkRequests.getByText('script.js')).toBeVisible();
+  await expect(networkRequests.getByText('style.css')).toBeVisible();
+  await expect(networkRequests).toHaveCount(2);
+
+  await traceViewer.page.getByText('Image', { exact: true }).click({ modifiers: ['ControlOrMeta'] });
+  await expect(networkRequests.getByText('image.png')).toBeVisible();
+  await expect(networkRequests).toHaveCount(3);
+
+  await traceViewer.page.getByText('CSS', { exact: true }).click({ modifiers: ['ControlOrMeta'] });
+  await expect(networkRequests).toHaveCount(2);
+  await expect(networkRequests.getByText('script.js')).toBeVisible();
+  await expect(networkRequests.getByText('image.png')).toBeVisible();
+
+  await traceViewer.page.getByText('All', { exact: true }).click();
+  await expect(networkRequests).toHaveCount(9);
+});
+
 test('should show font preview', async ({ page, runAndTrace, server }) => {
   const traceViewer = await runAndTrace(async () => {
     await page.goto(`${server.PREFIX}/network-tab/network.html`);
@@ -408,8 +492,24 @@ test('should show font preview', async ({ page, runAndTrace, server }) => {
   await traceViewer.page.getByText('Font', { exact: true }).click();
   await expect(traceViewer.networkRequests).toHaveCount(1);
   await traceViewer.networkRequests.getByText('font.woff2').click();
-  await traceViewer.page.getByTestId('network-request-details').getByTitle('Body').click();
-  await expect(traceViewer.page.locator('.network-request-details-tab')).toContainText('ABCDEF');
+  await traceViewer.networkTab.getByRole('tab', { name: 'Response' }).click();
+  await expect(traceViewer.networkTab.getByRole('tabpanel', { name: 'Response' })).toContainText('ABCDEF');
+});
+
+test('should syntax highlight body', async ({ page, runAndTrace, server }) => {
+  const traceViewer = await runAndTrace(async () => {
+    await page.goto(`${server.PREFIX}/network-tab/network.html`);
+    await page.evaluate(() => (window as any).donePromise);
+  });
+  await traceViewer.selectAction('Navigate');
+  await traceViewer.showNetworkTab();
+
+  await traceViewer.page.getByText('HTML', { exact: true }).click();
+  await expect(traceViewer.networkRequests).toHaveCount(1);
+  await traceViewer.networkRequests.getByText('network.html').click();
+  await traceViewer.networkTab.getByRole('tab', { name: 'Response' }).click();
+  const keyword = traceViewer.networkTab.getByRole('tabpanel', { name: 'Response' }).getByText('const').first();
+  await expect(keyword).toHaveClass('cm-keyword');
 });
 
 test('should filter network requests by url', async ({ page, runAndTrace, server }) => {
@@ -464,20 +564,17 @@ test('should have network request overrides 2', async ({ page, server, runAndTra
   await expect.soft(traceViewer.networkRequests).toContainText([/script.jsGET200application\/javascript.*continued/]);
 });
 
-test('should show snapshot URL', async ({ page, runAndTrace, server }) => {
+test('should show snapshot URL and copy button', async ({ page, runAndTrace, server }) => {
   const traceViewer = await runAndTrace(async () => {
     await page.goto(server.EMPTY_PAGE);
     await page.evaluate('2+2');
   });
   await traceViewer.snapshotFrame('Evaluate');
-  const browserFrameAddressBarLocator = traceViewer.page.locator('.browser-frame-address-bar');
-  await expect(browserFrameAddressBarLocator).toHaveText(server.EMPTY_PAGE);
-  const copySelectorLocator = browserFrameAddressBarLocator.getByRole('button', { name: 'Copy' });
-  await expect(copySelectorLocator).toBeHidden();
-  await browserFrameAddressBarLocator.hover();
-  await expect(copySelectorLocator).toBeVisible();
+  const addressBar = traceViewer.page.locator('.browser-frame-address-bar');
+  await expect(addressBar).toHaveText(server.EMPTY_PAGE);
+
   await traceViewer.page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
-  await copySelectorLocator.click();
+  await addressBar.getByRole('button', { name: 'Copy' }).click();
   expect(await traceViewer.page.evaluate(() => navigator.clipboard.readText())).toBe(server.EMPTY_PAGE);
 });
 
@@ -490,7 +587,7 @@ test('should popup snapshot', async ({ page, runAndTrace, server }) => {
   const popupPromise = traceViewer.page.context().waitForEvent('page');
   await traceViewer.page.getByTitle('Open snapshot in a new tab').click();
   const popup = await popupPromise;
-  await expect(popup.getByText('hello äöü 🙂')).toBeVisible();
+  await expect(popup.frameLocator('iframe').getByText('hello äöü 🙂')).toBeVisible();
 });
 
 test('should capture iframe with sandbox attribute', async ({ page, server, runAndTrace }) => {
@@ -627,6 +724,35 @@ test('should work with adopted style sheets and all: unset', async ({ page, runA
     await expect(frame.locator('button')).toHaveCSS('color', 'rgb(0, 0, 0)');
     await expect(frame.locator('button')).toHaveCSS('padding', '5px');
   }
+});
+
+test('empty adopted style sheets should not prevent node refs', async ({ page }) => {
+  const traceFile = test.info().outputPath('trace.zip');
+  await page.context().tracing.start({ snapshots: true });
+  await page.setContent('<button>Hello</button>');
+  await page.evaluate(() => {
+    const sheet = new CSSStyleSheet();
+    document.adoptedStyleSheets = [sheet];
+
+    const sheet2 = new CSSStyleSheet();
+    for (const element of [document.createElement('div'), document.createElement('span')]) {
+      const root = element.attachShadow({
+        mode: 'open'
+      });
+      root.append('foo');
+      root.adoptedStyleSheets = [sheet2];
+      document.body.appendChild(element);
+    }
+  });
+  await page.evaluate('2 + 2');
+  await page.context().tracing.stop({ path: traceFile });
+
+  const trace = await parseTrace(traceFile);
+  const secondEvaluate = trace.model.actions.findLast(a => a.method === 'evaluateExpression');
+  expect(secondEvaluate.beforeSnapshot).toBeTruthy();
+  const snapshot = trace.snapshots.snapshotByName(trace.snapshots.snapshotsForTest()[0], secondEvaluate.beforeSnapshot);
+  // Second snapshot should be just a copy of the first one.
+  expect(snapshot.snapshot().html).toEqual([[1, 9]]);
 });
 
 test('should work with nesting CSS selectors', async ({ page, runAndTrace }) => {
@@ -831,7 +957,7 @@ test('should preserve currentSrc', async ({ browser, server, showTraceViewer }) 
   await page.context().tracing.stop({ path: traceFile });
   await page.close();
 
-  const traceViewer = await showTraceViewer([traceFile]);
+  const traceViewer = await showTraceViewer(traceFile);
   const frame = await traceViewer.snapshotFrame('Set content');
   await expect(frame.locator('#target1')).toHaveAttribute('src', server.PREFIX + '/digits/3.png');
   await expect(frame.locator('#target2')).toHaveAttribute('src', server.PREFIX + '/digits/6.png');
@@ -901,6 +1027,8 @@ test('should highlight target elements', async ({ page, runAndTrace, browserName
       return divs.filter(div => getComputedStyle(div).backgroundColor === 'rgba(111, 168, 220, 0.498)').map(div => div.textContent);
     });
   }
+
+  await traceViewer.showAllActions();
 
   const framePageClick = await traceViewer.snapshotFrame('Click');
   await expect.poll(() => highlightedDivs(framePageClick)).toEqual(['t1']);
@@ -975,16 +1103,15 @@ test('should highlight expect failure', async ({ page, server, runAndTrace }) =>
 });
 
 test('should show action source', async ({ showTraceViewer }) => {
-  const traceViewer = await showTraceViewer([traceFile]);
+  const traceViewer = await showTraceViewer(traceFile);
   await traceViewer.selectAction('Click');
-  const page = traceViewer.page;
 
-  await page.click('text=Source');
-  await expect(page.locator('.source-line-running')).toContainText('await page.getByText(\'Click\').click()');
-  await expect(page.getByTestId('stack-trace-list').locator('.list-view-entry.selected')).toHaveText(/doClick.*trace-viewer\.spec\.ts:[\d]+/);
+  await traceViewer.showSourceTab();
+  await expect(traceViewer.page.locator('.source-line-running')).toContainText('await page.getByText(\'Click\').click()');
+  await expect(traceViewer.stackFrames({ selected: true })).toHaveText(/doClick.*trace-viewer\.spec\.ts:[\d]+/);
 
   await traceViewer.hoverAction('Wait for navigation');
-  await expect(page.locator('.source-line-running')).toContainText('page.waitForNavigation()');
+  await expect(traceViewer.page.locator('.source-line-running')).toContainText('page.waitForNavigation()');
 });
 
 test('should follow redirects', async ({ page, runAndTrace, server, asset }) => {
@@ -1014,13 +1141,14 @@ test('should follow redirects', async ({ page, runAndTrace, server, asset }) => 
 });
 
 test('should include metainfo', async ({ showTraceViewer }) => {
-  const traceViewer = await showTraceViewer([traceFile]);
-  await traceViewer.page.locator('text=Metadata').click();
+  const traceViewer = await showTraceViewer(traceFile);
+  await traceViewer.page.getByRole('tab', { name: 'Metadata' }).click();
   const callLine = traceViewer.metadataTab.locator('.call-line');
   await expect(callLine.getByText('start time')).toHaveText(/start time:[\d/,: ]+/);
   await expect(callLine.getByText('duration')).toHaveText(/duration:[\dms]+/);
   await expect(callLine.getByText('engine')).toHaveText(/engine:[\w]+/);
   await expect(callLine.getByText('platform')).toHaveText(/platform:[\w]+/);
+  await expect(callLine.getByText('playwright version')).toHaveText(/playwright version:[\w.]+/);
   await expect(callLine.getByText('width')).toHaveText(/width:[\d]+/);
   await expect(callLine.getByText('height')).toHaveText(/height:[\d]+/);
   await expect(callLine.getByText('pages')).toHaveText(/pages:1/);
@@ -1028,68 +1156,12 @@ test('should include metainfo', async ({ showTraceViewer }) => {
   await expect(callLine.getByText('events')).toHaveText(/events:[\d]+/);
 });
 
-test('should open two trace files', async ({ context, page, request, server, showTraceViewer }, testInfo) => {
-  await (request as any)._tracing.start({ snapshots: true });
-  await context.tracing.start({ snapshots: true, sources: true });
-  {
-    const response = await request.get(server.PREFIX + '/simple.json');
-    await expect(response).toBeOK();
-  }
-  await page.goto(server.PREFIX + '/input/button.html');
-  {
-    const response = await request.head(server.PREFIX + '/simplezip.json');
-    await expect(response).toBeOK();
-  }
-  await page.locator('button').click();
-  await page.locator('button').click();
-  {
-    const response = await request.post(server.PREFIX + '/one-style.css');
-    await expect(response).toBeOK();
-  }
-  const apiTrace = testInfo.outputPath('api.zip');
-  const contextTrace = testInfo.outputPath('context.zip');
-  await (request as any)._tracing.stop({ path: apiTrace });
-  await context.tracing.stop({ path: contextTrace });
-
-  const traceViewer = await showTraceViewer([contextTrace, apiTrace]);
-
-  await traceViewer.selectAction('FETCH', 0);
-  await traceViewer.selectAction('FETCH', 1);
-  await traceViewer.selectAction('FETCH', 2);
-  await expect(traceViewer.actionTitles).toHaveText([
-    /Fetch "\/simple\.json"/,
-    /Navigate to "\/input\/button\.html"/,
-    /Fetch "\/simplezip\.json"/,
-    /Click.*locator\('button'\)/,
-    /Click.*locator\('button'\)/,
-    /Fetch "\/one-style\.css"/,
-  ]);
-
-  await traceViewer.page.locator('text=Metadata').click();
-  const callLine = traceViewer.page.locator('.call-line');
-  // Should get metadata from the context trace
-  await expect(callLine.getByText('start time')).toHaveText(/start time:[\d/,: ]+/);
-  // duration in the metadata section
-  await expect(callLine.getByText('duration').first()).toHaveText(/duration:[\dms]+/);
-  await expect(callLine.getByText('engine')).toHaveText(/engine:[\w]+/);
-  await expect(callLine.getByText('platform')).toHaveText(/platform:[\w]+/);
-  await expect(callLine.getByText('width')).toHaveText(/width:[\d]+/);
-  await expect(callLine.getByText('height')).toHaveText(/height:[\d]+/);
-  await expect(callLine.getByText('pages')).toHaveText(/pages:1/);
-  await expect(callLine.getByText('actions')).toHaveText(/actions:6/);
-  await expect(callLine.getByText('events')).toHaveText(/events:[\d]+/);
-});
-
-test('should open two trace files of the same test (v6)', async ({ showTraceViewer, asset }) => {
-  const traceViewer = await showTraceViewer([asset('test-trace1.zip'), asset('test-trace2.zip')]);
+test('should open v6 trace file', async ({ showTraceViewer, asset }) => {
+  const traceViewer = await showTraceViewer(asset('test-trace1.zip'));
   // Same actions from different test runs should not be merged.
   await expect(traceViewer.actionTitles).toHaveText([
     /Before Hooks/,
-    /Before Hooks/,
     /page.goto/, // Legacy trace does not have titles
-    /page.goto/, // Legacy trace does not have titles
-    /expect.toBe/,
-    /After Hooks/,
     /expect.toBe/,
     /After Hooks/,
   ]);
@@ -1166,6 +1238,20 @@ test('should pick locator', async ({ page, runAndTrace, server }) => {
   await expect(traceViewer.page.locator('.cm-wrapper').last()).toContainText(`- button "Submit"`);
 });
 
+test('should generate aria snapshot with unaltered urls', async ({ page, runAndTrace, server }) => {
+  const traceViewer = await runAndTrace(async () => {
+    await page.goto(server.EMPTY_PAGE);
+    await page.setContent('<a href="https://example.com">Example link</a>');
+  });
+  const snapshot = await traceViewer.snapshotFrame('Set content');
+  await traceViewer.page.getByTitle('Pick locator').click();
+  await snapshot.getByRole('link').click();
+  await expect(traceViewer.page.locator('.cm-wrapper').last()).toContainText(`
+    - link "Example link":
+      - /url: https://example.com
+  `);
+});
+
 test('should update highlight when typing locator', async ({ page, runAndTrace, server }) => {
   const traceViewer = await runAndTrace(async () => {
     await page.goto(server.EMPTY_PAGE);
@@ -1200,13 +1286,13 @@ test('should update highlight when typing snapshot', async ({ page, runAndTrace,
 });
 
 test('should open trace-1.31', async ({ showTraceViewer }) => {
-  const traceViewer = await showTraceViewer([path.join(__dirname, '../assets/trace-1.31.zip')]);
+  const traceViewer = await showTraceViewer(path.join(__dirname, '../assets/trace-1.31.zip'));
   const snapshot = await traceViewer.snapshotFrame('Click');
   await expect(snapshot.locator('[__playwright_target__]')).toHaveText(['Submit']);
 });
 
 test('should open trace-1.37', async ({ showTraceViewer }) => {
-  const traceViewer = await showTraceViewer([path.join(__dirname, '../assets/trace-1.37.zip')]);
+  const traceViewer = await showTraceViewer(path.join(__dirname, '../assets/trace-1.37.zip'));
   const snapshot = await traceViewer.snapshotFrame('page.goto');
   await expect(snapshot.locator('div')).toHaveCSS('background-color', 'rgb(255, 0, 0)');
 
@@ -1412,7 +1498,7 @@ test('should preserve noscript when javascript is disabled', async ({ browser, s
   await page.context().tracing.stop({ path: traceFile });
   await page.close();
 
-  const traceViewer = await showTraceViewer([traceFile]);
+  const traceViewer = await showTraceViewer(traceFile);
   const frame = await traceViewer.snapshotFrame('Set content');
   await expect(frame.getByText('javascript is disabled!')).toBeVisible();
 });
@@ -1429,7 +1515,7 @@ test('should remove noscript by default', async ({ browser, server, showTraceVie
   await page.context().tracing.stop({ path: traceFile });
   await page.close();
 
-  const traceViewer = await showTraceViewer([traceFile]);
+  const traceViewer = await showTraceViewer(traceFile);
   const frame = await traceViewer.snapshotFrame('Set content');
   await expect(frame.getByText('Always visible')).toBeVisible();
   await expect(frame.getByText('Enable JavaScript to run this app.')).toBeHidden();
@@ -1447,13 +1533,14 @@ test('should remove noscript when javaScriptEnabled is set to true', async ({ br
   await page.context().tracing.stop({ path: traceFile });
   await page.close();
 
-  const traceViewer = await showTraceViewer([traceFile]);
+  const traceViewer = await showTraceViewer(traceFile);
   const frame = await traceViewer.snapshotFrame('Set content');
   await expect(frame.getByText('Always visible')).toBeVisible();
   await expect(frame.getByText('Enable JavaScript to run this app.')).toBeHidden();
 });
 
-test('should open snapshot in new browser context', async ({ browser, page, runAndTrace, server }) => {
+test('should open snapshot in new browser context', async ({ browser, page, runAndTrace, server, channel }) => {
+  test.skip(channel === 'webkit-wsl', 'Trace Viewer opens via ipv6 address which is not supported in WSL');
   const traceViewer = await runAndTrace(async () => {
     await page.goto(server.EMPTY_PAGE);
     await page.setContent('hello');
@@ -1466,12 +1553,13 @@ test('should open snapshot in new browser context', async ({ browser, page, runA
   // doesn't share sw.bundle.js
   const newPage = await browser.newPage();
   await newPage.goto(popup.url());
-  await expect(newPage.getByText('hello')).toBeVisible();
+  await expect(newPage.frameLocator('iframe').getByText('hello')).toBeVisible();
   await newPage.close();
 });
 
 test('should show similar actions from legacy library-only trace', async ({ showTraceViewer, asset }) => {
-  const traceViewer = await showTraceViewer([asset('trace-library-1.46.zip')]);
+  const traceViewer = await showTraceViewer(asset('trace-library-1.46.zip'));
+  await traceViewer.showAllActions();
   await expect(traceViewer.actionTitles).toHaveText([
     /page\.setContent/,
     /locator\.getAttribute/,
@@ -1535,13 +1623,17 @@ test('should not record network actions', {
   annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/33558' },
 }, async ({ page, runAndTrace, server }) => {
   const traceViewer = await runAndTrace(async () => {
+    let counter = 0;
     page.on('request', async request => {
       await request.allHeaders();
+      ++counter;
     });
     page.on('response', async response => {
       await response.text();
+      ++counter;
     });
     await page.goto(server.EMPTY_PAGE);
+    await expect.poll(() => counter).toBe(2);
   });
 
   await expect(traceViewer.actionTitles).toHaveText([
@@ -1552,7 +1644,7 @@ test('should not record network actions', {
 test('should show baseURL in metadata pane', {
   annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/31847' },
 }, async ({ showTraceViewer }) => {
-  const traceViewer = await showTraceViewer([traceFile]);
+  const traceViewer = await showTraceViewer(traceFile);
   await traceViewer.selectAction('Evaluate');
   await traceViewer.showMetadataTab();
   await expect(traceViewer.metadataTab).toContainText('baseURL:https://example.com');
@@ -1561,7 +1653,7 @@ test('should show baseURL in metadata pane', {
 test('should not leak recorders', {
   annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/33086' },
 }, async ({ showTraceViewer, platform }) => {
-  const traceViewer = await showTraceViewer([traceFile]);
+  const traceViewer = await showTraceViewer(traceFile);
 
   const aliveCount = async () => {
     return await traceViewer.page.evaluate(() => {
@@ -1593,7 +1685,8 @@ test('should not leak recorders', {
     return frame;
   };
 
-  await expect(traceViewer.snapshotContainer.contentFrame().locator('body')).toContainText(`Hi, I'm frame`);
+  const frame0 = await traceViewer.snapshotFrame('Set viewport');
+  await expect(frame0.locator('body')).toContainText(`Hi, I'm frame`);
 
   const frame1 = await forceRecorder('Navigate');
   await expect(frame1.locator('body')).toContainText('Hello world');
@@ -1681,8 +1774,8 @@ test('canvas clipping in iframe', async ({ runAndTrace, page, server }) => {
   await expect(canvas).toHaveAttribute('title', 'Canvas contents are displayed on a best-effort basis based on viewport screenshots taken during test execution.');
 });
 
-test('should show only one pointer with multilevel iframes', async ({ page, runAndTrace, server, browserName }) => {
-  test.fixme(browserName === 'firefox', 'Elements in iframe are not marked');
+test('should show only one pointer with multilevel iframes', async ({ page, runAndTrace, server, browserName, isBidi }) => {
+  test.fixme(browserName === 'firefox' && !isBidi, 'Elements in iframe are not marked');
 
   server.setRoute('/level-0.html', (req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -1750,26 +1843,39 @@ test('should show a modal dialog', async ({ runAndTrace, page, platform, browser
 });
 
 test('should open settings dialog', async ({ showTraceViewer }) => {
-  const traceViewer = await showTraceViewer([traceFile]);
+  const traceViewer = await showTraceViewer(traceFile);
   await traceViewer.selectAction('Navigate');
   await traceViewer.showSettings();
   await expect(traceViewer.settingsDialog).toBeVisible();
 });
 
-test('should toggle theme color', async ({ showTraceViewer, page }) => {
-  const traceViewer = await showTraceViewer([traceFile]);
+test('should toggle theme color', async ({ showTraceViewer }) => {
+  const traceViewer = await showTraceViewer(traceFile);
   await traceViewer.selectAction('Navigate');
   await traceViewer.showSettings();
 
-  await expect(traceViewer.darkModeSetting).toBeChecked({ checked: false });
+  await expect(traceViewer.themeSetting).toHaveValue('system');
 
-  await traceViewer.darkModeSetting.click();
-  await expect(traceViewer.darkModeSetting).toBeChecked({ checked: true });
-  await expect(traceViewer.page.locator('.dark-mode')).toBeVisible();
+  await traceViewer.themeSetting.selectOption('Dark mode');
+  await expect(traceViewer.themeSetting).toHaveValue('dark-mode');
+  await expect(traceViewer.page.locator('html')).toHaveClass('dark-mode');
 
-  await traceViewer.darkModeSetting.click();
-  await expect(traceViewer.darkModeSetting).toBeChecked({ checked: false });
-  await expect(traceViewer.page.locator('.light-mode')).toBeVisible();
+  await traceViewer.themeSetting.selectOption('Light mode');
+  await expect(traceViewer.themeSetting).toHaveValue('light-mode');
+  await expect(traceViewer.page.locator('html')).toHaveClass('light-mode');
+});
+
+test('should reflect system color scheme changes in document theme', async ({ showTraceViewer }) => {
+  const traceViewer = await showTraceViewer(traceFile);
+  await traceViewer.selectAction('Navigate');
+
+  await expect(traceViewer.page.locator('html')).toHaveClass('light-mode');
+
+  await traceViewer.page.emulateMedia({ colorScheme: 'dark' });
+  await expect(traceViewer.page.locator('html')).toHaveClass('dark-mode');
+
+  await traceViewer.page.emulateMedia({ colorScheme: 'no-preference' });
+  await expect(traceViewer.page.locator('html')).toHaveClass('light-mode');
 });
 
 test('should toggle canvas rendering', async ({ runAndTrace, page }) => {
@@ -1807,7 +1913,7 @@ test('should toggle canvas rendering', async ({ runAndTrace, page }) => {
 });
 
 test('should render blob trace received from message', async ({ showTraceViewer }) => {
-  const traceViewer = await showTraceViewer([], { host: 'localhost' });
+  const traceViewer = await showTraceViewer(undefined, { host: 'localhost' });
 
   await expect(traceViewer.page.locator('.drop-target')).toBeVisible();
   await expect(traceViewer.actionTitles).not.toBeVisible();
@@ -1827,6 +1933,8 @@ test('should render blob trace received from message', async ({ showTraceViewer 
   await expect(traceViewer.actionTitles).toHaveText([
     /Create page/,
     /Navigate to "data:"/,
+    /toHaveTitle/,
+    /toHaveURL/,
     /Set content/,
     /toHaveText.*locator/,
     /toBeHidden.*getByTestId/,
@@ -1839,11 +1947,13 @@ test('should render blob trace received from message', async ({ showTraceViewer 
     /Wait for timeout/,
     /Navigate to "\/frames\/frame.html"/,
     /Set viewport size/,
+    /Hover/,
+    /Close page/,
   ]);
 });
 
 test("shouldn't render not-blob trace received from message", async ({ showTraceViewer }) => {
-  const traceViewer = await showTraceViewer([], { host: 'localhost' });
+  const traceViewer = await showTraceViewer(undefined, { host: 'localhost' });
 
   await expect(traceViewer.page.locator('.drop-target')).toBeVisible();
   await expect(traceViewer.actionTitles).not.toBeVisible();
@@ -1908,4 +2018,257 @@ test('should render locator descriptions', async ({ runAndTrace, page }) => {
     - treeitem /Click.*custom/
     - treeitem /Click.*input.*first/
   `);
+});
+
+test('should load trace from HTTP with progress indicator', async ({ showTraceViewer, server }) => {
+  const [traceViewer, res] = await Promise.all([
+    showTraceViewer(server.PREFIX),
+    new Promise<http.ServerResponse>(resolve => {
+      server.setRoute('/', (req, res) => resolve(res));
+    }),
+  ]);
+
+  const file = await fs.promises.readFile(traceFile);
+
+  const dialog = traceViewer.page.locator('dialog', { hasText: 'Loading' });
+
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Content-Length', file.byteLength);
+  res.writeHead(200);
+  // Should become visible after ~200ms
+  await expect(dialog).toBeVisible();
+
+  res.end(file);
+  await expect(dialog).not.toBeVisible();
+  await expect(traceViewer.actionTitles).toContainText([/Create page/]);
+});
+
+test('should filter actions', async ({ runAndTrace, page }) => {
+  const traceViewer = await runAndTrace(async () => {
+    await page.route('**/*', async route => {
+      await route.fulfill({ contentType: 'text/html', body: '<input type=checkbox checked>' });
+    });
+    await page.goto('https://does.not.exist');
+    await page.locator('input').getAttribute('checked');
+    await expect(page.locator('input')).toBeChecked();
+  });
+
+  await expect(traceViewer.actionTitles).toHaveText([
+    /Navigate to/,
+    /Expect "toBeChecked"/,
+  ]);
+  await expect(traceViewer.page.getByText('3 hidden', { exact: true })).toBeVisible();
+
+  await traceViewer.page.getByRole('button', { name: 'Filter actions' }).click();
+  await expect(traceViewer.page.getByTestId('actions-filter-dialog')).toMatchAriaSnapshot(`
+    - dialog:
+      - checkbox "Getters 1"
+      - checkbox "Network routes 2"
+      - checkbox "Configuration"
+  `);
+
+  await traceViewer.page.locator('.setting').getByText('Getters').click();
+  await expect(traceViewer.actionTitles).toHaveText([
+    /Navigate to/,
+    /Get attribute "checked"/,
+    /Expect "toBeChecked"/,
+  ]);
+  await expect(traceViewer.page.getByText('2 hidden', { exact: true })).toBeVisible();
+
+  await traceViewer.page.locator('.setting').getByText('Network routes').click();
+  await expect(traceViewer.actionTitles).toHaveText([
+    /Route requests/,
+    /Navigate to/,
+    /Fulfill request/,
+    /Get attribute "checked"/,
+    /Expect "toBeChecked"/,
+  ]);
+});
+
+test.describe(() => {
+  // NOTE: In Firefox/WebKit, history.pushState() requires a SecureContext.
+  // On http/about:blank it throws "The operation is insecure".
+  test.use({ ignoreHTTPSErrors: true });
+
+  test('should handle failed snapshots due to dialog', async ({ page, httpsServer, runAndTrace }) => {
+    const traceViewer = await runAndTrace(async () => {
+      await page.goto(httpsServer.EMPTY_PAGE);
+      await page.setContent(`
+        <head>
+          <style>
+            button { color: red; }
+          </style>
+        </head>
+        <body>
+          <button>Click me</button>
+          <script>
+            const button = document.querySelector('button');
+            window.history.pushState({ page: 'stay' }, '', window.location.href);
+            window.addEventListener('popstate', () => {
+              if (window.confirm('ready?'))
+                button.textContent = 'Clicked';
+            });
+          </script>
+        </body>
+      `);
+      let dialogMessage = '';
+      page.on('dialog', async dialog => {
+        dialogMessage = dialog.message();
+        await dialog.accept();
+      });
+      await page.goBack();
+      await expect.poll(() => dialogMessage).toBe('ready?');
+      await expect(page.getByRole('button')).toHaveText('Clicked');
+    });
+
+    const frame = await traceViewer.snapshotFrame('Expect');
+    await expect(frame.getByRole('button')).toHaveCSS('color', 'rgb(255, 0, 0)');
+  });
+});
+
+test('should survive service worker restart', async ({ page, runAndTrace, server }) => {
+  const traceViewer = await runAndTrace(async () => {
+    await page.goto(server.EMPTY_PAGE);
+    await page.setContent('Old world');
+    await page.evaluate(() => document.body.textContent = 'New world');
+  });
+  const snapshot1 = await traceViewer.snapshotFrame('Evaluate');
+  await expect(snapshot1.locator('body')).toHaveText('New world');
+
+  const status = await traceViewer.page.evaluate(async () => {
+    const response = await fetch('restartServiceWorker');
+    return response.status;
+  });
+  expect(status).toBe(200);
+
+  const snapshot2 = await traceViewer.snapshotFrame('Set content');
+  await expect(snapshot2.locator('body')).toHaveText('Old world');
+});
+
+test('should not navigate on anchor clicks', async ({ runAndTrace, page, server }) => {
+  const url = server.EMPTY_PAGE;
+  const traceViewer = await runAndTrace(async () => {
+    await page.setContent(`
+      <a href="${url}">link1</a>
+      <a href="${url}" target="_blank">link2</a>
+      <a href="${url}" target="_top">link3</a>
+    `);
+  });
+  const snapshot = await traceViewer.snapshotFrame('Set content');
+  const frame = await snapshot.owner().elementHandle().then(handle => handle.contentFrame());
+
+  const checkLink = async (name: string) => {
+    let newPageOpened = false;
+    traceViewer.page.context().on('page', () => {
+      newPageOpened = true;
+    });
+    await snapshot.getByRole('link', { name }).click();
+    await traceViewer.page.waitForTimeout(500);
+    await expect(traceViewer.page).not.toHaveURL(url, { timeout: 500 });
+    expect(frame.url()).not.toBe(url);
+    expect(newPageOpened).toBe(false);
+  };
+
+  await checkLink('link1');
+  await checkLink('link2');
+  await checkLink('link3');
+});
+
+test('should respect CSSOM changes', async ({ runAndTrace, page, server }) => {
+  const traceViewer = await runAndTrace(async () => {
+    await page.setContent('<style>button { color: red; }</style><button>Hello</button>');
+    await page.evaluate(() => { (document.styleSheets[0].cssRules[0] as any).style.color = 'blue'; });
+
+    await page.setContent('<style>@media { button { color: red; } }</style><button>Hello</button>');
+    await page.evaluate(() => {
+      window['rule'] = document.styleSheets[0].cssRules[0];
+      void 0;
+    });
+    await page.evaluate(() => { window['rule'].cssRules[0].style.color = 'black'; });
+    await page.evaluate(() => { window['rule'].insertRule('button:not(.disabled) { color: green; }', 1); });
+
+    await page.route('**/style.css', route => {
+      route.fulfill({ body: 'button { color: red; }', }).catch(() => {});
+    });
+    await page.goto(server.EMPTY_PAGE);
+    await page.setContent('<link rel="stylesheet" href="style.css"><button>Hello</button>');
+    await page.evaluate(() => { (document.styleSheets[0].cssRules[0] as any).style.color = 'blue'; });
+    await page.evaluate(() => '1 + 1');
+    await page.evaluate(() => { document.styleSheets[0].disabled = true; });
+  });
+
+  const frame1 = await traceViewer.snapshotFrame('Set content', 0);
+  await expect(frame1.locator('button')).toHaveCSS('color', 'rgb(255, 0, 0)');
+  const frame2 = await traceViewer.snapshotFrame('Evaluate', 0);
+  await expect(frame2.locator('button')).toHaveCSS('color', 'rgb(0, 0, 255)');
+
+  const frame3 = await traceViewer.snapshotFrame('Set content', 1);
+  await expect(frame3.locator('button')).toHaveCSS('color', 'rgb(255, 0, 0)');
+  const frame4 = await traceViewer.snapshotFrame('Evaluate', 2);
+  await expect(frame4.locator('button')).toHaveCSS('color', 'rgb(0, 0, 0)');
+  const frame5 = await traceViewer.snapshotFrame('Evaluate', 3);
+  await expect(frame5.locator('button')).toHaveCSS('color', 'rgb(0, 128, 0)');
+
+  const frame6 = await traceViewer.snapshotFrame('Set content', 2);
+  await expect(frame6.locator('button')).toHaveCSS('color', 'rgb(255, 0, 0)');
+  const frame7 = await traceViewer.snapshotFrame('Evaluate', 4);
+  await expect(frame7.locator('button')).toHaveCSS('color', 'rgb(0, 0, 255)');
+  const frame8 = await traceViewer.snapshotFrame('Evaluate', 5);
+  await traceViewer.page.waitForTimeout(1000); // give it time to render wrong color
+  await expect(frame8.locator('button')).toHaveCSS('color', 'rgb(0, 0, 255)');
+  const frame9 = await traceViewer.snapshotFrame('Evaluate', 6);
+  await expect(frame9.locator('button')).toHaveCSS('color', 'rgb(0, 0, 0)');
+});
+
+test('should preserve custom doctype', async ({ runAndTrace, page }) => {
+  const traceViewer = await runAndTrace(async () => {
+    await page.setContent('<!DOCTYPE foo><body>hi</body>');
+  });
+  const frame = await traceViewer.snapshotFrame('Set content');
+  await expect.poll(() => frame.locator('body').evaluate(() => document.doctype.name)).toBe('foo');
+});
+
+test('should replace meta charset attr that specifies charset', async ({ runAndTrace, page, server }) => {
+  const traceViewer = await runAndTrace(async () => {
+    await page.goto(server.EMPTY_PAGE);
+    await page.setContent('<meta charset="shift-jis" />');
+  });
+  const frame = await traceViewer.snapshotFrame('Set content');
+  await expect.poll(() => frame.locator('body').evaluate(() => document.querySelector('meta')?.outerHTML.toLowerCase())).toBe('<meta charset="utf-8">');
+});
+
+test('should replace meta content attr that specifies charset', async ({ runAndTrace, page, server }) => {
+  const traceViewer = await runAndTrace(async () => {
+    await page.goto(server.EMPTY_PAGE);
+    await page.setContent('<meta http-equiv="Content-Type" content="text/html; charset=Shift_JIS">');
+  });
+  const frame = await traceViewer.snapshotFrame('Set content');
+  await expect.poll(() => frame.locator('body').evaluate(() => document.querySelector('meta')?.outerHTML.toLowerCase())).toBe('<meta http-equiv="content-type" content="text/html; charset=utf-8">');
+});
+
+test('should capture iframe with srcdoc', async ({ page, server, runAndTrace }) => {
+  await page.route('**/empty.html', route => {
+    void route.fulfill({
+      body: `<iframe srcdoc="<button>Hello iframe</button>"></iframe>`,
+      contentType: 'text/html'
+    }).catch(() => {});
+  });
+
+  const traceViewer = await runAndTrace(async () => {
+    await page.goto(server.EMPTY_PAGE);
+    await expect(page.frameLocator('iframe').locator('button')).toHaveText('Hello iframe');
+    await page.evaluate('2+2');
+  });
+
+  const frame = await traceViewer.snapshotFrame('Evaluate');
+  await expect(frame.frameLocator('iframe').getByRole('button')).toHaveText('Hello iframe');
+});
+
+test('take trace paths via stdin', async ({ showTraceViewer }) => {
+  const traceViewer = await showTraceViewer(undefined, { stdin: true });
+  await expect(traceViewer.page).toHaveTitle('Playwright Trace Viewer');
+  traceViewer.process.write(traceFile);
+  await expect(traceViewer.actionTitles).toContainText([
+    /Create page/,
+  ]);
 });

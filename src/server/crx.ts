@@ -29,7 +29,6 @@ import type * as crxchannels from '../protocol/channels';
 import { CrxRecorderApp } from './recorder/crxRecorderApp';
 import { CrxTransport } from './transport/crxTransport';
 import { BrowserContext } from 'playwright-core/lib/server/browserContext';
-import type { IRecorder, IRecorderAppFactory } from 'playwright-core/lib/server/recorder/recorderFrontend';
 import type { Mode } from '@recorder/recorderTypes';
 import CrxPlayer from './recorder/crxPlayer';
 import { createTab } from './utils';
@@ -38,7 +37,6 @@ import { generateCode } from 'playwright-core/lib/server/codegen/language';
 import { languageSet } from 'playwright-core/lib/server/codegen/languages';
 import { deviceDescriptors } from 'playwright-core/lib/server/deviceDescriptors';
 import type { DeviceDescriptor } from 'playwright-core/lib/server/types';
-import { EmptyRecorderApp, RecorderApp } from 'playwright-core/lib/server/recorder/recorderApp';
 import type { LanguageGeneratorOptions } from 'playwright-core/lib/server/codegen/types';
 
 const kTabIdSymbol = Symbol('kTabIdSymbol');
@@ -123,15 +121,6 @@ export class Crx extends SdkObject {
       this._browserPromise = undefined;
       this._transport = undefined;
     });
-    // override factory otherwise it will fail because the default factory tries to launch a new playwright app
-    RecorderApp.factory = (): IRecorderAppFactory => {
-      return async recorder => {
-        if (recorder instanceof Recorder && recorder._context === context)
-          return await crxApp._createRecorderApp(recorder);
-        else
-          return new EmptyRecorderApp();
-      };
-    };
     return crxApp;
   }
 
@@ -241,7 +230,8 @@ export class CrxApplication extends SdkObject {
         mode: mode === 'none' ? undefined : mode,
         ...otherOptions
       };
-      Recorder.show(this._context, recorder => this._createRecorderApp(recorder), recorderParams);
+      const recorder = await Recorder.forContext(this._context, recorderParams);
+      await this._createRecorderApp(recorder);
     }
 
     await this._recorderApp!.open(options);
@@ -346,9 +336,9 @@ export class CrxApplication extends SdkObject {
     return { actions, options, code };
   }
 
-  async _createRecorderApp(recorder: IRecorder) {
+  async _createRecorderApp(recorder: Recorder) {
     if (!this._recorderApp) {
-      this._recorderApp = new CrxRecorderApp(this._crx, recorder as Recorder);
+      this._recorderApp = new CrxRecorderApp(this._crx, recorder);
       this._recorderApp.on('show', () => this.emit(CrxApplication.Events.RecorderShow));
       this._recorderApp.on('hide', () => this.emit(CrxApplication.Events.RecorderHide));
       this._recorderApp.on('modeChanged', event => {

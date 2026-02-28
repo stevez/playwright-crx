@@ -16,7 +16,6 @@
 
 // some types are commented out because they are not used in the extension
 import {
-  Accessibility,
   Browser,
   BrowserContext,
   BrowserType,
@@ -61,7 +60,6 @@ import {
 import { currentZone } from 'playwright-core/lib/utils';
 
 type ApiTypeMap = {
-  'accessibility': Accessibility,
   // 'android': Android,
   // 'androidDevice': AndroidDevice,
   // 'androidWebView': AndroidWebView,
@@ -113,7 +111,6 @@ type KeysOfAsyncMethods<T> = {
 }[Extract<keyof T, string>];
 
 const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsyncMethods<ApiTypeMap[ApiK]>]: boolean }] } = {
-  accessibility: [Accessibility.prototype, { snapshot: true }],
   // android: [Android.prototype],
   // androidDevice: [AndroidDevice.prototype],
   // androidWebView: [AndroidWebView.prototype],

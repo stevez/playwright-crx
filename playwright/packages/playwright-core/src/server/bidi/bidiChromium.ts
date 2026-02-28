@@ -17,23 +17,22 @@
 import os from 'os';
 
 import { wrapInASCIIBox } from '../utils/ascii';
-import { BrowserReadyState, BrowserType, kNoXServerRunningError } from '../browserType';
+import { BrowserType, kNoXServerRunningError } from '../browserType';
 import { BidiBrowser } from './bidiBrowser';
 import { kBrowserCloseMessageId } from './bidiConnection';
 import { chromiumSwitches } from '../chromium/chromiumSwitches';
 import { RecentLogsCollector } from '../utils/debugLogger';
+import { waitForReadyState } from '../chromium/chromium';
 
 import type { BrowserOptions } from '../browser';
 import type { SdkObject } from '../instrumentation';
-import type { Env } from '../utils/processLauncher';
-import type { ProtocolError } from '../protocolError';
 import type { ConnectionTransport } from '../transport';
 import type * as types from '../types';
 
 
 export class BidiChromium extends BrowserType {
   constructor(parent: SdkObject) {
-    super(parent, 'bidi');
+    super(parent, 'chromium');
   }
 
   override async connectToTransport(transport: ConnectionTransport, options: BrowserOptions, browserLogsCollector: RecentLogsCollector): Promise<BidiBrowser> {
@@ -55,16 +54,14 @@ export class BidiChromium extends BrowserType {
     }
   }
 
-  override doRewriteStartupLog(error: ProtocolError): ProtocolError {
-    if (!error.logs)
-      return error;
-    if (error.logs.includes('Missing X server'))
-      error.logs = '\n' + wrapInASCIIBox(kNoXServerRunningError, 1);
+  override doRewriteStartupLog(logs: string): string {
+    if (logs.includes('Missing X server'))
+      logs = '\n' + wrapInASCIIBox(kNoXServerRunningError, 1);
     // These error messages are taken from Chromium source code as of July, 2020:
     // https://github.com/chromium/chromium/blob/70565f67e79f79e17663ad1337dc6e63ee207ce9/content/browser/zygote_host/zygote_host_impl_linux.cc
-    if (!error.logs.includes('crbug.com/357670') && !error.logs.includes('No usable sandbox!') && !error.logs.includes('crbug.com/638180'))
-      return error;
-    error.logs = [
+    if (!logs.includes('crbug.com/357670') && !logs.includes('No usable sandbox!') && !logs.includes('crbug.com/638180'))
+      return logs;
+    return [
       `Chromium sandboxing failed!`,
       `================================`,
       `To avoid the sandboxing issue, do either of the following:`,
@@ -73,14 +70,14 @@ export class BidiChromium extends BrowserType {
       `================================`,
       ``,
     ].join('\n');
-    return error;
   }
 
-  override amendEnvironment(env: Env, userDataDir: string, executable: string, browserArguments: string[]): Env {
+  override amendEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     return env;
   }
 
   override attemptToGracefullyCloseBrowser(transport: ConnectionTransport): void {
+    // Note that it's fine to reuse the transport, since our connection ignores kBrowserCloseMessageId.
     const bidiTransport = (transport as any)[kBidiOverCdpWrapper];
     if (bidiTransport)
       transport = bidiTransport;
@@ -91,7 +88,7 @@ export class BidiChromium extends BrowserType {
     return false;
   }
 
-  override defaultArgs(options: types.LaunchOptions, isPersistent: boolean, userDataDir: string): string[] {
+  override async defaultArgs(options: types.LaunchOptions, isPersistent: boolean, userDataDir: string) {
     const chromeArguments = this._innerDefaultArgs(options);
     chromeArguments.push(`--user-data-dir=${userDataDir}`);
     chromeArguments.push('--remote-debugging-port=0');
@@ -102,8 +99,8 @@ export class BidiChromium extends BrowserType {
     return chromeArguments;
   }
 
-  override readyState(options: types.LaunchOptions): BrowserReadyState | undefined {
-    return new ChromiumReadyState();
+  override async waitForReadyState(options: types.LaunchOptions, browserLogsCollector: RecentLogsCollector): Promise<{ wsEndpoint?: string }> {
+    return waitForReadyState({ ...options, cdpPort: 0 }, browserLogsCollector);
   }
 
   private _innerDefaultArgs(options: types.LaunchOptions): string[] {
@@ -118,15 +115,10 @@ export class BidiChromium extends BrowserType {
     const chromeArguments = [...chromiumSwitches(options.assistantMode)];
 
     if (os.platform() === 'darwin') {
-      // See https://github.com/microsoft/playwright/issues/7362
-      chromeArguments.push('--enable-use-zoom-for-dsf=false');
-      // See https://bugs.chromium.org/p/chromium/issues/detail?id=1407025.
-      if (options.headless)
-        chromeArguments.push('--use-angle');
+      // See https://issues.chromium.org/issues/40277080
+      chromeArguments.push('--enable-unsafe-swiftshader');
     }
 
-    if (options.devtools)
-      chromeArguments.push('--auto-open-devtools-for-tabs');
     if (options.headless) {
       chromeArguments.push('--headless');
 
@@ -143,14 +135,14 @@ export class BidiChromium extends BrowserType {
       const proxyURL = new URL(proxy.server);
       const isSocks = proxyURL.protocol === 'socks5:';
       // https://www.chromium.org/developers/design-documents/network-settings
-      if (isSocks && !this.attribution.playwright.options.socksProxyPort) {
+      if (isSocks && !options.socksProxyPort) {
         // https://www.chromium.org/developers/design-documents/network-stack/socks-proxy
         chromeArguments.push(`--host-resolver-rules="MAP * ~NOTFOUND , EXCLUDE ${proxyURL.hostname}"`);
       }
       chromeArguments.push(`--proxy-server=${proxy.server}`);
       const proxyBypassRules = [];
       // https://source.chromium.org/chromium/chromium/src/+/master:net/docs/proxy.md;l=548;drc=71698e610121078e0d1a811054dcf9fd89b49578
-      if (this.attribution.playwright.options.socksProxyPort)
+      if (options.socksProxyPort)
         proxyBypassRules.push('<-loopback>');
       if (proxy.bypass)
         proxyBypassRules.push(...proxy.bypass.split(',').map(t => t.trim()).map(t => t.startsWith('.') ? '*' + t : t));
@@ -162,17 +154,21 @@ export class BidiChromium extends BrowserType {
     chromeArguments.push(...args);
     return chromeArguments;
   }
-}
 
-class ChromiumReadyState extends BrowserReadyState {
-  override onBrowserOutput(message: string): void {
-    if (message.includes('Failed to create a ProcessSingleton for your profile directory.')) {
-      this._wsEndpoint.reject(new Error('Failed to create a ProcessSingleton for your profile directory. ' +
-        'This usually means that the profile is already in use by another instance of Chromium.'));
+  override getExecutableName(options: types.LaunchOptions): string {
+    switch (options.channel) {
+      case 'bidi-chromium':
+        return 'chromium';
+      case 'bidi-chrome':
+        return 'chrome';
+      case 'bidi-chrome-beta':
+        return 'chrome-beta';
+      case 'bidi-chrome-dev':
+        return 'chrome-dev';
+      case 'bidi-chrome-canary':
+        return 'chrome-canary';
     }
-    const match = message.match(/DevTools listening on (.*)/);
-    if (match)
-      this._wsEndpoint.resolve(match[1]);
+    throw new Error(`Unsupported Bidi Chromium channel: ${options.channel}`);
   }
 }
 

@@ -61,11 +61,6 @@ export class ElementHandle<T extends Node = Node> extends JSHandle<T> implements
     return Frame.fromNullable((await this._elementChannel.contentFrame()).frame);
   }
 
-  async _generateLocatorString(): Promise<string | null> {
-    const value = (await this._elementChannel.generateLocatorString()).value;
-    return value === undefined ? null : value;
-  }
-
   async getAttribute(name: string): Promise<string | null> {
     const value = (await this._elementChannel.getAttribute({ name })).value;
     return value === undefined ? null : value;
@@ -289,8 +284,12 @@ export async function convertInputFiles(platform: Platform, files: string | File
 
     const [localPaths, localDirectory] = await resolvePathsAndDirectoryForInputFiles(platform, items);
 
+    localPaths?.forEach(path => context._checkFileAccess(path));
+    if (localDirectory)
+      context._checkFileAccess(localDirectory);
+
     if (context._connection.isRemote()) {
-      const files = localDirectory ? (await platform.fs().promises.readdir(localDirectory, { withFileTypes: true, recursive: true })).filter(f => f.isFile()).map(f => platform.path().join(f.path, f.name)) : localPaths!;
+      const files = localDirectory ? (await platform.fs().promises.readdir(localDirectory, { withFileTypes: true, recursive: true })).filter(f => f.isFile()).map(f => platform.path().join(f.parentPath, f.name)) : localPaths!;
       const { writableStreams, rootDir } = await context._wrapApiCall(async () => context._channel.createTempFiles({
         rootDirName: localDirectory ? platform.path().basename(localDirectory) : undefined,
         items: await Promise.all(files.map(async file => {

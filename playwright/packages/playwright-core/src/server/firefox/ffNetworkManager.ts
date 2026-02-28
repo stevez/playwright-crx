@@ -62,6 +62,9 @@ export class FFNetworkManager {
     const frame = redirectedFrom ? redirectedFrom.request.frame() : (event.frameId ? this._page.frameManager.frame(event.frameId) : null);
     if (!frame)
       return;
+    // Align with Chromium and WebKit and not expose preflight OPTIONS requests to the client.
+    if (event.method === 'OPTIONS' && !event.isIntercepted)
+      return;
     if (redirectedFrom)
       this._requests.delete(redirectedFrom._id);
     const request = new InterceptableRequest(frame, redirectedFrom, event);
@@ -162,7 +165,7 @@ export class FFNetworkManager {
   }
 }
 
-const causeToResourceType: {[key: string]: string} = {
+const causeToResourceType: {[key: string]: network.ResourceType} = {
   TYPE_INVALID: 'other',
   TYPE_OTHER: 'other',
   TYPE_SCRIPT: 'script',
@@ -180,15 +183,15 @@ const causeToResourceType: {[key: string]: string} = {
   TYPE_FONT: 'font',
   TYPE_MEDIA: 'media',
   TYPE_WEBSOCKET: 'websocket',
-  TYPE_CSP_REPORT: 'other',
+  TYPE_CSP_REPORT: 'cspreport',
   TYPE_XSLT: 'other',
-  TYPE_BEACON: 'other',
+  TYPE_BEACON: 'beacon',
   TYPE_FETCH: 'fetch',
   TYPE_IMAGESET: 'image',
   TYPE_WEB_MANIFEST: 'manifest',
 };
 
-const internalCauseToResourceType: {[key: string]: string} = {
+const internalCauseToResourceType: {[key: string]: network.ResourceType} = {
   TYPE_INTERNAL_EVENTSOURCE: 'eventsource',
 };
 

@@ -18,47 +18,51 @@ import type { FilteredStats, HTMLReport, TestFileSummary } from './types';
 import * as React from 'react';
 import { TestFileView } from './testFileView';
 import './testFileView.css';
+import './chip.css';
 import { msToString } from './utils';
 import { AutoChip } from './chip';
 import { CodeSnippet } from './testErrorView';
 import * as icons from './icons';
 import { isMetadataEmpty, MetadataView } from './metadataView';
 import { HeaderView } from './headerView';
+import { clsx } from '@web/uiUtils';
 
 export const TestFilesView: React.FC<{
-  tests: TestFileSummary[],
+  files: TestFileSummary[],
   expandedFiles: Map<string, boolean>,
   setExpandedFiles: (value: Map<string, boolean>) => void,
   projectNames: string[],
-}> = ({ tests, expandedFiles, setExpandedFiles, projectNames }) => {
+}> = ({ files, expandedFiles, setExpandedFiles, projectNames }) => {
   const filteredFiles = React.useMemo(() => {
     const result: { file: TestFileSummary, defaultExpanded: boolean }[] = [];
     let visibleTests = 0;
-    for (const file of tests) {
+    for (const file of files) {
       visibleTests += file.tests.length;
       result.push({ file, defaultExpanded: visibleTests < 200 });
     }
     return result;
-  }, [tests]);
+  }, [files]);
   return <>
-    {filteredFiles.map(({ file, defaultExpanded }) => {
-      return <TestFileView
-        key={`file-${file.fileId}`}
-        file={file}
-        projectNames={projectNames}
-        isFileExpanded={fileId => {
-          const value = expandedFiles.get(fileId);
-          if (value === undefined)
-            return defaultExpanded;
-          return !!value;
-        }}
-        setFileExpanded={(fileId, expanded) => {
-          const newExpanded = new Map(expandedFiles);
-          newExpanded.set(fileId, expanded);
-          setExpandedFiles(newExpanded);
-        }}>
-      </TestFileView>;
-    })}
+    {filteredFiles.length > 0 ?
+      filteredFiles.map(({ file, defaultExpanded }) => {
+        return <TestFileView
+          key={`file-${file.fileId}`}
+          file={file}
+          projectNames={projectNames}
+          isFileExpanded={fileId => {
+            const value = expandedFiles.get(fileId);
+            if (value === undefined)
+              return defaultExpanded;
+            return !!value;
+          }}
+          setFileExpanded={(fileId, expanded) => {
+            const newExpanded = new Map(expandedFiles);
+            newExpanded.set(fileId, expanded);
+            setExpandedFiles(newExpanded);
+          }}>
+        </TestFileView>;
+      })
+      : <div className='chip-header test-file-no-files'>No tests found</div>}
   </>;
 };
 
@@ -71,9 +75,19 @@ export const TestFilesHeader: React.FC<{
   if (!report)
     return null;
 
+  const showProject = report.projectNames.length === 1 && !!report.projectNames[0];
+  const isMetadataInTopLine = !showProject && !filteredStats;
+
+  const metadataToggleButton = !isMetadataEmpty(report.metadata) && (
+    <div className={clsx('metadata-toggle', !isMetadataInTopLine && 'metadata-toggle-second-line')} role='button' onClick={toggleMetadataVisible} title={metadataVisible ? 'Hide metadata' : 'Show metadata'}>
+      {metadataVisible ? icons.downArrow() : icons.rightArrow()}Metadata
+    </div>
+  );
+
   const leftSuperHeader = <div className='test-file-header-info'>
-    {report.projectNames.length === 1 && !!report.projectNames[0] && <div data-testid='project-name'>Project: {report.projectNames[0]}</div>}
+    {showProject && <div data-testid='project-name'>Project: {report.projectNames[0]}</div>}
     {filteredStats && <div data-testid='filtered-tests-count'>Filtered: {filteredStats.total} {!!filteredStats.total && ('(' + msToString(filteredStats.duration) + ')')}</div>}
+    {isMetadataInTopLine && metadataToggleButton}
   </div>;
 
   const rightSuperHeader = <>
@@ -82,10 +96,8 @@ export const TestFilesHeader: React.FC<{
   </>;
 
   return <>
-    <HeaderView title={report.title} leftSuperHeader={leftSuperHeader} rightSuperHeader={rightSuperHeader} />
-    {!isMetadataEmpty(report.metadata) && <div className='metadata-toggle' role='button' onClick={toggleMetadataVisible} title={metadataVisible ? 'Hide metadata' : 'Show metadata'}>
-      {metadataVisible ? icons.downArrow() : icons.rightArrow()}Metadata
-    </div>}
+    <HeaderView title={report.options.title} leftSuperHeader={leftSuperHeader} rightSuperHeader={rightSuperHeader} />
+    {!isMetadataInTopLine && metadataToggleButton}
     {metadataVisible && <MetadataView metadata={report.metadata}/>}
     {!!report.errors.length && <AutoChip header='Errors' dataTestId='report-errors'>
       {report.errors.map((error, index) => <CodeSnippet key={'test-report-error-message-' + index} code={error}/>)}

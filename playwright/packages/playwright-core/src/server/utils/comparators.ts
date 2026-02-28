@@ -21,6 +21,9 @@ import pixelmatch from '../../third_party/pixelmatch';
 import { jpegjs } from '../../utilsBundle';
 import { colors, diff } from '../../utilsBundle';
 import { PNG } from '../../utilsBundle';
+import { padImageToSize } from './imageUtils';
+
+import type { ImageData } from './imageUtils';
 
 export type ImageComparatorOptions = { threshold?: number, maxDiffPixels?: number, maxDiffPixelRatio?: number, comparator?: string };
 export type ComparatorResult = { diff?: Buffer; errorMessage: string; } | null;
@@ -48,8 +51,6 @@ export function compareBuffersOrStrings(actualBuffer: Buffer | string, expectedB
   return null;
 }
 
-type ImageData = { width: number, height: number, data: Buffer };
-
 function compareImages(mimeType: string, actualBuffer: Buffer | string, expectedBuffer: Buffer, options: ImageComparatorOptions = {}): ComparatorResult {
   if (!actualBuffer || !(actualBuffer instanceof Buffer))
     return { errorMessage: 'Actual result should be a Buffer.' };
@@ -61,8 +62,8 @@ function compareImages(mimeType: string, actualBuffer: Buffer | string, expected
   let sizesMismatchError = '';
   if (expected.width !== actual.width || expected.height !== actual.height) {
     sizesMismatchError = `Expected an image ${expected.width}px by ${expected.height}px, received ${actual.width}px by ${actual.height}px. `;
-    actual = resizeImage(actual, size);
-    expected = resizeImage(expected, size);
+    actual = padImageToSize(actual, size);
+    expected = padImageToSize(expected, size);
   }
   const diff = new PNG({ width: size.width, height: size.height });
   let count;
@@ -98,11 +99,11 @@ function validateBuffer(buffer: Buffer, mimeType: string): void {
   if (mimeType === 'image/png') {
     const pngMagicNumber = [137, 80, 78, 71, 13, 10, 26, 10];
     if (buffer.length < pngMagicNumber.length || !pngMagicNumber.every((byte, index) => buffer[index] === byte))
-      throw new Error('could not decode image as PNG.');
+      throw new Error('Could not decode expected image as PNG.');
   } else if (mimeType === 'image/jpeg') {
     const jpegMagicNumber = [255, 216];
     if (buffer.length < jpegMagicNumber.length || !jpegMagicNumber.every((byte, index) => buffer[index] === byte))
-      throw new Error('could not decode image as JPEG.');
+      throw new Error('Could not decode expected image as JPEG.');
   }
 }
 
@@ -121,37 +122,13 @@ function compareText(actual: Buffer | string, expectedBuffer: Buffer): Comparato
   const lines = diff.createPatch('file', expected, actual, undefined, undefined, { context: 5 }).split('\n');
   const coloredLines = lines.slice(4).map(line => {
     if (line.startsWith('-'))
-      return colors.red(line);
-    if (line.startsWith('+'))
       return colors.green(line);
+    if (line.startsWith('+'))
+      return colors.red(line);
     if (line.startsWith('@@'))
       return colors.dim(line);
     return line;
   });
   const errorMessage = coloredLines.join('\n');
   return { errorMessage  };
-}
-
-function resizeImage(image: ImageData, size: { width: number, height: number }): ImageData {
-  if (image.width === size.width && image.height === size.height)
-    return image;
-  const buffer = new Uint8Array(size.width * size.height * 4);
-  for (let y = 0; y < size.height; y++) {
-    for (let x = 0; x < size.width; x++) {
-      const to = (y * size.width + x) * 4;
-      if (y < image.height && x < image.width) {
-        const from = (y * image.width + x) * 4;
-        buffer[to] = image.data[from];
-        buffer[to + 1] = image.data[from + 1];
-        buffer[to + 2] = image.data[from + 2];
-        buffer[to + 3] = image.data[from + 3];
-      } else {
-        buffer[to] = 0;
-        buffer[to + 1] = 0;
-        buffer[to + 2] = 0;
-        buffer[to + 3] = 0;
-      }
-    }
-  }
-  return { data: Buffer.from(buffer), width: size.width, height: size.height };
 }

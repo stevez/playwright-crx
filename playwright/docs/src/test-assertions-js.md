@@ -46,7 +46,7 @@ Note that retrying assertions are async, so you must `await` them.
 | [await expect(locator).toHaveAttribute()](./api/class-locatorassertions.md#locator-assertions-to-have-attribute) | Element has a DOM attribute |
 | [await expect(locator).toHaveClass()](./api/class-locatorassertions.md#locator-assertions-to-have-class) | Element has specified CSS class property |
 | [await expect(locator).toHaveCount()](./api/class-locatorassertions.md#locator-assertions-to-have-count) | List has exact number of children |
-| [await expect(locator).toHaveCSS()](./api/class-locatorassertions.md#locator-assertions-to-have-css) | Element has CSS property |
+| [await expect(locator).toHaveCSS()](./api/class-locatorassertions.md#locator-assertions-to-have-css-1) | Element has CSS property |
 | [await expect(locator).toHaveId()](./api/class-locatorassertions.md#locator-assertions-to-have-id) | Element has an ID |
 | [await expect(locator).toHaveJSProperty()](./api/class-locatorassertions.md#locator-assertions-to-have-js-property) | Element has a JavaScript property |
 | [await expect(locator).toHaveRole()](./api/class-locatorassertions.md#locator-assertions-to-have-role) | Element has a specific [ARIA role](https://www.w3.org/TR/wai-aria-1.2/#roles) |
@@ -91,13 +91,21 @@ Prefer [auto-retrying](#auto-retrying-assertions) assertions whenever possible. 
 | [`method: GenericAssertions.toMatchObject`] | Object contains specified properties |
 | [`method: GenericAssertions.toStrictEqual`] | Value is similar, including property types |
 | [`method: GenericAssertions.toThrow`] | Function throws an error |
-| [`method: GenericAssertions.any`] | Matches any instance of a class/primitive |
-| [`method: GenericAssertions.anything`] | Matches anything |
-| [`method: GenericAssertions.arrayContaining`] | Array contains specific elements |
-| [`method: GenericAssertions.closeTo`] | Number is approximately equal |
-| [`method: GenericAssertions.objectContaining`] | Object contains specific properties |
-| [`method: GenericAssertions.stringContaining`] | String contains a substring |
-| [`method: GenericAssertions.stringMatching`] | String matches a regular expression |
+
+## Asymmetric matchers
+
+These expressions can be nested in other assertions to allow more relaxed matching against a given condition.
+
+| Matcher | Description |
+| :- | :- |
+| [expect.any()](./api/class-genericassertions.md#generic-assertions-any) | Matches any instance of a class/primitive |
+| [expect.anything()](./api/class-genericassertions.md#generic-assertions-anything) | Matches anything |
+| [expect.arrayContaining()](./api/class-genericassertions.md#generic-assertions-array-containing) | Array contains specific elements |
+| [expect.arrayOf()](./api/class-genericassertions.md#generic-assertions-array-of) | Array contains elements of specific type |
+| [expect.closeTo()](./api/class-genericassertions.md#generic-assertions-close-to) | Number is approximately equal |
+| [expect.objectContaining()](./api/class-genericassertions.md#generic-assertions-object-containing) | Object contains specific properties |
+| [expect.stringContaining()](./api/class-genericassertions.md#generic-assertions-string-containing) | String contains a substring |
+| [expect.stringMatching()](./api/class-genericassertions.md#generic-assertions-string-matching) | String matches a regular expression |
 
 ## Negating matchers
 

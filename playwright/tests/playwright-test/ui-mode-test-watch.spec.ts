@@ -150,6 +150,8 @@ test('should watch all', async ({ runUITest, writeFiles }) => {
     'd.test.ts': `import { test } from '@playwright/test'; test('test', () => {});`,
   });
 
+  await page.getByTitle('Watch all').click();
+
   await expect.poll(dumpTestTree(page)).toBe(`
     ▼ ◯ a.test.ts
         ◯ test
@@ -160,7 +162,6 @@ test('should watch all', async ({ runUITest, writeFiles }) => {
     ▼ ◯ d.test.ts
         ◯ test
   `);
-  await page.getByTitle('Watch all').click();
 
   await writeFiles({
     'a.test.ts': `import { test } from '@playwright/test'; test('test', () => {});`,
@@ -347,5 +348,37 @@ test('should have watch icon highlighted when a test is focused and watch on the
   await expect.poll(dumpTestTree(page)).toBe(`
     ▼ ◯ a.test.ts <=
         ◯ passes 👁
+  `);
+});
+
+test('should watch test defined outside of .spec.ts file', async ({ runUITest, writeFiles }) => {
+  const { page } = await runUITest({
+    'example.spec.ts': `
+      import './impl';
+    `,
+    'impl.ts': `
+      import { test } from '@playwright/test';
+      test('one', async () => {});
+    `,
+  });
+
+  await page.getByRole('treeitem', { name: 'one' }).click();
+  await page.getByRole('treeitem', { name: 'one' }).getByRole('button', { name: 'Watch' }).click();
+
+  await expect.poll(dumpTestTree(page)).toBe(`
+    ▼ ◯ example.spec.ts
+        ◯ one 👁 <=
+  `);
+
+  await writeFiles({
+    'impl.ts': `
+      import { test } from '@playwright/test';
+      test('one', async () => { /* modified */ });
+    `,
+  });
+
+  await expect.poll(dumpTestTree(page)).toBe(`
+    ▼ ✅ example.spec.ts
+        ✅ one 👁 <=
   `);
 });
