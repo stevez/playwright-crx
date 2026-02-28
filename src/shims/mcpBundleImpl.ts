@@ -14,5 +14,8 @@
  * limitations under the License.
  */
 
-// MCP is not supported in the Chrome extension environment.
-export {};
+// Partial MCP bundle for Chrome extension environment.
+// Only zod is needed for BrowserServerBackend (schema parsing & JSON schema generation).
+// MCP SDK transports (Server, Client, Stdio, etc.) are not supported in service workers.
+export * as z from 'zod';
+export { zodToJsonSchema } from 'zod-to-json-schema';

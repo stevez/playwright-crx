@@ -60,3 +60,16 @@ export const { _crx: crx, selectors, errors } = playwrightAPI;
 export default playwrightAPI;
 
 wrapClientApis();
+
+// MCP Browser Backend
+export { BrowserServerBackend } from 'playwright-core/lib/mcp/browser/browserServerBackend';
+export { identityBrowserContextFactory } from 'playwright-core/lib/mcp/browser/browserContextFactory';
+export { defaultConfig } from 'playwright-core/lib/mcp/browser/config';
+export type { FullConfig } from 'playwright-core/lib/mcp/browser/config';
+export type { BrowserContextFactory } from 'playwright-core/lib/mcp/browser/browserContextFactory';
+export type { ClientInfo } from 'playwright-core/lib/mcp/sdk/server';
+
+// CLI Command Parser
+export { commands } from 'playwright-core/lib/cli/daemon/commands';
+export { parseCommand } from 'playwright-core/lib/cli/daemon/command';
+export type { AnyCommandSchema } from 'playwright-core/lib/cli/daemon/command';

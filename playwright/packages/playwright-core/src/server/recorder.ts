@@ -273,6 +273,10 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
     this._refreshOverlay();
   }
   
+  setOutput(codegenId: string, outputFile?: string) {
+    this._contextRecorder.setOutput(codegenId, outputFile);
+  }
+
   loadScript(script: { actions: actions.ActionInContext[], deviceName: string, contextOptions: LanguageGeneratorOptions['contextOptions'], text: string, highlight?: SourceHighlight[] }) {
     this._recorderSources = this._contextRecorder.loadScript(script);
     this._pushAllSources();

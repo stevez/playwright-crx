@@ -18,8 +18,16 @@ import path from 'path';
 import { defineConfig } from 'vite';
 import sourcemaps from 'rollup-plugin-sourcemaps';
 
+const rootDir = path.resolve(__dirname, '../..');
+
 // https://vitejs.dev/config/
 export default defineConfig({
+  resolve: {
+    alias: {
+      'playwright-crx/test': path.resolve(rootDir, 'lib/test.mjs'),
+      'playwright-crx': path.resolve(rootDir, 'lib/index.mjs'),
+    },
+  },
   build: {
     // code cannot be obfuscated
     minify: false,

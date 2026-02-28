@@ -75,6 +75,10 @@ export default defineConfig({
       'node:module': path.resolve(__dirname, './src/shims/module'),
       'node:stream': path.resolve(__dirname, './node_modules/readable-stream'),
       'node:string_decoder': path.resolve(__dirname, './node_modules/string_decoder'),
+
+      // MCP bundle dependencies (for BrowserServerBackend)
+      'zod': path.resolve(__dirname, './playwright/packages/playwright-core/bundles/mcp/node_modules/zod'),
+      'zod-to-json-schema': path.resolve(__dirname, './playwright/packages/playwright-core/bundles/mcp/node_modules/zod-to-json-schema'),
     },
   },
   define: {

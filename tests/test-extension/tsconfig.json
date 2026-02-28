@@ -13,6 +13,11 @@
     "isolatedModules": true,
     "noEmit": true,
 
+    "paths": {
+      "playwright-crx": ["../../index.d.ts"],
+      "playwright-crx/test": ["../../test.d.ts"]
+    },
+
     /* Linting */
     "strict": true,
     "noUnusedLocals": true,
