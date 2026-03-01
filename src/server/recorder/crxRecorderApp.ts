@@ -21,9 +21,11 @@ import type * as channels from '../../protocol/channels';
 import type { ActionInContextWithLocation } from './parser';
 import { PopupRecorderWindow } from './popupRecorderWindow';
 import { SidepanelRecorderWindow } from './sidepanelRecorderWindow';
-import type { ActionInContext, ActionWithSelector } from '@recorder/actions';
+import type { ActionInContext, ActionWithSelector, SignalInContext } from '@recorder/actions';
 import { parse } from './parser';
 import { languageSet } from 'playwright-core/lib/server/codegen/languages';
+import { generateCode } from 'playwright-core/lib/server/codegen/language';
+import { collapseActions } from 'playwright-core/lib/server/recorder/recorderUtils';
 import type { Crx } from '../crx';
 import type { LanguageGeneratorOptions } from 'playwright-core/lib/server/codegen/types';
 import { createGuid, monotonicTime } from 'playwright-core/lib/utils';
@@ -74,6 +76,13 @@ export class CrxRecorderApp extends EventEmitter {
   private _window?: RecorderWindow;
   private _editedCode?: EditedCode;
   private _recordedActions: ActionInContextWithLocation[] = [];
+  private _actions: ActionInContext[] = [];
+  private _recorderSources: Source[] = [];
+  private _languageGeneratorOptions: LanguageGeneratorOptions = {
+    browserName: 'chromium',
+    launchOptions: { headless: false },
+    contextOptions: {},
+  };
   private _playInIncognito = false;
   private _currentCursorPosition: { line: number } | undefined;
 
@@ -84,6 +93,56 @@ export class CrxRecorderApp extends EventEmitter {
     this._crx.player.on('start', () => {
       this._recorder.clearErrors();
       this.resetCallLogs().catch(() => {});
+    });
+
+    // Subscribe to Recorder events (upstream refactored from method calls to events)
+    recorder.on('userSourcesChanged', (sources: Source[]) => {
+      // Merge: recorder-generated sources take priority over user sources with the same id
+      if (this._recorderSources.length > 0) {
+        const recorderIds = new Set(this._recorderSources.map(s => s.id));
+        sources = [
+          ...sources.filter(s => !recorderIds.has(s.id)),
+          ...this._recorderSources,
+        ];
+      }
+      this.setSources(sources);
+    });
+    recorder.on('elementPicked', (elementInfo: ElementInfo, userGesture?: boolean) => {
+      this.elementPicked(elementInfo, userGesture);
+    });
+    recorder.on('callLogsUpdated', (callLogs: CallLog[]) => {
+      this.updateCallLogs(callLogs);
+    });
+    recorder.on('pausedStateChanged', (paused: boolean) => {
+      // In CRX, keep Run/Step buttons enabled when not recording.
+      // The upstream UI disables them when paused=false, but we want them
+      // always available outside recording mode.
+      if (!paused && !this._recorder._isRecording())
+        return;
+      this.setPaused(paused);
+    });
+    recorder.on('modeChanged', (mode: Mode) => {
+      this.setMode(mode);
+    });
+    recorder.on('actionAdded', (action: ActionInContext) => {
+      // Convert openPage for first page to navigate — openPage is skipped in code generation
+      // for the default 'page' alias, but we want page.goto() to appear in the recorded script
+      if (action.action.name === 'openPage' && action.frame.pageAlias === 'page' &&
+          action.action.url && action.action.url !== 'about:blank' && action.action.url !== 'chrome://newtab/') {
+        this._actions.push({
+          ...action,
+          action: { name: 'navigate', url: action.action.url, signals: action.action.signals },
+        });
+      } else {
+        this._actions.push(action);
+      }
+      this._updateRecorderSources();
+    });
+    recorder.on('signalAdded', (signal: SignalInContext) => {
+      const lastAction = this._actions.findLast(a => a.frame.pageGuid === signal.frame.pageGuid);
+      if (lastAction)
+        lastAction.action.signals.push(signal.signal);
+      this._updateRecorderSources();
     });
   }
 
@@ -113,6 +172,10 @@ export class CrxRecorderApp extends EventEmitter {
       await this._window.focus();
     }
 
+    // Re-send sources after window is open (messages sent before open() are lost)
+    if (this._recorderSources.length > 0)
+      this.setSources(this._recorderSources);
+
     this.setMode(mode);
   }
 
@@ -129,6 +192,9 @@ export class CrxRecorderApp extends EventEmitter {
   }
 
   private _hide() {
+    // Unblock any debugger-paused calls so the player can stop cleanly
+    this._recorder.resume();
+    this._crx.player.stop().catch(() => {});
     this._recorder.setMode('none');
     this.setMode('none');
     this._window?.close();
@@ -140,16 +206,16 @@ export class CrxRecorderApp extends EventEmitter {
   }
 
   async setMode(mode: Mode) {
-    if (!this._recorder._isRecording())
-      this._crx.player.pause().catch(() => {});
-    else
-      this._crx.player.stop().catch(() => {});
-
     if (this._mode !== mode) {
       this._mode = mode;
       this.emit('modeChanged', { mode });
     }
     this._sendMessage({ type: 'recorder', method: 'setMode', mode });
+    // In CRX, Run/Step buttons should be available whenever not recording.
+    // The upstream recorder requires paused=true for these buttons.
+    const isRecording = ['recording', 'assertingText', 'assertingVisibility', 'assertingValue', 'assertingSnapshot'].includes(mode);
+    if (!isRecording)
+      this.setPaused(true);
   }
 
   async setRunningFile() {
@@ -180,6 +246,38 @@ export class CrxRecorderApp extends EventEmitter {
 
   async updateCallLogs(callLogs: CallLog[]) {
     this._sendMessage({ type: 'recorder', method: 'updateCallLogs', callLogs });
+  }
+
+  private _addInitialNavigations() {
+    const pageAliases: Map<Page, string> = (this._recorder as any)._pageAliases;
+    if (!pageAliases)
+      return;
+    for (const [page, pageAlias] of pageAliases) {
+      const url = page.mainFrame().url();
+      if (url && url !== 'about:blank' && url !== 'chrome://newtab/')
+        this._actions.push({ frame: { pageAlias, framePath: [], pageGuid: page.guid }, action: { name: 'navigate', url, signals: [] } });
+    }
+  }
+
+  private _updateRecorderSources() {
+    const actions = collapseActions(this._actions);
+    this._recorderSources = [];
+    for (const languageGenerator of languageSet()) {
+      const { header, footer, actionTexts, text } = generateCode(actions, languageGenerator, this._languageGeneratorOptions);
+      this._recorderSources.push({
+        isRecorded: true,
+        label: languageGenerator.name,
+        group: languageGenerator.groupName,
+        id: languageGenerator.id,
+        text,
+        header,
+        footer,
+        actions: actionTexts,
+        language: languageGenerator.highlighter,
+        highlight: [],
+      });
+    }
+    this.setSources(this._recorderSources);
   }
 
   async setActions(actions: ActionInContext[], sources: Source[]) {
@@ -218,6 +316,13 @@ export class CrxRecorderApp extends EventEmitter {
   private _onMessage({ type, event, params }: RecorderEventData) {
     if (type === 'recorderEvent') {
       switch (event) {
+        case 'clear':
+          this._actions = [];
+          this._recorderSources = [];
+          if (this._recorder._isRecording())
+            this._addInitialNavigations();
+          this._updateRecorderSources();
+          break;
         case 'fileChanged':
           this._filename = params.file;
           if (this._editedCode?.hasErrors()) {
@@ -235,16 +340,36 @@ export class CrxRecorderApp extends EventEmitter {
           this._updateLocator(this._currentCursorPosition);
           break;
         case 'resume':
+          this._recorder.resume();
+          // Clear pause-on-next-statement so Run executes all actions without stopping
+          if ((this._recorder as any)._debugger)
+            (this._recorder as any)._debugger._pauseOnNextStatement = false;
+          if (!this._crx.player.isPlaying())
+            this._run().catch(() => {});
+          break;
         case 'step':
-          this._run().catch(() => {});
+          this._recorder.step();
+          // Ensure _pauseOnNextStatement is set even when debugger isn't currently paused
+          // (resume(true) is a no-op when not paused, but pauseOnNextStatement() always works)
+          (this._recorder as any)._debugger?.pauseOnNextStatement?.();
+          if (!this._crx.player.isPlaying())
+            this._run().catch(() => {});
           break;
-        case 'setMode':
-          const { mode } = params;
-          if (this._mode !== mode) {
-            this._mode = mode;
-            this.emit('modeChanged', { mode });
+        case 'setMode': {
+          const isRecordingMode = (m: Mode) => ['recording', 'assertingText', 'assertingVisibility', 'assertingValue', 'assertingSnapshot'].includes(m);
+          // Clear previous recording when starting a fresh recording session
+          if (params.mode === 'recording' && !isRecordingMode(this._mode)) {
+            // Stop any running playback before recording
+            this._recorder.resume();
+            this._crx.player.stop().catch(() => {});
+            this._actions = [];
+            this._recorderSources = [];
+            this._addInitialNavigations();
+            this._updateRecorderSources();
           }
+          this._recorder.setMode(params.mode);
           break;
+        }
       }
 
       this.emit('event', { event, params });
@@ -282,30 +407,58 @@ export class CrxRecorderApp extends EventEmitter {
     }
 
     const source = this._sources?.find(s => s.id === this._filename);
-    if (!source)
-      return [];
+    if (source) {
+      const actions = this._editedCode?.hasLoaded() && !this._editedCode.hasErrors() ? this._editedCode.actions() : this._recordedActions;
 
-    const actions = this._editedCode?.hasLoaded() && !this._editedCode.hasErrors() ? this._editedCode.actions() : this._recordedActions;
+      const { header } = source;
+      const languageGenerator = [...languageSet()].find(l => l.id === this._filename)!;
+      // we generate actions here to have a one-to-one mapping between actions and text
+      // (source actions are filtered, only non-empty actions are included)
+      const actionTexts = actions.map(a => languageGenerator.generateAction(a));
 
-    const { header } = source;
-    const languageGenerator = [...languageSet()].find(l => l.id === this._filename)!;
-    // we generate actions here to have a one-to-one mapping between actions and text
-    // (source actions are filtered, only non-empty actions are included)
-    const actionTexts = actions.map(a => languageGenerator.generateAction(a));
+      const sourceLine = (index: number) => {
+        const numLines = (str?: string) => str ? str.split(/\r?\n/).length : 0;
+        return numLines(header) + numLines(actionTexts.slice(0, index).filter(Boolean).join('\n')) + 1;
+      };
 
-    const sourceLine = (index: number) => {
-      const numLines = (str?: string) => str ? str.split(/\r?\n/).length : 0;
-      return numLines(header) + numLines(actionTexts.slice(0, index).filter(Boolean).join('\n')) + 1;
-    };
+      return actions.map((action, index) => ({
+        ...action,
+        location: {
+          file: this._filename!,
+          line: sourceLine(index),
+          column: 1
+        }
+      }));
+    }
 
-    return actions.map((action, index) => ({
-      ...action,
-      location: {
-        file: this._filename!,
-        line: sourceLine(index),
-        column: 1
-      }
-    }));
+    // Fall back to actions collected from actionAdded events
+    if (this._actions.length > 0) {
+      const actions = collapseActions(this._actions);
+      const fileId = this._filename ?? 'playwright-test';
+      const recorderSource = this._recorderSources.find(s => s.id === fileId) ?? this._recorderSources[0];
+      const languageGenerator = [...languageSet()].find(l => l.id === fileId);
+      if (!recorderSource || !languageGenerator)
+        return actions as ActionInContextWithLocation[];
+
+      const { header } = recorderSource;
+      const actionTexts = actions.map(a => languageGenerator.generateAction(a));
+
+      const sourceLine = (index: number) => {
+        const numLines = (str?: string) => str ? str.split(/\r?\n/).length : 0;
+        return numLines(header) + numLines(actionTexts.slice(0, index).filter(Boolean).join('\n')) + 1;
+      };
+
+      return actions.map((action, index) => ({
+        ...action,
+        location: {
+          file: fileId,
+          line: sourceLine(index),
+          column: 1
+        }
+      }));
+    }
+
+    return [];
   }
 }
 

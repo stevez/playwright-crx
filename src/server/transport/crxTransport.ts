@@ -174,6 +174,17 @@ export class CrxTransport implements ConnectionTransport {
       const response = await this._send(debuggee, 'Target.getTargetInfo');
       targetInfo = response.targetInfo;
 
+      // In CRX, Target.getTargetInfo may return a targetId that differs from
+      // the main frame ID (e.g. after cross-process navigations). Use the
+      // actual frame ID from Page.getFrameTree so that _sessions lookup works.
+      try {
+        const { frameTree } = await this._send(debuggee, 'Page.getFrameTree');
+        if (frameTree?.frame?.id && frameTree.frame.id !== targetInfo.targetId)
+          targetInfo = { ...targetInfo, targetId: frameTree.frame.id };
+      } catch {
+        // Page.getFrameTree may fail for non-page targets, ignore.
+      }
+
       if (!this._defaultBrowserContextId) {
         const tab = await chrome.tabs.get(tabId);
         if (!tab.incognito)
