@@ -1,6 +1,6 @@
 {
-  "name": "playwright-crx",
-  "version": "0.15.0",
+  "name": "@playwright-repl/playwright-crx",
+  "version": "0.15.1",
   "engines": {
     "node": ">=18"
   },
@@ -8,6 +8,9 @@
     "name": "Rui Figueira"
   },
   "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "ci:pw:core-utils-bundle": "npm ci --prefix ./playwright/packages/playwright-core/bundles/utils",
     "ci:pw:core-zip-bundle": "npm ci --prefix ./playwright/packages/playwright-core/bundles/zip",
