@@ -10,6 +10,8 @@
 !test.d.ts
 !src/types/types.d.ts
 !playwright/packages/playwright-core/types/types.d.ts
+!playwright/packages/playwright-core/types/protocol.d.ts
+!playwright/packages/playwright-core/types/structs.d.ts
 !playwright/packages/playwright/types/test.d.ts
 # Include essentials.
 !README.md
