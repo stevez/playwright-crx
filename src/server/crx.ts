@@ -101,13 +101,21 @@ export class Crx extends SdkObject {
     const transport = this._transport!;
 
     if (incognito) {
-      if (this._incognitoCrxApplicationPromise)
-        throw new Error(`incognito crxApplication is already started`);
+      if (this._incognitoCrxApplicationPromise) {
+        const existing = await this._incognitoCrxApplicationPromise;
+        if (!existing._closed)
+          throw new Error(`incognito crxApplication is already started`);
+        this._incognitoCrxApplicationPromise = undefined;
+      }
       this._incognitoCrxApplicationPromise = this._startIncognitoCrxApplication(browser, transport, newContextOptions);
       return await this._incognitoCrxApplicationPromise;
     } else {
-      if (this._crxApplicationPromise)
-        throw new Error(`crxApplication is already started`);
+      if (this._crxApplicationPromise) {
+        const existing = await this._crxApplicationPromise;
+        if (!existing._closed)
+          throw new Error(`crxApplication is already started`);
+        this._crxApplicationPromise = undefined;
+      }
       this._crxApplicationPromise = this._startCrxApplication(browser, transport);
       return await this._crxApplicationPromise;
     }
@@ -179,7 +187,7 @@ export class CrxApplication extends SdkObject {
   readonly _context: CRBrowserContext;
   private _transport: CrxTransport;
   private _recorderApp?: CrxRecorderApp;
-  private _closed = false;
+  _closed = false;
 
   constructor(crx: Crx, context: CRBrowserContext, transport: CrxTransport) {
     super(context, 'crxApplication');
@@ -380,8 +388,12 @@ export class CrxApplication extends SdkObject {
       return;
 
     const pageOrError = await crPage._page.waitForInitializedOrError();
-    if (pageOrError instanceof Error)
-      throw pageOrError;
+    if (pageOrError instanceof Error) {
+      // Page initialization failed (e.g. frame detached) — detach transport directly
+      // so close() can still succeed and clear the singleton.
+      await this._transport.detach(targetId);
+      return;
+    }
 
     // ensure we don't have any injected highlights
     await Promise.all([

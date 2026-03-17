@@ -1,5 +1,7 @@
 # Playwright CRX
 
+> **Fork notice:** This is a fork of [nicolo-ribaudo/playwright-crx](https://github.com/nicolo-ribaudo/playwright-crx), published as [`@playwright-repl/playwright-crx`](https://www.npmjs.com/package/@playwright-repl/playwright-crx) for use with [playwright-repl](https://github.com/stevez/playwright-repl). It includes patches for tab-switching reliability (`chrome.debugger.attach` frame ID handling) and graceful detach recovery. See [CHANGELOG.md](./CHANGELOG.md) for details.
+
 This package contains the [Chrome Extensions](https://developer.chrome.com/docs/extensions/) flavor of the [Playwright](http://github.com/microsoft/playwright) library.
 
 For that, it relies on [`chrome.debugger`](https://developer.chrome.com/docs/extensions/reference/debugger/) to implement [playwright's `ConnectionTransport`](https://github.com/microsoft/playwright/blob/f8a30fb726bc35d4058a2d010b2ed5f6ca2409a3/packages/playwright-core/src/server/transport.ts#L54) interface.
