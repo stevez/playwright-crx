@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.3
+
+### Features
+
+- **feat: add `extendInjectedScript` public API** — Exposes `BrowserContext.extendInjectedScript` through the client API, enabling extensions to inject custom code into the utility world alongside Playwright's `InjectedScript`. This gives synchronous access to `generateSelectorSimple()`, `asLocator()`, ARIA APIs, and other internal functionality. Auto-installs on new pages and navigations.
+
 ## 0.15.2
 
 ### Bug Fixes
