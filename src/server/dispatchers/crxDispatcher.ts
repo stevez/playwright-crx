@@ -114,4 +114,8 @@ export class CrxApplicationDispatcher extends Dispatcher<CrxApplication, channel
   async run(params: channels.CrxApplicationRunParams): Promise<void> {
     await this._object.run(params.code, (params.page as PageDispatcher)?._object);
   }
+
+  async extendInjectedScript(params: channels.CrxApplicationExtendInjectedScriptParams): Promise<void> {
+    await this._object.extendInjectedScript(params.source, params.arg);
+  }
 }

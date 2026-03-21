@@ -182,6 +182,10 @@ export class CrxApplication extends ChannelOwner<channels.CrxApplicationChannel>
     return from<Page>((await this._channel.newPage(options ?? {})).page);
   }
 
+  async extendInjectedScript(source: string, arg?: any): Promise<void> {
+    await this._channel.extendInjectedScript({ source, arg });
+  }
+
   async close() {
     await this._channel.close();
   }

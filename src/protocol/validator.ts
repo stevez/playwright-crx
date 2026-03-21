@@ -169,3 +169,8 @@ scheme.CrxApplicationRunParams = tObject({
   code: tString,
 });
 scheme.CrxApplicationRunResult = tOptional(tObject({}));
+scheme.CrxApplicationExtendInjectedScriptParams = tObject({
+  source: tString,
+  arg: tOptional(tString),
+});
+scheme.CrxApplicationExtendInjectedScriptResult = tOptional(tObject({}));
