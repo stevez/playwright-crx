@@ -263,6 +263,10 @@ export class CrxApplication extends SdkObject {
     this._recorderApp?._recorder.setMode(mode);
   }
 
+  async extendInjectedScript(source: string, arg?: any) {
+    await this._context.extendInjectedScript(source, arg);
+  }
+
   async attach(tabId: number): Promise<Page> {
     const { targetId, browserContextId } = await this._transport.attach(tabId);
     const tab = await chrome.tabs.get(tabId);

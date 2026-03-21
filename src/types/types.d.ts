@@ -293,6 +293,18 @@ export interface CrxApplication {
   context(): BrowserContext;
 
   /**
+   * Injects custom code into the utility world alongside InjectedScript.
+   * The source must export a default function that returns a constructor.
+   * The constructor receives (injectedScript, arg) parameters, giving
+   * synchronous access to Playwright's selector generation, ARIA APIs, etc.
+   * Auto-installs on new pages and navigations.
+   *
+   * @param source JavaScript source code in module format.
+   * @param arg Optional argument passed to the constructor.
+   */
+  extendInjectedScript(source: string, arg?: any): Promise<void>;
+
+  /**
    * @param tabIdOrPage
    */
   detach(tabIdOrPage: number|Page): Promise<void>;
