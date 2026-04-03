@@ -20,13 +20,15 @@ import { colors } from 'playwright-core/lib/utils';
 import { addSuggestedRebaseline } from './rebase';
 import { WorkerHost } from './workerHost';
 import { serializeConfig } from '../common/ipc';
+import { addLocationAndSnippetToError } from '../reporters/internalReporter';
+import { serializeError } from '../util';
 
 import type { FailureTracker } from './failureTracker';
 import type { ProcessExitData } from './processHost';
 import type { TestGroup } from './testGroups';
 import type { TestError, TestResult, TestStep } from '../../types/testReporter';
 import type { FullConfigInternal } from '../common/config';
-import type { AttachmentPayload, DonePayload, RunPayload, SerializedConfig, StepBeginPayload, StepEndPayload, TeardownErrorsPayload, TestBeginPayload, TestEndPayload, TestOutputPayload } from '../common/ipc';
+import type { AttachmentPayload, DonePayload, RunPayload, SerializedConfig, StepBeginPayload, StepEndPayload, TeardownErrorsPayload, TestBeginPayload, TestEndPayload, TestOutputPayload, TestPausedPayload } from '../common/ipc';
 import type { Suite } from '../common/test';
 import type { TestCase } from '../common/test';
 import type { ReporterV2 } from '../reporters/reporterV2';
@@ -36,7 +38,8 @@ import type { RegisteredListener } from 'playwright-core/lib/utils';
 export type EnvByProjectId = Map<string, Record<string, string | undefined>>;
 
 export class Dispatcher {
-  private _workerSlots: { busy: boolean, worker?: WorkerHost, jobDispatcher?: JobDispatcher }[] = [];
+  // Worker slot is claimed when it has jobDispatcher assigned.
+  private _workerSlots: { worker?: WorkerHost, jobDispatcher?: JobDispatcher }[] = [];
   private _queue: TestGroup[] = [];
   private _workerLimitPerProjectId = new Map<string, number>();
   private _queuedOrRunningHashCount = new Map<string, number>();
@@ -67,7 +70,7 @@ export class Dispatcher {
       const projectIdWorkerLimit = this._workerLimitPerProjectId.get(job.projectId);
       if (!projectIdWorkerLimit)
         return index;
-      const runningWorkersWithSameProjectId = this._workerSlots.filter(w => w.busy && w.worker && w.worker.projectId() === job.projectId).length;
+      const runningWorkersWithSameProjectId = this._workerSlots.filter(w => w.jobDispatcher?.job.projectId === job.projectId).length;
       if (runningWorkersWithSameProjectId < projectIdWorkerLimit)
         return index;
     }
@@ -88,9 +91,9 @@ export class Dispatcher {
     const job = this._queue[jobIndex];
 
     // 2. Find a worker with the same hash, or just some free worker.
-    let workerIndex = this._workerSlots.findIndex(w => !w.busy && w.worker && w.worker.hash() === job.workerHash && !w.worker.didSendStop());
+    let workerIndex = this._workerSlots.findIndex(w => !w.jobDispatcher && w.worker && w.worker.hash() === job.workerHash && !w.worker.didSendStop());
     if (workerIndex === -1)
-      workerIndex = this._workerSlots.findIndex(w => !w.busy);
+      workerIndex = this._workerSlots.findIndex(w => !w.jobDispatcher);
     if (workerIndex === -1) {
       // No workers available, bail out.
       return;
@@ -98,8 +101,7 @@ export class Dispatcher {
 
     // 3. Claim both the job and the worker slot.
     this._queue.splice(jobIndex, 1);
-    const jobDispatcher = new JobDispatcher(job, this._reporter, this._failureTracker, () => this.stop().catch(() => {}));
-    this._workerSlots[workerIndex].busy = true;
+    const jobDispatcher = new JobDispatcher(job, this._config, this._reporter, this._failureTracker, () => this.stop().catch(() => {}));
     this._workerSlots[workerIndex].jobDispatcher = jobDispatcher;
 
     // 4. Run the job. This is the only async operation.
@@ -107,7 +109,6 @@ export class Dispatcher {
 
       // 5. Release the worker slot.
       this._workerSlots[workerIndex].jobDispatcher = undefined;
-      this._workerSlots[workerIndex].busy = false;
 
       // 6. Check whether we are done or should schedule another job.
       this._checkFinished();
@@ -174,7 +175,7 @@ export class Dispatcher {
       return;
 
     // Make sure all workers have finished the current job.
-    if (this._workerSlots.some(w => w.busy))
+    if (this._workerSlots.some(w => !!w.jobDispatcher))
       return;
 
     this._finished.resolve();
@@ -205,7 +206,7 @@ export class Dispatcher {
       void this.stop();
     // 1. Allocate workers.
     for (let i = 0; i < this._config.config.workers; i++)
-      this._workerSlots.push({ busy: false });
+      this._workerSlots.push({});
     // 2. Schedule enough jobs.
     for (let i = 0; i < this._workerSlots.length; i++)
       this._scheduleJob();
@@ -218,7 +219,14 @@ export class Dispatcher {
   _createWorker(testGroup: TestGroup, parallelIndex: number, loaderData: SerializedConfig) {
     const projectConfig = this._config.projects.find(p => p.id === testGroup.projectId)!;
     const outputDir = projectConfig.project.outputDir;
-    const worker = new WorkerHost(testGroup, parallelIndex, loaderData, this._extraEnvByProjectId.get(testGroup.projectId) || {}, outputDir);
+    const worker = new WorkerHost(testGroup, {
+      parallelIndex,
+      config: loaderData,
+      extraEnv: this._extraEnvByProjectId.get(testGroup.projectId) || {},
+      outputDir,
+      pauseOnError: this._failureTracker.pauseOnError(),
+      pauseAtEnd: this._failureTracker.pauseAtEnd(projectConfig),
+    });
     const handleOutput = (params: TestOutputPayload) => {
       const chunk = chunkFromParams(params);
       if (worker.didFail()) {
@@ -271,6 +279,7 @@ class JobDispatcher {
   jobResult = new ManualPromise<{ newJob?: TestGroup, didFail: boolean }>();
 
   readonly job: TestGroup;
+  private _config: FullConfigInternal;
   private _reporter: ReporterV2;
   private _failureTracker: FailureTracker;
   private _stopCallback: () => void;
@@ -283,8 +292,9 @@ class JobDispatcher {
   private _workerIndex = 0;
   private _currentlyRunning: { test: TestCase, result: TestResult } | undefined;
 
-  constructor(job: TestGroup, reporter: ReporterV2, failureTracker: FailureTracker, stopCallback: () => void) {
+  constructor(job: TestGroup, config: FullConfigInternal, reporter: ReporterV2, failureTracker: FailureTracker, stopCallback: () => void) {
     this.job = job;
+    this._config = config;
     this._reporter = reporter;
     this._failureTracker = failureTracker;
     this._stopCallback = stopCallback;
@@ -459,7 +469,7 @@ class JobDispatcher {
     // - there are no remaining
     // - we are here not because something failed
     // - no unrecoverable worker error
-    if (!this._remainingByTestId.size && !this._failedTests.size && !params.fatalErrors.length && !params.skipTestsDueToSetupFailure.length && !params.fatalUnknownTestIds && !params.unexpectedExitError) {
+    if (!this._remainingByTestId.size && !this._failedTests.size && !params.fatalErrors.length && !params.skipTestsDueToSetupFailure.length && !params.fatalUnknownTestIds && !params.unexpectedExitError && !params.stoppedDueToUnhandledErrorInTestFail) {
       this._finished({ didFail: false });
       return;
     }
@@ -567,9 +577,42 @@ class JobDispatcher {
       eventsHelper.addEventListener(worker, 'stepBegin', this._onStepBegin.bind(this)),
       eventsHelper.addEventListener(worker, 'stepEnd', this._onStepEnd.bind(this)),
       eventsHelper.addEventListener(worker, 'attach', this._onAttach.bind(this)),
+      eventsHelper.addEventListener(worker, 'testPaused', this._onTestPaused.bind(this, worker)),
       eventsHelper.addEventListener(worker, 'done', this._onDone.bind(this)),
       eventsHelper.addEventListener(worker, 'exit', this.onExit.bind(this)),
     ];
+  }
+
+  private _onTestPaused(worker: WorkerHost, params: TestPausedPayload) {
+    const data = this._dataByTestId.get(params.testId);
+    if (!data)
+      return;
+
+    const { result, test } = data;
+
+    const sendMessage = async (message: { request: any }) => {
+      try {
+        if (this.jobResult.isDone())
+          throw new Error('Test has already stopped');
+        const response = await worker.sendCustomMessage({ testId: test.id, request: message.request });
+        if (response.error)
+          addLocationAndSnippetToError(this._config.config, response.error);
+        return response;
+      } catch (e) {
+        const error = serializeError(e);
+        addLocationAndSnippetToError(this._config.config, error);
+        return { response: undefined, error };
+      }
+    };
+
+    result.status = params.status;
+    result.errors = params.errors;
+    result.error = result.errors[0];
+
+    void this._reporter.onTestPaused?.(test, result).then(() => {
+      worker.sendResume({});
+    });
+    this._failureTracker.onTestPaused?.({ ...params, sendMessage });
   }
 
   skipWholeJob(): boolean {
@@ -586,6 +629,8 @@ class JobDispatcher {
         const result = test._appendTestResult();
         this._reporter.onTestBegin?.(test, result);
         result.status = 'skipped';
+        // This must mirror _onTestEnd() above
+        result.annotations = [...test.annotations];
         this._reportTestEnd(test, result);
       }
       return true;

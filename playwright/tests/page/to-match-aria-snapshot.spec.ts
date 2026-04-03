@@ -148,14 +148,16 @@ test('checked attribute', async ({ page }) => {
     const e = await expect(page.locator('body')).toMatchAriaSnapshot(`
       - checkbox [checked=false]
     `, { timeout: 1000 }).catch(e => e);
-    expect(stripAnsi(e.message)).toContain('Timed out 1000ms waiting for expect');
+    expect(stripAnsi(e.message)).toContain('expect(locator).toMatchAriaSnapshot(expected) failed');
+    expect(stripAnsi(e.message)).toContain('Timeout:  1000ms');
   }
 
   {
     const e = await expect(page.locator('body')).toMatchAriaSnapshot(`
       - checkbox [checked=mixed]
     `, { timeout: 1000 }).catch(e => e);
-    expect(stripAnsi(e.message)).toContain('Timed out 1000ms waiting for expect');
+    expect(stripAnsi(e.message)).toContain('expect(locator).toMatchAriaSnapshot(expected) failed');
+    expect(stripAnsi(e.message)).toContain('Timeout:  1000ms');
   }
 
   {
@@ -187,7 +189,8 @@ test('disabled attribute', async ({ page }) => {
     const e = await expect(page.locator('body')).toMatchAriaSnapshot(`
       - button [disabled=false]
     `, { timeout: 1000 }).catch(e => e);
-    expect(stripAnsi(e.message)).toContain('Timed out 1000ms waiting for expect');
+    expect(stripAnsi(e.message)).toContain('expect(locator).toMatchAriaSnapshot(expected) failed');
+    expect(stripAnsi(e.message)).toContain('Timeout:  1000ms');
   }
 
   {
@@ -219,7 +222,8 @@ test('expanded attribute', async ({ page }) => {
     const e = await expect(page.locator('body')).toMatchAriaSnapshot(`
       - button [expanded=false]
     `, { timeout: 1000 }).catch(e => e);
-    expect(stripAnsi(e.message)).toContain('Timed out 1000ms waiting for expect');
+    expect(stripAnsi(e.message)).toContain('expect(locator).toMatchAriaSnapshot(expected) failed');
+    expect(stripAnsi(e.message)).toContain('Timeout:  1000ms');
   }
 
   {
@@ -247,7 +251,8 @@ test('level attribute', async ({ page }) => {
     const e = await expect(page.locator('body')).toMatchAriaSnapshot(`
       - heading [level=3]
     `, { timeout: 1000 }).catch(e => e);
-    expect(stripAnsi(e.message)).toContain('Timed out 1000ms waiting for expect');
+    expect(stripAnsi(e.message)).toContain('expect(locator).toMatchAriaSnapshot(expected) failed');
+    expect(stripAnsi(e.message)).toContain('Timeout:  1000ms');
   }
 
   {
@@ -279,7 +284,8 @@ test('pressed attribute', async ({ page }) => {
     const e = await expect(page.locator('body')).toMatchAriaSnapshot(`
       - button [pressed=false]
     `, { timeout: 1000 }).catch(e => e);
-    expect(stripAnsi(e.message)).toContain('Timed out 1000ms waiting for expect');
+    expect(stripAnsi(e.message)).toContain('expect(locator).toMatchAriaSnapshot(expected) failed');
+    expect(stripAnsi(e.message)).toContain('Timeout:  1000ms');
   }
 
   // Test for 'mixed' state
@@ -295,7 +301,8 @@ test('pressed attribute', async ({ page }) => {
     const e = await expect(page.locator('body')).toMatchAriaSnapshot(`
       - button [pressed=true]
     `, { timeout: 1000 }).catch(e => e);
-    expect(stripAnsi(e.message)).toContain('Timed out 1000ms waiting for expect');
+    expect(stripAnsi(e.message)).toContain('expect(locator).toMatchAriaSnapshot(expected) failed');
+    expect(stripAnsi(e.message)).toContain('Timeout:  1000ms');
   }
 
   {
@@ -312,26 +319,57 @@ test('selected attribute', async ({ page }) => {
       <tr aria-selected="true">
         <td>Row</td>
       </tr>
+      <tr>
+        <td>Row 2</td>
+      </tr>
     </table>
   `);
 
   await expect(page.locator('body')).toMatchAriaSnapshot(`
     - row
+    - row
   `);
 
   await expect(page.locator('body')).toMatchAriaSnapshot(`
     - row [selected]
+    - row
   `);
 
   await expect(page.locator('body')).toMatchAriaSnapshot(`
     - row [selected=true]
+    - row [selected=false]
+  `);
+
+  await expect(page.locator('table')).toMatchAriaSnapshot(`
+    - table:
+      - rowgroup:
+        - row [selected=true]
+        - row [selected=false]
   `);
 
   {
     const e = await expect(page.locator('body')).toMatchAriaSnapshot(`
       - row [selected=false]
+      - row [selected=false]
     `, { timeout: 1000 }).catch(e => e);
-    expect(stripAnsi(e.message)).toContain('Timed out 1000ms waiting for expect');
+    expect(stripAnsi(e.message)).toContain(`expect(locator).toMatchAriaSnapshot(expected) failed
+
+Locator: locator('body')
+Timeout: 1000ms
+- Expected  - 2
++ Received  + 6
+
+- - row [selected=false]
+- - row [selected=false]
++ - table:
++   - rowgroup:
++     - row "Row" [selected]:
++       - cell "Row"
++     - row \"Row 2\":
++       - cell \"Row 2\"
+
+Call log:
+`);
   }
 
   {
@@ -407,6 +445,7 @@ test('expected formatter', async ({ page }) => {
       <header>
         <h1>todos</h1>
         <input placeholder="What needs to be done?">
+        <button>Time 15:30</button>
       </header>
     </div>`);
   const error = await expect(page.locator('body')).toMatchAriaSnapshot(`
@@ -414,16 +453,24 @@ test('expected formatter', async ({ page }) => {
     - textbox "Wrong text"
   `, { timeout: 1 }).catch(e => e);
 
-  expect(stripAnsi(error.message)).toContain(`
+  // Note that error message should not contain any regular expressions,
+  // unlike the baseline generated by --update-snapshots.
+  expect(stripAnsi(error.message)).toContain(`expect(locator).toMatchAriaSnapshot(expected) failed
+
 Locator: locator('body')
+Timeout: 1ms
 - Expected  - 2
-+ Received  + 3
++ Received  + 4
 
 - - heading "todos"
 - - textbox "Wrong text"
 + - banner:
 +   - heading "todos" [level=1]
-+   - textbox "What needs to be done?"`);
++   - textbox "What needs to be done?"
++   - button "Time 15:30"
+
+Call log:
+`);
 });
 
 test('should unpack escaped names', async ({ page }) => {
@@ -716,7 +763,7 @@ test('should detect unexpected children: equal', async ({ page }) => {
       - listitem: "Three"
   `, { timeout: 1000 }).catch(e => e);
 
-  expect(e.message).toContain('Timed out 1000ms waiting');
+  expect(stripAnsi(e.message)).toContain('expect(locator).toMatchAriaSnapshot(expected) failed');
   expect(stripAnsi(e.message)).toContain('+   - listitem: Two');
 });
 
@@ -755,7 +802,7 @@ test('should detect unexpected children: deep-equal', async ({ page }) => {
           - listitem: 1.1
   `, { timeout: 1000 }).catch(e => e);
 
-  expect(e.message).toContain('Timed out 1000ms waiting');
+  expect(stripAnsi(e.message)).toContain('expect(locator).toMatchAriaSnapshot(expected) failed');
   expect(stripAnsi(e.message)).toContain('+       - listitem: \"1.2\"');
 });
 
@@ -779,7 +826,7 @@ test('should allow restoring contain mode inside deep-equal', async ({ page }) =
           - listitem: 1.1
   `, { timeout: 1000 }).catch(e => e);
 
-  expect(e.message).toContain('Timed out 1000ms waiting');
+  expect(stripAnsi(e.message)).toContain('expect(locator).toMatchAriaSnapshot(expected) failed');
   expect(stripAnsi(e.message)).toContain('+       - listitem: \"1.2\"');
 
   await expect(page.locator('body')).toMatchAriaSnapshot(`
@@ -790,4 +837,44 @@ test('should allow restoring contain mode inside deep-equal', async ({ page }) =
           - /children: contain
           - listitem: 1.1
   `);
+});
+
+test('top-level deep-equal', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36456' } }, async ({ page }) => {
+  await page.setContent(`
+    <ul>
+      <li>
+        <ul>
+          <li>1.1</li>
+          <li>1.2</li>
+        </ul>
+      </li>
+    </ul>
+  `);
+
+  const error = await expect(page.locator('body')).toMatchAriaSnapshot(`
+    - /children: deep-equal
+    - list
+  `, { timeout: 1000 }).catch(e => e);
+
+  expect(stripAnsi(error.message)).toContain(`
+- - /children: deep-equal
+- - list
++ - list:
++   - listitem:
++     - list:
++       - listitem: "1.1"
++       - listitem: "1.2"
+  `.trim());
+});
+
+
+test('treat bad regex as a string', async ({ page }) => {
+  await page.setContent(`<a href="/foo">Log in</a>`);
+  const error = await expect(page.locator('body')).toMatchAriaSnapshot(`
+    - link "Log in":
+      - /url: /[a/
+  `, { timeout: 1 }).catch(e => e);
+  expect(stripAnsi(error.message)).toContain('expect(locator).toMatchAriaSnapshot(expected) failed');
+  expect(stripAnsi(error.message)).toContain('-   - /url: /[a/');
+  expect(stripAnsi(error.message)).toContain('+   - /url: /foo');
 });

@@ -28,5 +28,4 @@ export { createPlaywright } from './playwright';
 
 export type { DispatcherScope } from './dispatchers/dispatcher';
 export type { Playwright } from './playwright';
-export { installRootRedirect, openTraceInBrowser, openTraceViewerApp, runTraceViewerApp, startTraceViewerServer } from './trace/viewer/traceViewer';
-export { serverSideCallMetadata } from './instrumentation';
+export { installRootRedirect, openTraceInBrowser, openTraceViewerApp, startTraceViewerServer, runTraceViewerApp } from './trace/viewer/traceViewer';

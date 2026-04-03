@@ -193,7 +193,7 @@ export class HarTracer {
   private _onAPIRequest(event: APIRequestEvent) {
     if (!this._shouldIncludeEntryWithUrl(event.url.toString()))
       return;
-    const harEntry = createHarEntry(event.method, event.url, undefined, this._options);
+    const harEntry = createHarEntry(undefined, event.method, event.url, undefined, this._options);
     harEntry._apiRequest = true;
     if (!this._options.omitCookies)
       harEntry.request.cookies = event.cookies;
@@ -265,9 +265,7 @@ export class HarTracer {
       return;
 
     const pageEntry = this._createPageEntryIfNeeded(page);
-    const harEntry = createHarEntry(request.method(), url, request.frame()?.guid, this._options);
-    if (pageEntry)
-      harEntry.pageref = pageEntry.id;
+    const harEntry = createHarEntry(pageEntry?.id, request.method(), url, request.frame()?.guid, this._options);
     this._recordRequestHeadersAndCookies(harEntry, request.headers());
     harEntry.request.postData = this._postDataForRequest(request, this._options.content);
     if (!this._options.omitSizes)
@@ -325,10 +323,6 @@ export class HarTracer {
       }));
     }
 
-    const httpVersion = response.httpVersion();
-    harEntry.request.httpVersion = httpVersion;
-    harEntry.response.httpVersion = httpVersion;
-
     const compressionCalculationBarrier = this._options.omitSizes ? undefined : {
       _encodedBodySize: -1,
       _decodedBodySize: -1,
@@ -367,6 +361,11 @@ export class HarTracer {
         this._delegate.onEntryFinished(harEntry);
     });
     this._addBarrier(page || request.serviceWorker(), promise);
+
+    this._addBarrier(page || request.serviceWorker(), response.httpVersion().then(httpVersion => {
+      harEntry.request.httpVersion = httpVersion;
+      harEntry.response.httpVersion = httpVersion;
+    }));
 
     // Response end timing is only available after the response event was received.
     const timing = response.timing();
@@ -454,7 +453,7 @@ export class HarTracer {
     harEntry.response = {
       status: response.status(),
       statusText: response.statusText(),
-      httpVersion: response.httpVersion(),
+      httpVersion: FALLBACK_HTTP_VERSION,
       // These are bad values that will be overwritten below.
       cookies: [],
       headers: [],
@@ -608,10 +607,9 @@ export class HarTracer {
 
 }
 
-function createHarEntry(method: string, url: URL, frameref: string | undefined, options: HarTracerOptions): har.Entry {
+function createHarEntry(pageRef: string | undefined, method: string, url: URL, frameref: string | undefined, options: HarTracerOptions): har.Entry {
   const harEntry: har.Entry = {
-    _frameref: options.includeTraceInfo ? frameref : undefined,
-    _monotonicTime: options.includeTraceInfo ? monotonicTime() : undefined,
+    pageref: pageRef,
     startedDateTime: new Date().toISOString(),
     time: -1,
     request: {
@@ -645,6 +643,8 @@ function createHarEntry(method: string, url: URL, frameref: string | undefined, 
       wait: -1,
       receive: -1
     },
+    _frameref: options.includeTraceInfo ? frameref : undefined,
+    _monotonicTime: options.includeTraceInfo ? monotonicTime() : undefined,
   };
   return harEntry;
 }

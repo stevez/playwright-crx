@@ -24,9 +24,11 @@ import { SocksProxy } from '../../packages/playwright-core/lib/server/utils/sock
 // Certain browsers perform telemetry requests which we want to ignore.
 const kConnectHostsToIgnore = new Set([
   'www.bing.com:443',
+  'www.google.com:443',
 ]);
 
 export class TestProxy {
+  readonly HOST: string;
   readonly PORT: number;
   readonly URL: string;
 
@@ -47,6 +49,7 @@ export class TestProxy {
   private constructor(port: number) {
     this.PORT = port;
     this.URL = `http://localhost:${port}`;
+    this.HOST = new URL(this.URL).host;
     this._server = createProxy();
     this._server.on('connection', socket => this._onSocket(socket));
   }
@@ -59,7 +62,7 @@ export class TestProxy {
     await new Promise(x => this._server.close(x));
   }
 
-  forwardTo(port: number, options?: { allowConnectRequests?: boolean, prefix?: string, preserveHostname?: boolean }) {
+  forwardTo(port: number, options?: { allowConnectRequests?: boolean, removePrefix?: string, preserveHostname?: boolean }) {
     this._prependHandler('request', (req: IncomingMessage) => {
       this.requestUrls.push(req.url);
       const url = new URL(req.url, `http://${req.headers.host}`);
@@ -67,8 +70,8 @@ export class TestProxy {
         url.port = '' + port;
       else
         url.host = `127.0.0.1:${port}`;
-      if (options?.prefix)
-        url.pathname = url.pathname.replace(options.prefix, '');
+      if (options?.removePrefix)
+        url.pathname = url.pathname.replace(options.removePrefix, '');
       req.url = url.toString();
     });
     this._prependHandler('connect', (req: IncomingMessage) => {
@@ -86,8 +89,8 @@ export class TestProxy {
         url.port = '' + port;
       else
         url.host = `127.0.0.1:${port}`;
-      if (options?.prefix)
-        url.pathname = url.pathname.replace(options.prefix, '');
+      if (options?.removePrefix)
+        url.pathname = url.pathname.replace(options.removePrefix, '');
       if (url.protocol === 'ws:')
         url.protocol = 'http:';
       else if (url.protocol === 'wss:')

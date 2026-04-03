@@ -16,22 +16,20 @@
  */
 
 import fs from 'fs';
-import path from 'path';
 
 import { createGuid } from './utils/crypto';
-import { debugMode } from './utils/debug';
+import { debugMode, isUnderTest } from './utils/debug';
 import { Clock } from './clock';
 import { Debugger } from './debugger';
 import { DialogManager } from './dialog';
 import { BrowserContextAPIRequestContext } from './fetch';
-import { mkdirIfNeeded } from './utils/fileUtils';
+import { rewriteErrorMessage } from '../utils/isomorphic/stackTrace';
 import { HarRecorder } from './har/harRecorder';
 import { helper } from './helper';
-import { SdkObject, serverSideCallMetadata } from './instrumentation';
+import { EventMap, SdkObject } from './instrumentation';
 import * as network from './network';
 import { InitScript } from './page';
 import { Page, PageBinding } from './page';
-import { Recorder } from './recorder';
 import { RecorderApp } from './recorder/recorderApp';
 import { Selectors } from './selectors';
 import { Tracing } from './trace/recorder/tracing';
@@ -39,36 +37,57 @@ import * as rawStorageSource from '../generated/storageScriptSource';
 
 import type { Artifact } from './artifact';
 import type { Browser, BrowserOptions } from './browser';
+import type { ConsoleMessage } from './console';
 import type { Download } from './download';
 import type * as frames from './frames';
-import type { CallMetadata } from './instrumentation';
-import type { Progress, ProgressController } from './progress';
+import type { Progress } from './progress';
 import type { ClientCertificatesProxy } from './socksClientCertificatesInterceptor';
 import type { SerializedStorage } from '@injected/storageScript';
 import type * as types from './types';
 import type * as channels from '@protocol/channels';
 
-export abstract class BrowserContext extends SdkObject {
-  static Events = {
-    Console: 'console',
-    Close: 'close',
-    Page: 'page',
-    // Can't use just 'error' due to node.js special treatment of error events.
-    // @see https://nodejs.org/api/events.html#events_error_events
-    PageError: 'pageerror',
-    Request: 'request',
-    Response: 'response',
-    RequestFailed: 'requestfailed',
-    RequestFinished: 'requestfinished',
-    RequestAborted: 'requestaborted',
-    RequestFulfilled: 'requestfulfilled',
-    RequestContinued: 'requestcontinued',
-    BeforeClose: 'beforeclose',
-    VideoStarted: 'videostarted',
-  };
+const BrowserContextEvent = {
+  Console: 'console',
+  Close: 'close',
+  Page: 'page',
+  // Can't use just 'error' due to node.js special treatment of error events.
+  // @see https://nodejs.org/api/events.html#events_error_events
+  PageError: 'pageerror',
+  Request: 'request',
+  Response: 'response',
+  RequestFailed: 'requestfailed',
+  RequestFinished: 'requestfinished',
+  RequestAborted: 'requestaborted',
+  RequestFulfilled: 'requestfulfilled',
+  RequestContinued: 'requestcontinued',
+  BeforeClose: 'beforeclose',
+  RecorderEvent: 'recorderevent',
+  PageClosed: 'pageclosed',
+  InternalFrameNavigatedToNewDocument: 'internalframenavigatedtonewdocument',
+} as const;
+
+export type BrowserContextEventMap = {
+  [BrowserContextEvent.Console]: [message: ConsoleMessage];
+  [BrowserContextEvent.Close]: [];
+  [BrowserContextEvent.Page]: [page: Page];
+  [BrowserContextEvent.PageError]: [error: Error, page: Page];
+  [BrowserContextEvent.Request]: [request: network.Request];
+  [BrowserContextEvent.Response]: [response: network.Response];
+  [BrowserContextEvent.RequestFailed]: [request: network.Request];
+  [BrowserContextEvent.RequestFinished]: [requestAndResponse: { request: network.Request, response: network.Response | null }];
+  [BrowserContextEvent.RequestAborted]: [request: network.Request];
+  [BrowserContextEvent.RequestFulfilled]: [request: network.Request];
+  [BrowserContextEvent.RequestContinued]: [request: network.Request];
+  [BrowserContextEvent.BeforeClose]: [];
+  [BrowserContextEvent.RecorderEvent]: [event: { event: 'actionAdded' | 'actionUpdated' | 'signalAdded', data: any, page: Page, code: string }];
+  [BrowserContextEvent.PageClosed]: [page: Page];
+  [BrowserContextEvent.InternalFrameNavigatedToNewDocument]: [frame: frames.Frame, page: Page];
+};
+
+export abstract class BrowserContext<EM extends EventMap = EventMap> extends SdkObject<BrowserContextEventMap | EM> {
+  static Events = BrowserContextEvent;
 
   readonly _pageBindings = new Map<string, PageBinding>();
-  readonly _activeProgressControllers = new Set<ProgressController>();
   readonly _options: types.BrowserContextOptions;
   readonly requestInterceptors: network.RouteHandler[] = [];
   private _isPersistentContext: boolean;
@@ -86,7 +105,7 @@ export abstract class BrowserContext extends SdkObject {
   readonly fetchRequest: BrowserContextAPIRequestContext;
   private _customCloseHandler?: () => Promise<any>;
   readonly _tempDirs: string[] = [];
-  private _settingStorageState = false;
+  private _creatingStorageStatePage = false;
   bindingsInitScript?: InitScript;
   initScripts: InitScript[] = [];
   private _routesInFlight = new Set<network.Route>();
@@ -94,8 +113,9 @@ export abstract class BrowserContext extends SdkObject {
   _closeReason: string | undefined;
   readonly clock: Clock;
   _clientCertificatesProxy: ClientCertificatesProxy | undefined;
-  private _playwrightBindingExposed = false;
+  private _playwrightBindingExposed?: Promise<void>;
   readonly dialogManager: DialogManager;
+  private _consoleApiExposed = false;
 
   constructor(browser: Browser, options: types.BrowserContextOptions, browserContextId: string | undefined) {
     super(browser, 'browser-context');
@@ -127,21 +147,25 @@ export abstract class BrowserContext extends SdkObject {
     // Debugger will pause execution upon page.pause in headed mode.
     this._debugger = new Debugger(this);
 
-    // When PWDEBUG=1, show inspector for each context.
-    if (debugMode() === 'inspector')
-      await Recorder.show(this, RecorderApp.factory(this), { pauseOnNextStatement: true });
-
     // When paused, show inspector.
-    if (this._debugger.isPaused())
-      Recorder.showInspectorNoReply(this, RecorderApp.factory(this));
+    const shouldEnableDebugger = !this.attribution.playwright.options.isServer && (isUnderTest() || !!this._browser.options.headful);
+    if (shouldEnableDebugger) {
+      this._debugger.setPauseAt();
+      this._debugger.on(Debugger.Events.PausedStateChanged, () => {
+        if (this._debugger.isPaused())
+          RecorderApp.showInspectorNoReply(this);
+      });
+    }
 
-    this._debugger.on(Debugger.Events.PausedStateChanged, () => {
-      if (this._debugger.isPaused())
-        Recorder.showInspectorNoReply(this, RecorderApp.factory(this));
-    });
+    // When PWDEBUG=1, show inspector for each context.
+    if (debugMode() === 'inspector') {
+      this._debugger.setPauseAt({ next: true });
+      await RecorderApp.show(this, { pauseOnNextStatement: true });
+    }
 
     if (debugMode() === 'console')
-      await this.extendInjectedScript('function Console(injectedScript) { injectedScript.consoleApi.install(); }');
+      await this.exposeConsoleApi();
+
     if (this._options.serviceWorkers === 'block')
       await this.addInitScript(`\nif (navigator.serviceWorker) navigator.serviceWorker.register = async () => { console.warn('Service Worker registration blocked by Playwright'); };\n`);
 
@@ -153,24 +177,20 @@ export abstract class BrowserContext extends SdkObject {
     return this._debugger;
   }
 
-  async _ensureVideosPath() {
-    if (this._options.recordVideo)
-      await mkdirIfNeeded(path.join(this._options.recordVideo.dir, 'dummy'));
+  async exposeConsoleApi() {
+    if (this._consoleApiExposed)
+      return;
+    this._consoleApiExposed = true;
+    await this.extendInjectedScript(`
+      function installConsoleApi(injectedScript) { injectedScript.consoleApi.install(); }
+      module.exports = { default: () => installConsoleApi };
+    `);
   }
 
   canResetForReuse(): boolean {
     if (this._closedStatus !== 'open')
       return false;
     return true;
-  }
-
-  async stopPendingOperations(reason: string) {
-    // When using context reuse, stop pending operations to gracefully terminate all the actions
-    // with a user-friendly error message containing operation log.
-    for (const controller of this._activeProgressControllers)
-      controller.abort(new Error(reason));
-    // Let rejections in microtask generate events before returning.
-    await new Promise(f => setTimeout(f, 0));
   }
 
   static reusableContextHash(params: channels.BrowserNewContextForReuseParams): string {
@@ -190,8 +210,8 @@ export abstract class BrowserContext extends SdkObject {
     return JSON.stringify(paramsCopy);
   }
 
-  async resetForReuse(metadata: CallMetadata, params: channels.BrowserNewContextForReuseParams | null) {
-    await this.tracing.resetForReuse();
+  async resetForReuse(progress: Progress, params: channels.BrowserNewContextForReuseParams | null) {
+    await this.tracing.resetForReuse(progress);
 
     if (params) {
       for (const key of paramsThatAllowContextReuse)
@@ -202,32 +222,26 @@ export abstract class BrowserContext extends SdkObject {
 
     // Close extra pages early.
     let page: Page | undefined = this.pages()[0];
-    const [, ...otherPages] = this.pages();
+    const otherPages = this.possiblyUninitializedPages().filter(p => p !== page);
     for (const p of otherPages)
-      await p.close(metadata);
+      await p.close();
     if (page && page.hasCrashed()) {
-      await page.close(metadata);
+      await page.close();
       page = undefined;
     }
 
     // Navigate to about:blank first to ensure no page scripts are running after this point.
-    await page?.mainFrame().goto(metadata, 'about:blank', { timeout: 0 });
+    await page?.mainFrame().gotoImpl(progress, 'about:blank', {});
 
-    await this._resetStorage();
-    await this.clock.resetForReuse();
-    // TODO: following can be optimized to not perform noops.
-    if (this._options.permissions)
-      await this.grantPermissions(this._options.permissions);
-    else
-      await this.clearPermissions();
-    await this.setExtraHTTPHeaders(this._options.extraHTTPHeaders || []);
-    await this.setGeolocation(this._options.geolocation);
-    await this.setOffline(!!this._options.offline);
-    await this.setUserAgent(this._options.userAgent);
-    await this.clearCache();
-    await this._resetCookies();
+    // Note: we only need to reset properties from the "paramsThatAllowContextReuse" list.
+    // All other properties force a new context.
+    await this.clock.uninstall(progress);
+    await progress.race(this.setUserAgent(this._options.userAgent));
+    await progress.race(this.doUpdateDefaultEmulatedMedia());
+    await progress.race(this.doUpdateDefaultViewport());
+    await this.setStorageState(progress, this._options.storageState, 'resetForReuse');
 
-    await page?.resetForReuse(metadata);
+    await page?.resetForReuse(progress);
   }
 
   _browserClosed() {
@@ -256,12 +270,10 @@ export abstract class BrowserContext extends SdkObject {
 
   // BrowserContext methods.
   abstract possiblyUninitializedPages(): Page[];
-  abstract doCreateNewPage(markAsServerSideOnly?: boolean): Promise<Page>;
+  abstract doCreateNewPage(): Promise<Page>;
   abstract addCookies(cookies: channels.SetNetworkCookie[]): Promise<void>;
   abstract setGeolocation(geolocation?: types.Geolocation): Promise<void>;
-  abstract setExtraHTTPHeaders(headers: types.HeadersArray): Promise<void>;
   abstract setUserAgent(userAgent: string | undefined): Promise<void>;
-  abstract setOffline(offline: boolean): Promise<void>;
   abstract cancelDownload(uuid: string): Promise<void>;
   abstract clearCache(): Promise<void>;
   protected abstract doGetCookies(urls: string[]): Promise<channels.NetworkCookie[]>;
@@ -271,7 +283,11 @@ export abstract class BrowserContext extends SdkObject {
   protected abstract doSetHTTPCredentials(httpCredentials?: types.Credentials): Promise<void>;
   protected abstract doAddInitScript(initScript: InitScript): Promise<void>;
   protected abstract doRemoveInitScripts(initScripts: InitScript[]): Promise<void>;
+  protected abstract doUpdateExtraHTTPHeaders(): Promise<void>;
+  protected abstract doUpdateOffline(): Promise<void>;
   protected abstract doUpdateRequestInterception(): Promise<void>;
+  protected abstract doUpdateDefaultViewport(): Promise<void>;
+  protected abstract doUpdateDefaultEmulatedMedia(): Promise<void>;
   protected abstract doExposePlaywrightBinding(): Promise<void>;
   protected abstract doClose(reason: string | undefined): Promise<void>;
   protected abstract onClosePersistent(): void;
@@ -309,47 +325,53 @@ export abstract class BrowserContext extends SdkObject {
     return this.doSetHTTPCredentials(httpCredentials);
   }
 
-  hasBinding(name: string) {
-    return this._pageBindings.has(name);
+  getBindingClient(name: string): unknown | undefined {
+    return this._pageBindings.get(name)?.forClient;
   }
 
   async exposePlaywrightBindingIfNeeded() {
-    if (this._playwrightBindingExposed)
-      return;
-    this._playwrightBindingExposed = true;
-    await this.doExposePlaywrightBinding();
+    this._playwrightBindingExposed ??= (async () => {
+      await this.doExposePlaywrightBinding();
 
-    this.bindingsInitScript = PageBinding.createInitScript();
-    this.initScripts.push(this.bindingsInitScript);
-    await this.doAddInitScript(this.bindingsInitScript);
-    await this.safeNonStallingEvaluateInAllFrames(this.bindingsInitScript.source, 'main');
+      this.bindingsInitScript = PageBinding.createInitScript(this);
+      this.initScripts.push(this.bindingsInitScript);
+      await this.doAddInitScript(this.bindingsInitScript);
+      await this.safeNonStallingEvaluateInAllFrames(this.bindingsInitScript.source, 'main');
+    })();
+    return await this._playwrightBindingExposed;
   }
 
-  needsPlaywrightBinding() {
-    return this._playwrightBindingExposed;
+  needsPlaywrightBinding(): boolean {
+    return this._playwrightBindingExposed !== undefined;
   }
 
-  async exposeBinding(name: string, needsHandle: boolean, playwrightBinding: frames.FunctionWithSource): Promise<PageBinding> {
+  async exposeBinding(progress: Progress, name: string, needsHandle: boolean, playwrightBinding: frames.FunctionWithSource, forClient?: unknown): Promise<PageBinding> {
     if (this._pageBindings.has(name))
       throw new Error(`Function "${name}" has been already registered`);
     for (const page of this.pages()) {
       if (page.getBinding(name))
         throw new Error(`Function "${name}" has been already registered in one of the pages`);
     }
-    await this.exposePlaywrightBindingIfNeeded();
-    const binding = new PageBinding(name, playwrightBinding, needsHandle);
+    await progress.race(this.exposePlaywrightBindingIfNeeded());
+    const binding = new PageBinding(this, name, playwrightBinding, needsHandle);
+    binding.forClient = forClient;
     this._pageBindings.set(name, binding);
-    await this.doAddInitScript(binding.initScript);
-    await this.safeNonStallingEvaluateInAllFrames(binding.initScript.source, 'main');
-    return binding;
+    try {
+      await progress.race(this.doAddInitScript(binding.initScript));
+      await progress.race(this.safeNonStallingEvaluateInAllFrames(binding.initScript.source, 'main'));
+      return binding;
+    } catch (error) {
+      this._pageBindings.delete(name);
+      throw error;
+    }
   }
 
-  async removeExposedBindings(bindings: PageBinding[]) {
-    bindings = bindings.filter(binding => this._pageBindings.get(binding.name) === binding);
-    for (const binding of bindings)
-      this._pageBindings.delete(binding.name);
-    await this.doRemoveInitScripts(bindings.map(binding => binding.initScript));
-    const cleanup = bindings.map(binding => `{ ${binding.cleanupScript} };\n`).join('');
+  async removeExposedBinding(binding: PageBinding) {
+    if (this._pageBindings.get(binding.name) !== binding)
+      return;
+    this._pageBindings.delete(binding.name);
+    await this.doRemoveInitScripts([binding.initScript]);
+    const cleanup = `{ ${binding.cleanupScript} };`;
     await this.safeNonStallingEvaluateInAllFrames(cleanup, 'main');
   }
 
@@ -371,20 +393,45 @@ export abstract class BrowserContext extends SdkObject {
     await this.doClearPermissions();
   }
 
+  async setExtraHTTPHeaders(progress: Progress, headers: types.HeadersArray) {
+    const oldHeaders = this._options.extraHTTPHeaders;
+    this._options.extraHTTPHeaders = headers;
+    try {
+      await progress.race(this.doUpdateExtraHTTPHeaders());
+    } catch (error) {
+      this._options.extraHTTPHeaders = oldHeaders;
+      // Note: no await, headers will be reset in the background as soon as possible.
+      this.doUpdateExtraHTTPHeaders().catch(() => {});
+      throw error;
+    }
+  }
+
+  async setOffline(progress: Progress, offline: boolean) {
+    const oldOffline = this._options.offline;
+    this._options.offline = offline;
+    try {
+      await progress.race(this.doUpdateOffline());
+    } catch (error) {
+      this._options.offline = oldOffline;
+      // Note: no await, offline will be reset in the background as soon as possible.
+      this.doUpdateOffline().catch(() => {});
+      throw error;
+    }
+  }
+
   async _loadDefaultContextAsIs(progress: Progress): Promise<Page | undefined> {
     if (!this.possiblyUninitializedPages().length) {
       const waitForEvent = helper.waitForEvent(progress, this, BrowserContext.Events.Page);
-      progress.cleanupWhenAborted(() => waitForEvent.dispose);
       // Race against BrowserContext.close
       await Promise.race([waitForEvent.promise, this._closePromise]);
     }
     const page = this.possiblyUninitializedPages()[0];
     if (!page)
       return;
-    const pageOrError = await page.waitForInitializedOrError();
+    const pageOrError = await progress.race(page.waitForInitializedOrError());
     if (pageOrError instanceof Error)
       throw pageOrError;
-    await page.mainFrame()._waitForLoadState(progress, 'load');
+    await page.mainFrame().waitForLoadState(progress, 'load');
     return page;
   }
 
@@ -397,8 +444,8 @@ export abstract class BrowserContext extends SdkObject {
       // Workaround for:
       // - chromium fails to change isMobile for existing page;
       // - webkit fails to change locale for existing page.
-      await this.newPage(progress.metadata);
-      await defaultPage.close(progress.metadata);
+      await this.newPage(progress);
+      await defaultPage.close();
     }
   }
 
@@ -424,20 +471,26 @@ export abstract class BrowserContext extends SdkObject {
       this._options.httpCredentials = { username, password: password || '' };
   }
 
-  async addInitScript(source: string, name?: string) {
-    const initScript = new InitScript(source, name);
+  async addInitScript(source: string) {
+    const initScript = new InitScript(this, source);
     this.initScripts.push(initScript);
-    await this.doAddInitScript(initScript);
-    return initScript;
+    try {
+      await this.doAddInitScript(initScript);
+      return initScript;
+    } catch (error) {
+      // Note: no await, init script will be removed in the background as soon as possible.
+      initScript.dispose().catch(() => {});
+      throw error;
+    }
   }
 
-  async removeInitScripts(initScripts: InitScript[]) {
-    const set = new Set(initScripts);
-    this.initScripts = this.initScripts.filter(script => !set.has(script));
-    await this.doRemoveInitScripts(initScripts);
+  async removeInitScript(initScript: InitScript) {
+    this.initScripts = this.initScripts.filter(script => initScript !== script);
+    await this.doRemoveInitScripts([initScript]);
   }
 
-  async addRequestInterceptor(handler: network.RouteHandler): Promise<void> {
+  async addRequestInterceptor(progress: Progress, handler: network.RouteHandler): Promise<void> {
+    // Note: progress is intentionally ignored, because this operation is not cancellable and should not block in the browser anyway.
     this.requestInterceptors.push(handler);
     await this.doUpdateRequestInterception();
   }
@@ -477,14 +530,7 @@ export abstract class BrowserContext extends SdkObject {
       for (const harRecorder of this._harRecorders.values())
         await harRecorder.flush();
       await this.tracing.flush();
-
-      // Cleanup.
-      const promises: Promise<void>[] = [];
-      for (const { context, artifact } of this._browser._idToVideo.values()) {
-        // Wait for the videos to finish.
-        if (context === this)
-          promises.push(artifact.finishedPromise());
-      }
+      await Promise.all(this.pages().map(page => page.screencast.handlePageOrContextClose()));
 
       if (this._customCloseHandler) {
         await this._customCloseHandler();
@@ -495,6 +541,7 @@ export abstract class BrowserContext extends SdkObject {
 
       // We delete downloads after context closure
       // so that browser does not write to the download file anymore.
+      const promises: Promise<void>[] = [];
       promises.push(this._deleteAllDownloads());
       promises.push(this._deleteAllTempDirs());
       await Promise.all(promises);
@@ -506,22 +553,31 @@ export abstract class BrowserContext extends SdkObject {
     await this._closePromise;
   }
 
-  async newPage(metadata: CallMetadata): Promise<Page> {
-    const page = await this.doCreateNewPage(metadata.isServerSide);
-    const pageOrError = await page.waitForInitializedOrError();
-    if (pageOrError instanceof Page) {
-      if (pageOrError.isClosed())
-        throw new Error('Page has been closed.');
-      return pageOrError;
+  async newPage(progress: Progress, forStorageState?: boolean): Promise<Page> {
+    let page: Page | undefined;
+    try {
+      this._creatingStorageStatePage = !!forStorageState;
+      page = await progress.race(this.doCreateNewPage());
+      const pageOrError = await progress.race(page.waitForInitializedOrError());
+      if (pageOrError instanceof Page) {
+        if (pageOrError.isClosed())
+          throw new Error('Page has been closed.');
+        return pageOrError;
+      }
+      throw pageOrError;
+    } catch (error) {
+      await page?.close({ reason: 'Failed to create page' }).catch(() => {});
+      throw error;
+    } finally {
+      this._creatingStorageStatePage = false;
     }
-    throw pageOrError;
   }
 
   addVisitedOrigin(origin: string) {
     this._origins.add(origin);
   }
 
-  async storageState(indexedDB = false): Promise<channels.BrowserContextStorageStateResult> {
+  async storageState(progress: Progress, indexedDB = false): Promise<channels.BrowserContextStorageStateResult> {
     const result: channels.BrowserContextStorageStateResult = {
       cookies: await this.cookies(),
       origins: []
@@ -552,90 +608,75 @@ export abstract class BrowserContext extends SdkObject {
 
     // If there are still origins to save, create a blank page to iterate over origins.
     if (originsToSave.size)  {
-      const internalMetadata = serverSideCallMetadata();
-      const page = await this.newPage(internalMetadata);
-      page.addRequestInterceptor(route => {
-        route.fulfill({ body: '<html></html>' }).catch(() => {});
-      }, 'prepend');
-      for (const origin of originsToSave) {
-        const frame = page.mainFrame();
-        await frame.goto(internalMetadata, origin, { timeout: 0 });
-        const storage: SerializedStorage = await frame.evaluateExpression(collectScript, { world: 'utility' });
-        if (storage.localStorage.length || storage.indexedDB?.length)
-          result.origins.push({ origin, localStorage: storage.localStorage, indexedDB: storage.indexedDB });
+      const page = await this.newPage(progress, true /* forStorageState */);
+      try {
+        await page.addRequestInterceptor(progress, route => {
+          route.fulfill({ body: '<html></html>' }).catch(() => {});
+        }, 'prepend');
+        for (const origin of originsToSave) {
+          const frame = page.mainFrame();
+          await frame.gotoImpl(progress, origin, {});
+          const storage: SerializedStorage = await progress.race(frame.evaluateExpression(collectScript, { world: 'utility' }));
+          if (storage.localStorage.length || storage.indexedDB?.length)
+            result.origins.push({ origin, localStorage: storage.localStorage, indexedDB: storage.indexedDB });
+        }
+      } finally {
+        await page.close();
       }
-      await page.close(internalMetadata);
     }
     return result;
   }
 
-  async _resetStorage() {
-    const oldOrigins = this._origins;
-    const newOrigins = new Map(this._options.storageState?.origins?.map(p => [p.origin, p]) || []);
-    if (!oldOrigins.size && !newOrigins.size)
-      return;
-    let page = this.pages()[0];
-
-    const internalMetadata = serverSideCallMetadata();
-    page = page || await this.newPage({
-      ...internalMetadata,
-      // Do not mark this page as internal, because we will leave it for later reuse
-      // as a user-visible page.
-      isServerSide: false,
-    });
-    const interceptor = (route: network.Route) => {
-      route.fulfill({ body: '<html></html>' }).catch(() => {});
-    };
-    await page.addRequestInterceptor(interceptor, 'prepend');
-
-    for (const origin of new Set([...oldOrigins, ...newOrigins.keys()])) {
-      const frame = page.mainFrame();
-      await frame.goto(internalMetadata, origin, { timeout: 0 });
-      await frame.resetStorageForCurrentOriginBestEffort(newOrigins.get(origin));
-    }
-
-    await page.removeRequestInterceptor(interceptor);
-
-    this._origins = new Set([...newOrigins.keys()]);
-    // It is safe to not restore the URL to about:blank since we are doing it in Page::resetForReuse.
+  isCreatingStorageStatePage(): boolean {
+    return this._creatingStorageStatePage;
   }
 
-  async _resetCookies() {
-    await this.doClearCookies();
-    if (this._options.storageState?.cookies)
-      await this.addCookies(this._options.storageState?.cookies);
-  }
-
-  isSettingStorageState(): boolean {
-    return this._settingStorageState;
-  }
-
-  async setStorageState(metadata: CallMetadata, state: NonNullable<channels.BrowserNewContextParams['storageState']>) {
-    this._settingStorageState = true;
+  async setStorageState(progress: Progress, state: channels.BrowserNewContextParams['storageState'], mode: 'initial' | 'resetForReuse' | 'api') {
+    let page: Page | undefined;
+    let interceptor: network.RouteHandler | undefined;
     try {
-      if (state.cookies)
-        await this.addCookies(state.cookies);
-      if (state.origins && state.origins.length)  {
-        const internalMetadata = serverSideCallMetadata();
-        const page = await this.newPage(internalMetadata);
-        await page.addRequestInterceptor(route => {
+      if (mode !== 'initial') {
+        await progress.race(this.clearCache());
+        await progress.race(this.doClearCookies());
+      }
+
+      if (state?.cookies)
+        await progress.race(this.addCookies(state.cookies));
+
+      const newOrigins = new Map(state?.origins?.map(p => [p.origin, p]) || []);
+      const allOrigins = new Set([...this._origins, ...newOrigins.keys()]);
+      if (allOrigins.size) {
+        if (mode === 'resetForReuse')
+          page = this.pages()[0];
+        if (!page)
+          page = await this.newPage(progress, mode !== 'resetForReuse' /* forStorageState */);
+
+        interceptor = (route: network.Route) => {
           route.fulfill({ body: '<html></html>' }).catch(() => {});
-        }, 'prepend');
-        for (const originState of state.origins) {
+        };
+        await page.addRequestInterceptor(progress, interceptor, 'prepend');
+
+        for (const origin of allOrigins) {
           const frame = page.mainFrame();
-          await frame.goto(metadata, originState.origin, { timeout: 0 });
+          await frame.gotoImpl(progress, origin, {});
           const restoreScript = `(() => {
             const module = {};
             ${rawStorageSource.source}
             const script = new (module.exports.StorageScript())(${this._browser.options.name === 'firefox'});
-            return script.restore(${JSON.stringify(originState)});
+            return script.restore(${JSON.stringify(newOrigins.get(origin))});
           })()`;
-          await frame.evaluateExpression(restoreScript, { world: 'utility' });
+          await progress.race(frame.evaluateExpression(restoreScript, { world: 'utility' }));
         }
-        await page.close(internalMetadata);
       }
+      this._origins = new Set([...newOrigins.keys()]);
+    } catch (error) {
+      rewriteErrorMessage(error, `Error setting storage state:\n` + error.message);
+      throw error;
     } finally {
-      this._settingStorageState = false;
+      if (mode !== 'resetForReuse')
+        await page?.close();
+      else if (interceptor)
+        await page?.removeRequestInterceptor(interceptor);
     }
   }
 
@@ -653,13 +694,13 @@ export abstract class BrowserContext extends SdkObject {
     await Promise.all(this.pages().map(page => page.safeNonStallingEvaluateInAllFrames(expression, world, options)));
   }
 
-  async _harStart(page: Page | null, options: channels.RecordHarOptions): Promise<string> {
+  harStart(page: Page | null, options: channels.RecordHarOptions): string {
     const harId = createGuid();
     this._harRecorders.set(harId, new HarRecorder(this, page, options));
     return harId;
   }
 
-  async _harExport(harId: string | undefined): Promise<Artifact> {
+  async harExport(harId: string | undefined): Promise<Artifact> {
     const recorder = this._harRecorders.get(harId || '')!;
     return recorder.export();
   }
@@ -691,23 +732,6 @@ export function validateBrowserContextOptions(options: types.BrowserContextOptio
     options.acceptDownloads = 'internal-browser-default';
   if (!options.viewport && !options.noDefaultViewport)
     options.viewport = { width: 1280, height: 720 };
-  if (options.recordVideo) {
-    if (!options.recordVideo.size) {
-      if (options.noDefaultViewport) {
-        options.recordVideo.size = { width: 800, height: 600 };
-      } else {
-        const size = options.viewport!;
-        const scale = Math.min(1, 800 / Math.max(size.width, size.height));
-        options.recordVideo.size = {
-          width: Math.floor(size.width * scale),
-          height: Math.floor(size.height * scale)
-        };
-      }
-    }
-    // Make sure both dimensions are odd, this is required for vp8
-    options.recordVideo.size!.width &= ~1;
-    options.recordVideo.size!.height &= ~1;
-  }
   if (options.proxy)
     options.proxy = normalizeProxySettings(options.proxy);
   verifyGeolocation(options.geolocation);
@@ -764,6 +788,74 @@ export function normalizeProxySettings(proxy: types.ProxySettings): types.ProxyS
   if (bypass)
     bypass = bypass.split(',').map(t => t.trim()).join(',');
   return { ...proxy, server, bypass };
+}
+
+// Chromium reference: https://source.chromium.org/chromium/chromium/src/+/main:components/embedder_support/user_agent_utils.cc;l=434
+export function calculateUserAgentEmulation(options: types.BrowserContextOptions): {
+  navigatorPlatform: string | undefined;
+  userAgentMetadata: {
+    mobile: boolean;
+    model: string;
+    architecture: string;
+    platform: string;
+    platformVersion: string;
+  } | undefined;
+} {
+  const ua = options.userAgent;
+  if (!ua)
+    return { navigatorPlatform: undefined, userAgentMetadata: undefined };
+
+  const userAgentMetadata = {
+    mobile: !!options.isMobile,
+    model: '',
+    architecture: 'x86',
+    platform: 'Windows',
+    platformVersion: '',
+  };
+
+  const androidMatch = ua.match(/Android (\d+(\.\d+)?(\.\d+)?)/);
+  const iPhoneMatch = ua.match(/iPhone OS (\d+(_\d+)?)/);
+  const iPadMatch = ua.match(/iPad; CPU OS (\d+(_\d+)?)/);
+  const macOSMatch = ua.match(/Mac OS X (\d+(_\d+)?(_\d+)?)/);
+  const windowsMatch = ua.match(/Windows\D+(\d+(\.\d+)?(\.\d+)?)/);
+  if (androidMatch) {
+    userAgentMetadata.platform = 'Android';
+    userAgentMetadata.platformVersion = androidMatch[1];
+    userAgentMetadata.architecture = 'arm';
+  } else if (iPhoneMatch) {
+    userAgentMetadata.platform = 'iOS';
+    userAgentMetadata.platformVersion = iPhoneMatch[1].replace(/_/g, '.');
+    userAgentMetadata.architecture = 'arm';
+  } else if (iPadMatch) {
+    userAgentMetadata.platform = 'iOS';
+    userAgentMetadata.platformVersion = iPadMatch[1].replace(/_/g, '.');
+    userAgentMetadata.architecture = 'arm';
+  } else if (macOSMatch) {
+    userAgentMetadata.platform = 'macOS';
+    userAgentMetadata.platformVersion = macOSMatch[1].replace(/_/g, '.');
+    if (!ua.includes('Intel'))
+      userAgentMetadata.architecture = 'arm';
+  } else if (windowsMatch) {
+    userAgentMetadata.platform = 'Windows';
+    userAgentMetadata.platformVersion = windowsMatch[1];
+  } else if (ua.toLowerCase().includes('linux')) {
+    userAgentMetadata.platform = 'Linux';
+  }
+  if (ua.includes('ARM') || ua.includes('aarch64'))
+    userAgentMetadata.architecture = 'arm';
+
+  let navigatorPlatform: string | undefined;
+  if (!process.env.PLAYWRIGHT_NO_UA_PLATFORM) {
+    switch (userAgentMetadata.platform) {
+      case 'Android': navigatorPlatform = userAgentMetadata.architecture === 'arm' ? 'Linux armv8l' : 'Linux x86_64'; break;
+      case 'iOS': navigatorPlatform = ua.includes('iPad') ? 'iPad' : 'iPhone'; break;
+      case 'macOS': navigatorPlatform = 'MacIntel'; break;
+      case 'Linux': navigatorPlatform = userAgentMetadata.architecture === 'arm' ? 'Linux aarch64' : 'Linux x86_64'; break;
+      case 'Windows': navigatorPlatform = 'Win32'; break;
+    }
+  }
+
+  return { navigatorPlatform, userAgentMetadata };
 }
 
 const paramsThatAllowContextReuse: (keyof channels.BrowserNewContextForReuseParams)[] = [

@@ -29,9 +29,9 @@ test('console event should work @smoke', async ({ page }) => {
 
 test('console event should work with element handles', async ({ page }) => {
   await page.setContent('<body>hello</body>');
-  const [, message] = await Promise.all([
-    page.evaluate(() => console.log(document.body)),
+  const [message] = await Promise.all([
     page.context().waitForEvent('console'),
+    page.evaluate(() => console.log(document.body)),
   ]);
   const body = message.args()[0];
   expect(await body.evaluate(x => x.nodeName)).toBe('BODY');
@@ -52,8 +52,8 @@ test('console event should work in popup', async ({ page }) => {
   expect(message.page()).toBe(popup);
 });
 
-test('console event should work in popup 2', async ({ page, browserName }) => {
-  test.fixme(browserName === 'firefox', 'console message from javascript: url is not reported at all');
+test('console event should work in popup 2', async ({ page, browserName, isBidi }) => {
+  test.fixme(browserName === 'firefox' && !isBidi, 'console message from javascript: url is not reported at all');
 
   const [, message, popup] = await Promise.all([
     page.evaluate(async () => {
@@ -69,8 +69,8 @@ test('console event should work in popup 2', async ({ page, browserName }) => {
   expect(message.page()).toBe(popup);
 });
 
-test('console event should work in immediately closed popup', async ({ page, browserName }) => {
-  test.fixme(browserName === 'firefox', 'console message is not reported at all');
+test('console event should work in immediately closed popup', async ({ page, browserName, isBidi }) => {
+  test.fixme(browserName === 'firefox' && !isBidi, 'console message is not reported at all');
 
   const [, message, popup] = await Promise.all([
     page.evaluate(async () => {

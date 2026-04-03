@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { BrowserContextOptions, LaunchOptions } from '../../../types/types';
+import type { BrowserContextOptions, LaunchOptions } from '../../..';
 import type { Language } from '../../utils';
 import type * as actions from '@recorder/actions';
 export type { Language } from '../../utils';
@@ -25,6 +25,7 @@ export type LanguageGeneratorOptions = {
   contextOptions: BrowserContextOptions;
   deviceName?: string;
   saveStorage?: string;
+  generateAutoExpect?: boolean;
 };
 
 export interface LanguageGenerator {

@@ -15,7 +15,7 @@
  */
 
 import type { FrameSnapshot, ResourceSnapshot } from './snapshot';
-import type { Language } from '../../playwright-core/src/utils/isomorphic/locatorGenerators';
+import type { Language } from '@isomorphic/locatorGenerators';
 import type { Point, SerializedError, StackFrame } from '@protocol/channels';
 
 export type Size = { width: number, height: number };
@@ -38,6 +38,7 @@ export type ContextCreatedTraceEvent = {
   browserName: string,
   channel?: string,
   platform: string,
+  playwrightVersion?: string,
   wallTime: number,
   monotonicTime: number,
   title?: string,
@@ -45,6 +46,7 @@ export type ContextCreatedTraceEvent = {
   sdkLanguage?: Language,
   testIdAttributeName?: string,
   contextId?: string,
+  testTimeout?: number,
 };
 
 export type ScreencastFrameTraceEvent = {
@@ -70,6 +72,7 @@ export type BeforeActionTraceEvent = {
   stack?: StackFrame[];
   pageId?: string;
   parentId?: string;
+  group?: string;
 };
 
 export type InputActionTraceEvent = {

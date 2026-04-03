@@ -16,8 +16,7 @@
 
 import path from 'path';
 
-import { noColors } from 'playwright-core/lib/utils';
-import { ms as milliseconds } from 'playwright-core/lib/utilsBundle';
+import { msToString as milliseconds, noColors } from 'playwright-core/lib/utils';
 
 import { TerminalReporter, formatResultFailure, formatRetry } from './base';
 import { stripAnsiEscapes } from '../util';
@@ -41,7 +40,8 @@ class GitHubLogger {
     const configs = Object.entries(options)
         .map(([key, option]) => `${key}=${option}`)
         .join(',');
-    console.log(stripAnsiEscapes(`::${type} ${configs}::${message}`));
+    // eslint-disable-next-line no-restricted-properties
+    process.stdout.write(stripAnsiEscapes(`::${type} ${configs}::${message}\n`));
   }
 
   debug(message: string, options?: GitHubLogOptions) {

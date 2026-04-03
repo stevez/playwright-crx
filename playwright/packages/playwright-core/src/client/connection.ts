@@ -1,7 +1,7 @@
 /**
  * Copyright (c) Microsoft Corporation.
  *
- * Licensed under the Apache License, Version 2.0 (the 'License");
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -23,7 +23,9 @@ import { BrowserType } from './browserType';
 import { CDPSession } from './cdpSession';
 import { ChannelOwner } from './channelOwner';
 import { createInstrumentation } from './clientInstrumentation';
+import { Debugger } from './debugger';
 import { Dialog } from './dialog';
+import { DisposableObject } from './disposable';
 import { Electron, ElectronApplication } from './electron';
 import { ElementHandle } from './elementHandle';
 import { TargetClosedError, parseError } from './errors';
@@ -41,7 +43,6 @@ import { Worker } from './worker';
 import { WritableStream } from './writableStream';
 import { ValidationError, findValidator  } from '../protocol/validator';
 import { rewriteErrorMessage } from '../utils/isomorphic/stackTrace';
-
 import type { ClientInstrumentation } from './clientInstrumentation';
 import type { HeadersArray } from './types';
 import type { ValidatorContext } from '../protocol/validator';
@@ -74,7 +75,7 @@ export class Connection extends EventEmitter {
   private _localUtils?: LocalUtils;
   private _rawBuffers = false;
   // Some connections allow resolving in-process dispatchers.
-  toImpl: ((client: ChannelOwner) => any) | undefined;
+  toImpl: ((client: ChannelOwner | Connection) => any) | undefined;
   private _tracingCount = 0;
   readonly _instrumentation: ClientInstrumentation;
   // Used from @playwright/test fixtures -> TODO remove?
@@ -266,8 +267,14 @@ export class Connection extends EventEmitter {
       case 'CDPSession':
         result = new CDPSession(parent, type, guid, initializer);
         break;
+      case 'Debugger':
+        result = new Debugger(parent, type, guid, initializer);
+        break;
       case 'Dialog':
         result = new Dialog(parent, type, guid, initializer);
+        break;
+      case 'Disposable':
+        result = new DisposableObject(parent, type, guid, initializer);
         break;
       case 'Electron':
         result = new Electron(parent, type, guid, initializer);

@@ -130,10 +130,10 @@ test('should script application', async ({ electronApp }) => {
 });
 
 test('should preserve args', async ({ launchElectronApp, isMac }) => {
-  const electronApp = await launchElectronApp('electron-app-args.js', ['foo', 'bar']);
+  const electronApp = await launchElectronApp('electron-app-args.js', ['foo', 'bar', '& <>^|\\"']);
   const argv = await electronApp.evaluate(async () => globalThis.argv);
   const electronPath = isMac ? path.join('dist', 'Electron.app') : path.join('dist', 'electron');
-  expect(argv).toEqual([expect.stringContaining(electronPath), expect.stringContaining(path.join('electron', 'electron-app-args.js')), 'foo', 'bar']);
+  expect(argv).toEqual([expect.stringContaining(electronPath), expect.stringContaining(path.join('electron', 'electron-app-args.js')), 'foo', 'bar', '& <>^|\\"']);
 });
 
 test('should return windows', async ({ electronApp, newWindow }) => {
@@ -213,6 +213,7 @@ test('should bypass csp', async ({ launchElectronApp, server }) => {
   await page.goto(server.PREFIX + '/csp.html');
   await page.addScriptTag({ content: 'window["__injected"] = 42;' });
   expect(await page.evaluate('window["__injected"]')).toBe(42);
+  expect(await page.evaluate('window["__inlineScriptValue"]')).toBe(42);
 });
 
 test('should create page for browser view', async ({ launchElectronApp }) => {
@@ -337,4 +338,30 @@ test('should report downloads', async ({ launchElectronApp, electronMajorVersion
   expect(fs.existsSync(path)).toBeTruthy();
   expect(fs.readFileSync(path).toString()).toBe('Hello world');
   await app.close();
+});
+
+test('should save downloads to artifactsDir', async ({ launchElectronApp, electronMajorVersion, server }, testInfo) => {
+  server.setRoute('/download', (req, res) => {
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'attachment');
+    res.end(`Hello world`);
+  });
+
+  const artifactsDir = testInfo.outputPath('artifacts');
+  const app = await launchElectronApp('electron-window-app.js', [], {
+    acceptDownloads: true,
+    artifactsDir,
+  });
+  const window = await app.firstWindow();
+  await window.setContent(`<a href="${server.PREFIX}/download">download</a>`);
+  const [download] = await Promise.all([
+    window.waitForEvent('download'),
+    window.click('a')
+  ]);
+  const downloadPath = await download.path();
+  expect(downloadPath.startsWith(artifactsDir)).toBeTruthy();
+  expect(fs.existsSync(downloadPath)).toBeTruthy();
+  await app.close();
+  // User-provided artifactsDir should not be cleaned up.
+  expect(fs.existsSync(artifactsDir)).toBeTruthy();
 });

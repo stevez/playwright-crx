@@ -6,13 +6,22 @@ common/
 [program.ts]
 **
 
+[testActions.ts]
+**
+
+[reportActions.ts]
+**
+
 [index.ts]
 @testIsomorphic/**
 ./prompt.ts
+./errorContext.ts
 ./worker/testTracing.ts
+./mcp/sdk/
+./mcp/test/
+./transform/babelBundle.ts
 
 [internalsForTest.ts]
 **
 
 [errorContext.ts]
-./transform/babelBundle.ts

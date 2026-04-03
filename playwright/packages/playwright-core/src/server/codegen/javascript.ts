@@ -15,11 +15,11 @@
  */
 
 import { sanitizeDeviceOptions, toClickOptionsForSourceCode, toKeyboardModifiers, toSignalMap } from './language';
-import { asLocator, escapeWithQuotes } from '../../utils';
+import { asLocator, escapeWithQuotes, formatObject, formatObjectOrVoid } from '../../utils';
 import { deviceDescriptors } from '../deviceDescriptors';
 
 import type { Language, LanguageGenerator, LanguageGeneratorOptions } from './types';
-import type { BrowserContextOptions } from '../../../types/types';
+import type { BrowserContextOptions } from '../../..';
 import type * as actions from '@recorder/actions';
 
 export class JavaScriptLanguageGenerator implements LanguageGenerator {
@@ -37,7 +37,7 @@ export class JavaScriptLanguageGenerator implements LanguageGenerator {
 
   generateAction(actionInContext: actions.ActionInContext): string {
     const action = actionInContext.action;
-    if (this._isTest && actionInContext.frame.pageAlias === 'page' && (action.name === 'openPage' || action.name === 'closePage'))
+    if (this._isTest && (action.name === 'openPage' || action.name === 'closePage'))
       return '';
 
     const pageAlias = actionInContext.frame.pageAlias;
@@ -91,6 +91,8 @@ export class JavaScriptLanguageGenerator implements LanguageGenerator {
         const optionsString = formatOptions(options, false);
         return `await ${subject}.${this._asLocator(action.selector)}.${method}(${optionsString});`;
       }
+      case 'hover':
+        return `await ${subject}.${this._asLocator(action.selector)}.hover(${formatOptions({ position: action.position }, false)});`;
       case 'check':
         return `await ${subject}.${this._asLocator(action.selector)}.check();`;
       case 'uncheck':
@@ -118,8 +120,10 @@ export class JavaScriptLanguageGenerator implements LanguageGenerator {
         const assertion = action.value ? `toHaveValue(${quote(action.value)})` : `toBeEmpty()`;
         return `${this._isTest ? '' : '// '}await expect(${subject}.${this._asLocator(action.selector)}).${assertion};`;
       }
-      case 'assertSnapshot':
-        return `${this._isTest ? '' : '// '}await expect(${subject}.${this._asLocator(action.selector)}).toMatchAriaSnapshot(${quoteMultiline(action.snapshot)});`;
+      case 'assertSnapshot': {
+        const commentIfNeeded = this._isTest ? '' : '// ';
+        return `${commentIfNeeded}await expect(${subject}.${this._asLocator(action.selector)}).toMatchAriaSnapshot(${quoteMultiline(action.ariaSnapshot, `${commentIfNeeded}  `)});`;
+      }
     }
   }
 
@@ -127,9 +131,9 @@ export class JavaScriptLanguageGenerator implements LanguageGenerator {
     return asLocator('javascript', selector);
   }
 
-  generateHeader(options: LanguageGeneratorOptions, includeContext?: boolean): string {
+  generateHeader(options: LanguageGeneratorOptions): string {
     if (this._isTest)
-      return this.generateTestHeader(options, includeContext);
+      return this.generateTestHeader(options);
     return this.generateStandaloneHeader(options);
   }
 
@@ -139,13 +143,13 @@ export class JavaScriptLanguageGenerator implements LanguageGenerator {
     return this.generateStandaloneFooter(saveStorage);
   }
 
-  generateTestHeader(options: LanguageGeneratorOptions, includeContext?: boolean): string {
+  generateTestHeader(options: LanguageGeneratorOptions): string {
     const formatter = new JavaScriptFormatter();
     const useText = formatContextOptions(options.contextOptions, options.deviceName, this._isTest);
     formatter.add(`
       import { test, expect${options.deviceName ? ', devices' : ''} } from '@playwright/test';
 ${useText ? '\ntest.use(' + useText + ');\n' : ''}
-      test('test', async ({ page${includeContext ? ', context' : ''} }) => {`);
+      test('test', async ({ page }) => {`);
     if (options.contextOptions.recordHar) {
       const url = options.contextOptions.recordHar.urlFilter;
       formatter.add(`  await page.routeFromHAR(${quote(options.contextOptions.recordHar.path)}${url ? `, ${formatOptions({ url }, false)}` : ''});`);
@@ -180,32 +184,10 @@ ${useText ? '\ntest.use(' + useText + ');\n' : ''}
 }
 
 function formatOptions(value: any, hasArguments: boolean): string {
-  const keys = Object.keys(value);
+  const keys = Object.keys(value).filter(key => value[key] !== undefined);
   if (!keys.length)
     return '';
   return (hasArguments ? ', ' : '') + formatObject(value);
-}
-
-function formatObject(value: any, indent = '  '): string {
-  if (typeof value === 'string')
-    return quote(value);
-  if (Array.isArray(value))
-    return `[${value.map(o => formatObject(o)).join(', ')}]`;
-  if (typeof value === 'object') {
-    const keys = Object.keys(value).filter(key => value[key] !== undefined).sort();
-    if (!keys.length)
-      return '{}';
-    const tokens: string[] = [];
-    for (const key of keys)
-      tokens.push(`${key}: ${formatObject(value[key])}`);
-    return `{\n${indent}${tokens.join(`,\n${indent}`)}\n}`;
-  }
-  return String(value);
-}
-
-function formatObjectOrVoid(value: any, indent = '  '): string {
-  const result = formatObject(value, indent);
-  return result === '{}' ? '' : result;
 }
 
 function formatContextOptions(options: BrowserContextOptions, deviceName: string | undefined, isTest: boolean): string {

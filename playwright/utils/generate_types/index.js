@@ -217,7 +217,7 @@ class TypesGenerator {
       return null;
     if (type.includes('{'))
       return 'data';
-    return (type[0].toLowerCase() + type.slice(1)).replace(/\|/g, 'Or');
+    return type.replace(/^[A-Z]+/, match => match.length === 1 ? match.toLowerCase() : match.slice(0, -1).toLowerCase() + match.slice(-1)).replace(/\|/g, 'Or');
   }
 
   /**
@@ -551,6 +551,7 @@ class TypesGenerator {
         'GenericAssertions.any',
         'GenericAssertions.anything',
         'GenericAssertions.arrayContaining',
+        'GenericAssertions.arrayOf',
         'GenericAssertions.closeTo',
         'GenericAssertions.objectContaining',
         'GenericAssertions.stringContaining',

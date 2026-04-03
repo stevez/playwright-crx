@@ -28,7 +28,6 @@ export interface Logger {
 export type TimeoutOptions = { timeout?: number };
 export type StrictOptions = { strict?: boolean };
 export type Headers = { [key: string]: string };
-export type Env = { [key: string]: string | number | boolean | undefined };
 
 export type WaitForEventOptions = Function | TimeoutOptions & { predicate?: Function };
 export type WaitForFunctionOptions = TimeoutOptions & { polling?: 'raf' | number };
@@ -59,7 +58,7 @@ export type ClientCertificate = {
   passphrase?: string;
 };
 
-export type BrowserContextOptions = Omit<channels.BrowserNewContextOptions, 'viewport' | 'noDefaultViewport' | 'extraHTTPHeaders' | 'clientCertificates' | 'storageState' | 'recordHar' | 'colorScheme' | 'reducedMotion' | 'forcedColors' | 'acceptDownloads' | 'contrast'> & {
+export type BrowserContextOptions = Omit<channels.BrowserNewContextOptions, 'viewport' | 'noDefaultViewport' | 'extraHTTPHeaders' | 'clientCertificates' | 'storageState' | 'recordHar' | 'colorScheme' | 'reducedMotion' | 'forcedColors' | 'acceptDownloads' | 'contrast' | 'agent'> & {
   viewport?: Size | null;
   extraHTTPHeaders?: Headers;
   logger?: Logger;
@@ -88,7 +87,7 @@ export type BrowserContextOptions = Omit<channels.BrowserNewContextOptions, 'vie
 
 type LaunchOverrides = {
   ignoreDefaultArgs?: boolean | string[];
-  env?: Env;
+  env?: NodeJS.ProcessEnv;
   logger?: Logger;
   firefoxUserPrefs?: { [key: string]: string | number | boolean };
 } & TimeoutOptions;
@@ -97,13 +96,13 @@ export type LaunchOptions = Omit<channels.BrowserTypeLaunchOptions, 'ignoreAllDe
 export type LaunchPersistentContextOptions = Omit<LaunchOptions & BrowserContextOptions, 'storageState'>;
 
 export type ConnectOptions = {
-  wsEndpoint: string,
+  endpoint: string;
+  browserName?: string;
   headers?: { [key: string]: string; };
-  exposeNetwork?: string,
-  _exposeNetwork?: string,
-  slowMo?: number,
-  timeout?: number,
-  logger?: Logger,
+  exposeNetwork?: string;
+  slowMo?: number;
+  timeout?: number;
+  logger?: Logger;
 };
 export type LaunchServerOptions = LaunchOptions & {
   host?: string,
@@ -121,6 +120,14 @@ export type LaunchAndroidServerOptions = {
   wsPath?: string,
 };
 
+export type StartServerOptions = {
+  host?: string,
+  port?: number,
+  wsPath?: string,
+  workspaceDir?: string,
+  metadata?: Record<string, any>,
+};
+
 export type SelectorEngine = {
   /**
    * Returns the first element matching given selector in the root's subtree.
@@ -131,6 +138,9 @@ export type SelectorEngine = {
    */
   queryAll(root: HTMLElement, selector: string): HTMLElement[];
 };
+
+export type AnnotatePosition = 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right';
+export type AnnotateOptions = { duration?: number, position?: AnnotatePosition, fontSize?: number };
 
 export type RemoteAddr = channels.RemoteAddr;
 export type SecurityDetails = channels.SecurityDetails;

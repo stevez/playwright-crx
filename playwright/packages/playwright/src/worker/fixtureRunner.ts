@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { ManualPromise } from 'playwright-core/lib/utils';
+import { escapeWithQuotes, ManualPromise } from 'playwright-core/lib/utils';
 
 import { fixtureParameterNames } from '../common/fixtures';
 import { filterStackFile, formatLocation } from '../util';
@@ -35,7 +35,7 @@ class Fixture {
   private _selfTeardownComplete: Promise<void> | undefined;
   private _setupDescription: FixtureDescription;
   private _teardownDescription: FixtureDescription;
-  private _stepInfo: { title: string, category: 'fixture', location?: Location } | undefined;
+  private _stepInfo: { title: string, category: 'fixture', location?: Location, group?: string } | undefined;
   _deps = new Set<Fixture>();
   _usages = new Set<Fixture>();
 
@@ -43,19 +43,25 @@ class Fixture {
     this.runner = runner;
     this.registration = registration;
     this.value = null;
-    const shouldGenerateStep = !this.registration.box && !this.registration.option;
     const isUserFixture = this.registration.location && filterStackFile(this.registration.location.file);
     const title = this.registration.customTitle || this.registration.name;
     const location = isUserFixture ? this.registration.location : undefined;
-    this._stepInfo = shouldGenerateStep ? { title, category: 'fixture', location } : undefined;
+    this._stepInfo = { title: `Fixture ${escapeWithQuotes(title, '"')}`, category: 'fixture', location };
+    if (this.registration.box === 'self')
+      this._stepInfo = undefined;
+    else if (this.registration.box)
+      this._stepInfo.group = isUserFixture ? 'configuration' : 'internal';
     this._setupDescription = {
       title,
       phase: 'setup',
       location,
-      slot: this.registration.timeout === undefined ? undefined : {
+      slot: this.registration.timeout !== undefined ? {
         timeout: this.registration.timeout,
         elapsed: 0,
-      }
+      } : this.registration.scope === 'worker' ? {
+        timeout: this.runner.workerFixtureTimeout,
+        elapsed: 0,
+      } : undefined,
     };
     this._teardownDescription = { ...this._setupDescription, phase: 'teardown' };
   }
@@ -114,6 +120,8 @@ class Fixture {
     this._selfTeardownComplete = (async () => {
       try {
         await this.registration.fn(params, useFunc, info);
+        if (!useFuncStarted.isDone())
+          throw new Error(`use() was not called in fixture "${this.registration.name}"`);
       } catch (error) {
         this.failed = true;
         if (!useFuncStarted.isDone())
@@ -174,6 +182,7 @@ export class FixtureRunner {
   private testScopeClean = true;
   pool: FixturePool | undefined;
   instanceForId = new Map<string, Fixture>();
+  workerFixtureTimeout = 0;
 
   setPool(pool: FixturePool) {
     if (!this.testScopeClean)
@@ -219,7 +228,7 @@ export class FixtureRunner {
       throw firstError;
   }
 
-  async resolveParametersForFunction(fn: Function, testInfo: TestInfoImpl, autoFixtures: 'worker' | 'test' | 'all-hooks-only', runnable: RunnableDescription): Promise<object | null> {
+  async resolveParametersForFunction(fn: Function, testInfo: TestInfoImpl, autoFixtures: 'worker' | 'test' | 'all-hooks-only', runnable: RunnableDescription): Promise<{ result: object } | null> {
     const collector = new Set<FixtureRegistration>();
 
     // Collect automatic fixtures.
@@ -255,7 +264,8 @@ export class FixtureRunner {
         return null;
       params[name] = fixture.value;
     }
-    return params;
+    // Wrap in an object to avoid returning a thenable if a fixture is named 'then'.
+    return { result: params };
   }
 
   async resolveParametersAndRunFunction(fn: Function, testInfo: TestInfoImpl, autoFixtures: 'worker' | 'test' | 'all-hooks-only', runnable: RunnableDescription) {
@@ -264,7 +274,7 @@ export class FixtureRunner {
       // Do not run the function when fixture setup has already failed.
       return null;
     }
-    await testInfo._runWithTimeout(runnable, () => fn(params, testInfo));
+    await testInfo._runWithTimeout(runnable, () => fn(params.result, testInfo));
   }
 
   private async _setupFixtureForRegistration(registration: FixtureRegistration, testInfo: TestInfoImpl, runnable: RunnableDescription): Promise<Fixture> {

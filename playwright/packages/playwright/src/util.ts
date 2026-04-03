@@ -19,13 +19,14 @@ import path from 'path';
 import url from 'url';
 import util from 'util';
 
-import { parseStackFrame, sanitizeForFilePath, calculateSha1, isRegExp, isString, stringifyStackFrames, escapeWithQuotes } from 'playwright-core/lib/utils';
-import { colors, debug, mime, minimatch } from 'playwright-core/lib/utilsBundle';
+import { parseStackFrame, sanitizeForFilePath, calculateSha1, isRegExp, isString, stringifyStackFrames } from 'playwright-core/lib/utils';
+import { debug, mime, minimatch } from 'playwright-core/lib/utilsBundle';
 
 import type { Location } from './../types/testReporter';
 import type { TestInfoErrorImpl } from './common/ipc';
 import type { StackFrame } from '@protocol/channels';
 import type { RawStack } from 'playwright-core/lib/utils';
+import type { TestCase } from './common/test';
 
 const PLAYWRIGHT_TEST_PATH = path.join(__dirname, '..');
 const PLAYWRIGHT_CORE_PATH = path.dirname(require.resolve('playwright-core/package.json'));
@@ -82,14 +83,21 @@ export type TestFileFilter = {
   column: number | null;
 };
 
+export type TestCaseFilter = (test: TestCase) => boolean;
+
+export function parseLocationArg(arg: string): { file: string, line: number | null, column: number | null } {
+  const match = /^(.*?):(\d+):?(\d+)?$/.exec(arg);
+  return {
+    file: match ? match[1] : arg,
+    line: match ? parseInt(match[2], 10) : null,
+    column: match?.[3] ? parseInt(match[3], 10) : null,
+  };
+}
+
 export function createFileFiltersFromArguments(args: string[]): TestFileFilter[] {
   return args.map(arg => {
-    const match = /^(.*?):(\d+):?(\d+)?$/.exec(arg);
-    return {
-      re: forceRegExp(match ? match[1] : arg),
-      line: match ? parseInt(match[2], 10) : null,
-      column: match?.[3] ? parseInt(match[3], 10) : null,
-    };
+    const parsed = parseLocationArg(arg);
+    return { re: forceRegExp(parsed.file), line: parsed.line, column: parsed.column };
   });
 }
 
@@ -147,7 +155,7 @@ export function createTitleMatcher(patterns: RegExp | RegExp[]): Matcher {
   };
 }
 
-export function mergeObjects<A extends object, B extends object, C extends object>(a: A | undefined | void, b: B | undefined | void, c: B | undefined | void): A & B & C {
+export function mergeObjects<A extends object, B extends object, C extends object>(a: A | undefined | void, b: B | undefined | void, c: C | undefined | void): A & B & C {
   const result = { ...a } as any;
   for (const x of [b, c].filter(Boolean)) {
     for (const [name, value] of Object.entries(x as any)) {
@@ -223,15 +231,6 @@ export function getContainedPath(parentPath: string, subPath: string = ''): stri
 }
 
 export const debugTest = debug('pw:test');
-
-export const callLogText = (log: string[] | undefined) => {
-  if (!log || !log.some(l => !!l))
-    return '';
-  return `
-Call log:
-${colors.dim(log.join('\n'))}
-`;
-};
 
 const folderToPackageJsonPath = new Map<string, string>();
 
@@ -415,27 +414,4 @@ export async function removeDirAndLogToConsole(dir: string) {
   }
 }
 
-export const ansiRegex = new RegExp('([\\u001B\\u009B][[\\]()#;?]*(?:(?:(?:[a-zA-Z\\d]*(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~])))', 'g');
-export function stripAnsiEscapes(str: string): string {
-  return str.replace(ansiRegex, '');
-}
-
-export type TestStepCategory = 'expect' | 'fixture' | 'hook' | 'pw:api' | 'test.step' | 'test.attach';
-
-export function stepTitle(category: TestStepCategory, title: string): string {
-  switch (category) {
-    case 'fixture':
-      return `Fixture ${escapeWithQuotes(title, '"')}`;
-    case 'expect':
-      return `Expect ${escapeWithQuotes(title, '"')}`;
-    case 'test.step':
-      return title;
-    case 'test.attach':
-      return `Attach ${escapeWithQuotes(title, '"')}`;
-    case 'hook':
-    case 'pw:api':
-      return title;
-    default:
-      return `[${category}] ${title}`;
-  }
-}
+export { ansiRegex, stripAnsiEscapes } from 'playwright-core/lib/utils';

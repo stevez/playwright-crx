@@ -254,7 +254,7 @@ export class CRNetworkManager {
       this._requestIdToRequestWillBeSentEvent.delete(requestId);
     } else {
       const existingRequest = this._requestIdToRequest.get(requestId);
-      const alreadyContinuedParams = existingRequest?._route?._alreadyContinuedParams;
+      const alreadyContinuedParams = existingRequest?._originalRequestRoute?._alreadyContinuedParams;
       if (alreadyContinuedParams && !event.redirectedRequestId) {
         // Sometimes Chromium network stack restarts the request internally.
         // For example, when no-cors request hits a "less public address space", it should be resent with cors.
@@ -340,6 +340,10 @@ export class CRNetworkManager {
       if (redirectedFrom || (!this._userRequestInterceptionEnabled && this._protocolRequestInterceptionEnabled)) {
         // Chromium does not preserve header overrides between redirects, so we have to do it ourselves.
         headersOverride = redirectedFrom?._originalRequestRoute?._alreadyContinuedParams?.headers;
+        if (headersOverride) {
+          const originalHeaders = Object.entries(requestPausedEvent.request.headers).map(([name, value]) => ({ name, value }));
+          headersOverride = network.applyHeadersOverrides(originalHeaders, headersOverride);
+        }
         requestPausedSessionInfo!.session._sendMayFail('Fetch.continueRequest', { requestId: requestPausedEvent.requestId, headers: headersOverride });
       } else {
         route = new RouteImpl(requestPausedSessionInfo!.session, requestPausedEvent.requestId);
@@ -381,7 +385,7 @@ export class CRNetworkManager {
         return Buffer.from(response.body, response.base64Encoded ? 'base64' : 'utf8');
 
       // Make sure no network requests sent while reading the body for fulfilled requests.
-      if (request._route?._fulfilled)
+      if (request._originalRequestRoute?._fulfilled)
         return Buffer.from('');
 
       // For <link prefetch we are going to receive empty body with non-empty content-length expectation. Reach out for the actual content.
@@ -422,7 +426,8 @@ export class CRNetworkManager {
         responseStart: -1,
       };
     }
-    const response = new network.Response(request.request, responsePayload.status, responsePayload.statusText, headersObjectToArray(responsePayload.headers), timing, getResponseBody, !!responsePayload.fromServiceWorker, responsePayload.protocol);
+    const response = new network.Response(request.request, responsePayload.status, responsePayload.statusText, headersObjectToArray(responsePayload.headers), timing, getResponseBody, !!responsePayload.fromServiceWorker);
+    response._setHttpVersion(responsePayload?.protocol ?? null);
     if (responsePayload?.remoteIPAddress && typeof responsePayload?.remotePort === 'number') {
       response._serverAddrFinished({
         ipAddress: responsePayload.remoteIPAddress,
@@ -562,7 +567,6 @@ class InterceptableRequest {
   readonly _documentId: string | undefined;
   readonly _timestamp: number;
   readonly _wallTime: number;
-  readonly _route: RouteImpl | null;
   // Only first request in the chain can be intercepted, so this will
   // store the first and only Route in the chain (if any).
   readonly _originalRequestRoute: RouteImpl | undefined;
@@ -587,7 +591,6 @@ class InterceptableRequest {
     this._requestId = requestWillBeSentEvent.requestId;
     this._interceptionId = requestPausedEvent && requestPausedEvent.requestId;
     this._documentId = documentId;
-    this._route = route;
     this._originalRequestRoute = route ?? redirectedFrom?._originalRequestRoute;
 
     const {
@@ -596,13 +599,12 @@ class InterceptableRequest {
       url,
       postDataEntries = null,
     } = requestPausedEvent ? requestPausedEvent.request : requestWillBeSentEvent.request;
-    const type = (requestWillBeSentEvent.type || '').toLowerCase();
     let postDataBuffer = null;
     const entries = postDataEntries?.filter(entry => entry.bytes);
     if (entries && entries.length)
       postDataBuffer = Buffer.concat(entries.map(entry => Buffer.from(entry.bytes!, 'base64')));
 
-    this.request = new network.Request(context, frame, serviceWorker, redirectedFrom?.request || null, documentId, url, type, method, postDataBuffer,  headersOverride || headersObjectToArray(headers));
+    this.request = new network.Request(context, frame, serviceWorker, redirectedFrom?.request || null, documentId, url, toResourceType(requestWillBeSentEvent.type || 'Other'), method, postDataBuffer,  headersOverride || headersObjectToArray(headers));
   }
 }
 
@@ -835,5 +837,44 @@ class ResponseExtraInfoTracker {
 
   private _stopTracking(requestId: string) {
     this._requests.delete(requestId);
+  }
+}
+
+function toResourceType(type: Protocol.Network.ResourceType): network.ResourceType {
+  switch (type) {
+    case 'Document':
+      return 'document';
+    case 'Stylesheet':
+      return 'stylesheet';
+    case 'Image':
+      return 'image';
+    case 'Media':
+      return 'media';
+    case 'Font':
+      return 'font';
+    case 'Script':
+      return 'script';
+    case 'TextTrack':
+      return 'texttrack';
+    case 'XHR':
+      return 'xhr';
+    case 'Fetch':
+      return 'fetch';
+    case 'EventSource':
+      return 'eventsource';
+    case 'WebSocket':
+      return 'websocket';
+    case 'Manifest':
+      return 'manifest';
+    case 'Ping':
+      return 'ping';
+    case 'CSPViolationReport':
+      return 'cspreport';
+    case 'Prefetch':
+    case 'SignedExchange':
+    case 'Preflight':
+    case 'FedCM':
+    default:
+      return 'other';
   }
 }
