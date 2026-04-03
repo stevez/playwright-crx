@@ -71,7 +71,8 @@ export type RecorderEventMap = {
 
 export class Recorder extends EventEmitter<RecorderEventMap> implements InstrumentationListener {
   readonly handleSIGINT: boolean | undefined;
-  private _context: BrowserContext;
+  // patch(playwright-crx): expose _context for CrxRecorderApp
+  _context: BrowserContext;
   private _params: channels.BrowserContextEnableRecorderParams;
   private _mode: Mode;
   private _highlightedElement: { selector?: string, ariaTemplate?: AriaTemplateNode } = {};
@@ -419,8 +420,33 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
     this.emit(RecorderEvent.CallLogsUpdated, logs);
   }
 
-  private _isRecording() {
+  // patch(playwright-crx): make _isRecording public
+  _isRecording() {
     return ['recording', 'assertingText', 'assertingVisibility', 'assertingValue', 'assertingSnapshot'].includes(this._mode);
+  }
+
+  // patch(playwright-crx): clearErrors - remove error call logs
+  clearErrors() {
+    const errors = [...this._currentCallsMetadata.keys()].filter(c => c.error);
+    for (const error of errors)
+      this._currentCallsMetadata.delete(error);
+    this._updateUserSources();
+  }
+
+  // patch(playwright-crx): setOutput - set language output order
+  setOutput(codegenId: string, _outputFile: string | undefined) {
+    this._currentLanguage = codegenId as Language;
+  }
+
+  // patch(playwright-crx): loadScript - stub for CrxRecorderApp compatibility
+  loadScript(_script: { actions: actions.ActionInContext[], deviceName: string, contextOptions: any, text: string, highlight?: any[] }) {
+    // In 1.54+, source management is handled by RecorderApp.
+    // This is a no-op stub for CrxRecorderApp compatibility.
+  }
+
+  // patch(playwright-crx): uninstall injected recorder from page
+  async _uninstallInjectedRecorder(page: Page) {
+    await Promise.all(page.frames().map(f => f.evaluateExpression('window.__pw_uninstall()').catch(() => {})));
   }
 
   private _readSource(fileName: string): string {

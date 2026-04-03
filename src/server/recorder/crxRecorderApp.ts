@@ -21,7 +21,6 @@ import type * as channels from '../../protocol/channels';
 import type { ActionInContextWithLocation } from './parser';
 import { PopupRecorderWindow } from './popupRecorderWindow';
 import { SidepanelRecorderWindow } from './sidepanelRecorderWindow';
-import type { IRecorderApp } from 'playwright-core/lib/server/recorder/recorderFrontend';
 import type { ActionInContext, ActionWithSelector } from '@recorder/actions';
 import { parse } from './parser';
 import { languageSet } from 'playwright-core/lib/server/codegen/languages';
@@ -51,7 +50,7 @@ export interface RecorderWindow {
   hideApp?: () => any;
 }
 
-export class CrxRecorderApp extends EventEmitter implements IRecorderApp {
+export class CrxRecorderApp extends EventEmitter {
   readonly wsEndpointForTest: string | undefined;
   private _crx: Crx;
   readonly _recorder: Recorder;
