@@ -23,7 +23,8 @@ jobs:
         env:
           NODE_OPTIONS: "--max_old_space_size=4096"
       - run: npm run test:install
-      - run: npx playwright install chromium
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium chrome
         working-directory: tests
       - run: npm run test
         env:
