@@ -226,7 +226,7 @@ test('test', async ({ page, context }) => {
   await newPage.goto('https://example.com');
   await expect(newPage.getByRole('heading')).toContainText('Example Domain');
   await newPage.close();
-});`);
+});`, true);
 
   expect.soft(actions).toMatchObject([
     { pageAlias: 'page', name: 'openPage' },

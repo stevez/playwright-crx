@@ -102,7 +102,7 @@ export const CrxRecorder: React.FC = ({
     window.dispatch = async (data: any) => {
       port.postMessage({ type: 'recorderEvent', ...data });
       if (data.event === 'fileChanged')
-        setSelectedFileId(data.params.file);
+        setSelectedFileId(data.params.fileId);
     };
     loadSettings().then(settings => {
       setSettings(settings);

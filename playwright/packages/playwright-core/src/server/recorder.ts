@@ -254,9 +254,9 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
       return;
     this._highlightedElement = {};
     this._mode = mode;
-    this.emit(RecorderEvent.ModeChanged, this._mode);
     this._setEnabled(this._isRecording());
     this._debugger.setMuted(this._isRecording());
+    this.emit(RecorderEvent.ModeChanged, this._mode);
     if (this._mode !== 'none' && this._mode !== 'standby' && this._context.pages().length === 1)
       this._context.pages()[0].bringToFront().catch(() => {});
     this._refreshOverlay();

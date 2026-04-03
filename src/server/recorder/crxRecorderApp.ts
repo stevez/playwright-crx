@@ -41,7 +41,7 @@ export type RecorderMessage = { type: 'recorder' } & (
   | { method: 'elementPicked', elementInfo: ElementInfo, userGesture?: boolean }
 );
 
-export type RecorderEventData =  (EventData | { event: 'resetCallLogs' | 'codeChanged' | 'cursorActivity' | 'fileChanged' | 'clear', params: any }) & { type: string };
+export type RecorderEventData =  (EventData | { event: 'resetCallLogs' | 'codeChanged' | 'cursorActivity' | 'fileChanged' | 'clear' | 'highlightRequested' | 'pause', params: any }) & { type: string };
 
 export interface RecorderWindow {
   isClosed(): boolean;
@@ -89,9 +89,9 @@ export class CrxRecorderApp extends EventEmitter {
     recorder.on(RecorderEvent.ModeChanged, (mode: Mode) => {
       this.setMode(mode);
     });
-    recorder.on(RecorderEvent.PausedStateChanged, (paused: boolean) => {
-      this.setPaused(paused);
-    });
+    // CRX manages paused state independently via step/resume/setMode handlers.
+    // Don't forward the recorder's debugger pause state — it would override
+    // our manually managed paused state and disable the step button.
     recorder.on(RecorderEvent.CallLogsUpdated, (callLogs: CallLog[]) => {
       this.updateCallLogs(callLogs);
     });
@@ -154,7 +154,7 @@ export class CrxRecorderApp extends EventEmitter {
 
     // set in recorder before, so that if it opens the recorder UI window, it will already reflect the changes
     this._onMessage({ type: 'recorderEvent', event: 'clear', params: {} });
-    this._onMessage({ type: 'recorderEvent', event: 'fileChanged', params: { file: language } });
+    this._onMessage({ type: 'recorderEvent', event: 'fileChanged', params: { fileId: language } });
     this._recorder.setOutput(language, undefined);
     this._recorder.setMode(mode);
 
@@ -192,10 +192,15 @@ export class CrxRecorderApp extends EventEmitter {
   }
 
   async setMode(mode: Mode) {
-    if (!this._recorder._isRecording())
-      this._crx.player.pause().catch(() => {});
-    else
+    if (!this._recorder._isRecording()) {
       this._crx.player.stop().catch(() => {});
+      this._actionIndex = 0;
+      // Signal paused state so step/resume buttons are enabled
+      this.setPaused(true);
+    } else {
+      this._crx.player.stop().catch(() => {});
+      this.setPaused(false);
+    }
 
     if (this._mode !== mode) {
       this._mode = mode;
@@ -267,48 +272,70 @@ export class CrxRecorderApp extends EventEmitter {
     this._onMessage({ type: 'recorderEvent', event: 'highlightRequested', params: { selector } });
   }
 
+  // Mirrors upstream RecorderApp._handleUIEvent (recorderApp.ts)
+  // Routes UI events to the Recorder, matching the reverse direction
+  // that was previously handled by the removed IRecorderApp interface.
   private _onMessage({ type, event, params }: RecorderEventData) {
-    if (type === 'recorderEvent') {
-      switch (event) {
-        case 'clear':
-          this._recordedActions = [];
-          this._generateSources();
-          this._recorder.clear();
-          break;
-        case 'fileChanged':
-          this._filename = params.file;
-          if (this._editedCode?.hasErrors()) {
-            this._updateCode(null);
-            // force editor sources to refresh
-            if (this._sources)
-              this.setSources(this._sources);
-          }
-          break;
-        case 'codeChanged':
-          this._updateCode(params.code);
-          break;
-        case 'cursorActivity':
-          this._currentCursorPosition = params.position;
-          this._updateLocator(this._currentCursorPosition);
-          break;
-        case 'resume':
-        case 'step':
-          this._run().catch(() => {});
-          break;
-        case 'setMode':
-          const { mode } = params;
-          if (this._mode !== mode) {
-            this._mode = mode;
-            this.emit('modeChanged', { mode });
-          }
-          break;
-      }
+    if (type !== 'recorderEvent')
+      return;
 
-      this.emit('event', { event, params });
+    switch (event) {
+      case 'clear':
+        this._recordedActions = [];
+        this._actionIndex = 0;
+        this._generateSources();
+        this._recorder.clear();
+        break;
+      case 'fileChanged':
+        this._filename = params.fileId;
+        this._recorder.setOutput(params.fileId, undefined);
+        if (this._editedCode?.hasErrors()) {
+          this._updateCode(null);
+          // force editor sources to refresh
+          if (this._sources)
+            this.setSources(this._sources);
+        }
+        break;
+      case 'setMode':
+        this._recorder.setMode(params.mode);
+        break;
+      case 'resume':
+        this.setPaused(false);
+        this._run(false).catch(() => {});
+        break;
+      case 'pause':
+        this._crx.player.stop().catch(() => {});
+        this.setPaused(true);
+        break;
+      case 'step':
+        // Don't call this._recorder.step() — it sets the debugger to pause
+        // on next statement, which would block the CRX player's actions.
+        // CRX manages stepping independently via _run(step=true).
+        this.setPaused(false);
+        this._run(true).catch(() => {});
+        break;
+      case 'highlightRequested':
+        if (params.selector)
+          this._recorder.setHighlightedSelector(params.selector);
+        if (params.ariaTemplate)
+          this._recorder.setHighlightedAriaTemplate(params.ariaTemplate);
+        break;
+      // CRX-specific events (not in upstream)
+      case 'codeChanged':
+        this._updateCode(params.code);
+        break;
+      case 'cursorActivity':
+        this._currentCursorPosition = params.position;
+        this._updateLocator(this._currentCursorPosition);
+        break;
     }
+
+    this.emit('event', { event, params });
   }
 
-  async _run() {
+  private _actionIndex = 0;
+
+  async _run(step: boolean) {
     if (this._crx.player.isPlaying())
       return;
     const incognito = this._playInIncognito;
@@ -317,7 +344,49 @@ export class CrxRecorderApp extends EventEmitter {
       await incognitoCrxApp?.close({ closeWindows: true });
     }
     const crxApp = await this._crx.get({ incognito }) ?? await this._crx.start({ incognito }, serverSideCallMetadata());
-    await this._crx.player.run(crxApp._context, this._getActions());
+    // Filter out the initial openPage for 'page' alias since the player skips it
+    const allActions = this._getActions().filter(a => !(a.action.name === 'openPage' && a.frame.pageAlias === 'page'));
+
+    // Mute the debugger so it doesn't intercept player's frame actions
+    const debugger_ = (this._recorder as any)._debugger;
+    debugger_?.setMuted(true);
+
+    if (step) {
+      // Step mode: run one action at a time
+      const action = allActions[this._actionIndex];
+      if (action) {
+        await this._crx.player.run(crxApp._context, [action]);
+        this._actionIndex++;
+      }
+      const hasMore = this._actionIndex < allActions.length;
+      if (hasMore) {
+        // Highlight the next action line as "paused" in the recorder sources
+        const nextAction = allActions[this._actionIndex];
+        if (nextAction?.location?.line)
+          this._highlightPausedLine(nextAction.location.line);
+      } else {
+        this._highlightPausedLine(undefined);
+      }
+      debugger_?.setMuted(false);
+      this.setPaused(hasMore);
+    } else {
+      // Resume mode: run all remaining actions
+      this._highlightPausedLine(undefined);
+      const actions = allActions.slice(this._actionIndex);
+      await this._crx.player.run(crxApp._context, actions);
+      this._actionIndex = allActions.length;
+      debugger_?.setMuted(false);
+      this.setPaused(false);
+    }
+  }
+
+  private _highlightPausedLine(line: number | undefined) {
+    const sources = this._recorderSources.map(s => ({
+      ...s,
+      highlight: line ? [{ line, type: 'paused' as const }] : [],
+      revealLine: line,
+    }));
+    this.setSources(sources);
   }
 
   _sendMessage(msg: RecorderMessage) {
@@ -338,7 +407,7 @@ export class CrxRecorderApp extends EventEmitter {
         return actions;
     }
 
-    const source = this._sources?.find(s => s.id === this._filename);
+    const source = this._recorderSources?.find(s => s.id === this._filename) ?? this._sources?.find(s => s.id === this._filename);
     if (!source)
       return [];
 
