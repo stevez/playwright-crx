@@ -25,8 +25,6 @@ jobs:
       - run: npm run test:install
       - run: npx playwright install chromium
         working-directory: tests
-      - name: Install system Chromium for headless extension support
-        run: sudo apt-get update && sudo apt-get install -y chromium-browser
       - run: npm run test
         env:
           HEADLESS: 1
