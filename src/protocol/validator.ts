@@ -16,19 +16,19 @@
 
 import 'playwright-core/lib/protocol/validator';
 
-import { scheme, tArray, tBoolean, tChannel, tEnum, tNumber, tObject, tOptional, tString } from 'playwright-core/lib/protocol/validatorPrimitives';
+import { scheme, tArray, tBoolean, tChannel, tEnum, tFloat, tInt, tObject, tOptional, tString } from 'playwright-core/lib/protocol/validatorPrimitives';
 
 const tBrowserContextOptions = () => tObject({
   colorScheme: tOptional(tEnum(['dark', 'light', 'no-preference'])),
   locale: tOptional(tString),
   timezoneId: tOptional(tString),
   geolocation: tOptional(tObject({
-    latitude: tNumber,
-    longitude: tNumber,
+    latitude: tFloat,
+    longitude: tFloat,
   })),
   viewport: tOptional(tObject({
-    width: tNumber,
-    height: tNumber,
+    width: tInt,
+    height: tInt,
   })),
   permissions: tOptional(tArray(tString)),
   serviceWorkers: tOptional(tEnum(['allow', 'block'])),
@@ -39,8 +39,6 @@ scheme.PlaywrightInitializer = tObject({
   chromium: tChannel(['BrowserType']),
   firefox: tChannel(['BrowserType']),
   webkit: tChannel(['BrowserType']),
-  bidiChromium: tChannel(['BrowserType']),
-  bidiFirefox: tChannel(['BrowserType']),
   android: tChannel(['Android']),
   electron: tChannel(['Electron']),
   utils: tOptional(tChannel(['LocalUtils'])),
@@ -52,7 +50,7 @@ scheme.PlaywrightInitializer = tObject({
 
 scheme.CrxInitializer = tOptional(tObject({}));
 scheme.CrxStartParams = tObject({
-  slowMo: tOptional(tNumber),
+  slowMo: tOptional(tInt),
   artifactsDir: tOptional(tString),
   downloadsPath: tOptional(tString),
   tracesDir: tOptional(tString),
@@ -70,16 +68,16 @@ scheme.CrxApplicationHideEvent = tOptional(tObject({}));
 scheme.CrxApplicationShowEvent = tOptional(tObject({}));
 scheme.CrxApplicationAttachedEvent = tObject({
   page: tChannel(['Page']),
-  tabId: tNumber,
+  tabId: tInt,
 });
 scheme.CrxApplicationDetachedEvent = tObject({
-  tabId: tNumber,
+  tabId: tInt,
 });
 scheme.CrxApplicationModeChangedEvent = tObject({
-  mode: tEnum(['none', 'recording', 'inspecting', 'assertingText', 'recording-inspecting', 'standby', 'assertingVisibility', 'assertingValue']),
+  mode: tEnum(['none', 'recording', 'inspecting', 'assertingText', 'recording-inspecting', 'standby', 'assertingVisibility', 'assertingValue', 'assertingSnapshot']),
 });
 scheme.CrxApplicationAttachParams = tObject({
-  tabId: tNumber,
+  tabId: tInt,
 });
 scheme.CrxApplicationAttachResult = tObject({
   page: tChannel(['Page']),
@@ -87,10 +85,10 @@ scheme.CrxApplicationAttachResult = tObject({
 scheme.CrxApplicationAttachAllParams = tObject({
   status: tOptional(tEnum(['loading', 'complete'])),
   lastFocusedWindow: tOptional(tBoolean),
-  windowId: tOptional(tNumber),
+  windowId: tOptional(tInt),
   windowType: tOptional(tEnum(['normal', 'popup', 'panel', 'app', 'devtools'])),
   active: tOptional(tBoolean),
-  index: tOptional(tNumber),
+  index: tOptional(tInt),
   title: tOptional(tString),
   url: tOptional(tArray(tString)),
   currentWindow: tOptional(tBoolean),
@@ -100,24 +98,24 @@ scheme.CrxApplicationAttachAllParams = tObject({
   pinned: tOptional(tBoolean),
   audible: tOptional(tBoolean),
   muted: tOptional(tBoolean),
-  groupId: tOptional(tNumber),
+  groupId: tOptional(tInt),
 });
 scheme.CrxApplicationAttachAllResult = tObject({
   pages: tArray(tChannel(['Page'])),
 });
 scheme.CrxApplicationDetachParams = tObject({
-  tabId: tOptional(tNumber),
+  tabId: tOptional(tInt),
   page: tOptional(tChannel(['Page'])),
 });
 scheme.CrxApplicationDetachResult = tOptional(tObject({}));
 scheme.CrxApplicationDetachAllParams = tOptional(tObject({}));
 scheme.CrxApplicationDetachAllResult = tOptional(tObject({}));
 scheme.CrxApplicationNewPageParams = tObject({
-  index: tOptional(tNumber),
-  openerTabId: tOptional(tNumber),
+  index: tOptional(tInt),
+  openerTabId: tOptional(tInt),
   url: tOptional(tString),
   pinned: tOptional(tBoolean),
-  windowId: tOptional(tNumber),
+  windowId: tOptional(tInt),
   active: tOptional(tBoolean),
   selected: tOptional(tBoolean),
 });
@@ -125,7 +123,7 @@ scheme.CrxApplicationNewPageResult = tObject({
   page: tChannel(['Page']),
 });
 scheme.CrxApplicationShowRecorderParams = tObject({
-  mode: tOptional(tEnum(['none', 'recording', 'inspecting', 'assertingText', 'recording-inspecting', 'standby', 'assertingVisibility', 'assertingValue'])),
+  mode: tOptional(tEnum(['none', 'recording', 'inspecting', 'assertingText', 'recording-inspecting', 'standby', 'assertingVisibility', 'assertingValue', 'assertingSnapshot'])),
   language: tOptional(tString),
   testIdAttributeName: tOptional(tString),
   playInIncognito: tOptional(tBoolean),
@@ -138,7 +136,7 @@ scheme.CrxApplicationShowRecorderResult = tOptional(tObject({}));
 scheme.CrxApplicationHideRecorderParams = tOptional(tObject({}));
 scheme.CrxApplicationHideRecorderResult = tOptional(tObject({}));
 scheme.CrxApplicationSetModeParams = tObject({
-  mode: tEnum(['none', 'recording', 'inspecting', 'assertingText', 'recording-inspecting', 'standby', 'assertingVisibility', 'assertingValue']),
+  mode: tEnum(['none', 'recording', 'inspecting', 'assertingText', 'recording-inspecting', 'standby', 'assertingVisibility', 'assertingValue', 'assertingSnapshot']),
 });
 scheme.CrxApplicationSetModeResult = tOptional(tObject({}));
 scheme.CrxApplicationCloseParams = tOptional(tObject({}));
@@ -155,8 +153,8 @@ scheme.CrxApplicationListResult = tObject({
     })),
     location: tOptional(tObject({
       file: tString,
-      line: tOptional(tNumber),
-      column: tOptional(tNumber),
+      line: tOptional(tInt),
+      column: tOptional(tInt),
     })),
   }))
 });

@@ -27,8 +27,11 @@ import type { ActionInContextWithLocation, Location } from './parser';
 import type { ActionInContext, FrameDescription } from '@recorder/actions';
 import { toClickOptions } from 'playwright-core/lib/server/recorder/recorderRunner';
 import { parseAriaSnapshotUnsafe } from 'playwright-core/lib/utils/isomorphic/ariaSnapshot';
-import { serverSideCallMetadata } from 'playwright-core/lib/server';
 import type { Crx } from '../crx';
+
+function serverSideCallMetadata(): CallMetadata {
+  return { id: '', startTime: 0, endTime: 0, type: 'Internal', method: '', params: {}, log: [], internal: true };
+}
 import type { InstrumentationListener } from 'playwright-core/lib/server/instrumentation';
 import { traceParamsForAction } from './recorderUtils';
 import { yaml } from 'playwright-core/lib/utilsBundle';

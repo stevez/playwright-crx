@@ -35,6 +35,8 @@ export default defineConfig({
       './zipBundleImpl': '../bundles/zip/src/zipBundleImpl',
       './babelBundleImpl': '../../bundles/babel/src/babelBundleImpl',
       './expectBundleImpl': '../../bundles/expect/src/expectBundleImpl',
+      './zodBundleImpl': '../bundles/zod/src/zodBundleImpl',
+      './mcpBundleImpl': '../bundles/mcp/src/mcpBundleImpl',
 
       // shims
       '_url': path.resolve(__dirname, './node_modules/url'),
@@ -70,10 +72,17 @@ export default defineConfig({
 
       'fs/promises': path.resolve(__dirname, './src/shims/fs/promises'),
 
+      'node:crypto': path.resolve(__dirname, './node_modules/crypto-browserify'),
       'node:events': path.resolve(__dirname, './node_modules/events'),
       'node:module': path.resolve(__dirname, './src/shims/module'),
       'node:stream': path.resolve(__dirname, './node_modules/readable-stream'),
       'node:string_decoder': path.resolve(__dirname, './node_modules/string_decoder'),
+      'node:tls': path.resolve(__dirname, './src/shims/tls'),
+      'node:url': path.resolve(__dirname, './src/shims/url'),
+      'node:process': path.resolve(__dirname, './node_modules/process'),
+      'node:child_process': path.resolve(__dirname, './src/shims/child_process'),
+      'node:path': path.resolve(__dirname, './node_modules/path'),
+      'node:fs': path.resolve(__dirname, './src/shims/fs'),
     },
   },
   define: {
@@ -107,6 +116,10 @@ export default defineConfig({
     rollupOptions: {
       // @ts-ignore
       plugins: [sourcemaps()],
+      external: [
+        /playwright-core\/index\.mjs$/,
+        /playwright-core\/index\.js$/,
+      ],
       output: {
         exports: 'named',
       },
@@ -121,6 +134,9 @@ export default defineConfig({
         path.resolve(__dirname, './playwright/packages/playwright-core/src/server/recorder/recorderApp.ts'),
         // prevent from resolving require('./bidiOverCdp')
         path.resolve(__dirname, './playwright/packages/playwright-core/src/server/bidi/bidiChromium.ts'),
+        // exclude package entry points (CJS/ESM interop issues)
+        path.resolve(__dirname, './playwright/packages/playwright-core/index.mjs'),
+        path.resolve(__dirname, './playwright/packages/playwright/index.mjs'),
       ],
       include: [
         path.resolve(__dirname, './playwright/packages/playwright/src/**/*'),
