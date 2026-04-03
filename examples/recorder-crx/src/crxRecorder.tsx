@@ -19,7 +19,7 @@ import { Toolbar } from '@web/components/toolbar';
 import { ToolbarButton, ToolbarSeparator } from '@web/components/toolbarButton';
 import { Dialog } from './dialog';
 import { PreferencesForm } from './preferencesForm';
-import type { CallLog, ElementInfo, Mode, Source } from '@recorder/recorderTypes';
+import type { Source } from '@recorder/recorderTypes';
 import { Recorder } from '@recorder/recorder';
 import type { CrxSettings } from './settings';
 import { addSettingsChangedListener, defaultSettings, loadSettings, removeSettingsChangedListener } from './settings';
@@ -27,14 +27,6 @@ import ModalContainer, { create as createModal } from 'react-modal-promise';
 import { SaveCodeForm } from './saveCodeForm';
 import './crxRecorder.css';
 import './form.css';
-
-function setElementPicked(elementInfo: ElementInfo, userGesture?: boolean) {
-  window.playwrightElementPicked(elementInfo, userGesture);
-}
-
-function setRunningFileId(fileId: string) {
-  window.playwrightSetRunningFile(fileId);
-}
 
 function download(filename: string, text: string) {
   const blob = new Blob([text], { type: 'text/plain' });
@@ -72,11 +64,8 @@ const codegenFilenames: Record<string, string> = {
 export const CrxRecorder: React.FC = ({
 }) => {
   const [settings, setSettings] = React.useState<CrxSettings>(defaultSettings);
-  const [sources, setSources] = React.useState<Source[]>([]);
-  const [paused, setPaused] = React.useState(false);
-  const [log, setLog] = React.useState(new Map<string, CallLog>());
-  const [mode, setMode] = React.useState<Mode>('none');
   const [selectedFileId, setSelectedFileId] = React.useState<string>(defaultSettings.targetLanguage);
+  const [sources, setSources] = React.useState<Source[]>([]);
 
   React.useEffect(() => {
     const port = chrome.runtime.connect({ name: 'recorder' });
@@ -85,29 +74,36 @@ export const CrxRecorder: React.FC = ({
         return;
 
       switch (msg.method) {
-        case 'setPaused': setPaused(msg.paused); break;
-        case 'setMode': setMode(msg.mode); break;
-        case 'setSources': setSources(msg.sources); break;
-        case 'resetCallLogs': setLog(new Map()); break;
-        case 'updateCallLogs': setLog(log => {
-          const newLog = new Map<string, CallLog>(log);
-          for (const callLog of msg.callLogs) {
-            callLog.reveal = !log.has(callLog.id);
-            newLog.set(callLog.id, callLog);
-          }
-          return newLog;
-        }); break;
-        case 'setRunningFile': setRunningFileId(msg.file); break;
-        case 'elementPicked': setElementPicked(msg.elementInfo, msg.userGesture); break;
+        case 'setPaused':
+          window.dispatch({ method: 'pauseStateChanged', params: { paused: msg.paused } });
+          break;
+        case 'setMode':
+          window.dispatch({ method: 'modeChanged', params: { mode: msg.mode } });
+          break;
+        case 'setSources':
+          setSources(msg.sources);
+          window.dispatch({ method: 'sourcesUpdated', params: { sources: msg.sources } });
+          break;
+        case 'resetCallLogs':
+          window.dispatch({ method: 'callLogsUpdated', params: { callLogs: [] } });
+          break;
+        case 'updateCallLogs':
+          window.dispatch({ method: 'callLogsUpdated', params: { callLogs: msg.callLogs } });
+          break;
+        case 'elementPicked':
+          window.dispatch({ method: 'elementPicked', params: { elementInfo: msg.elementInfo, userGesture: msg.userGesture } });
+          break;
       }
     };
     port.onMessage.addListener(onMessage);
 
-    window.dispatch = async (data: any) => {
-      port.postMessage({ type: 'recorderEvent', ...data });
-      if (data.event === 'fileChanged')
-        setSelectedFileId(data.params.file);
+    // Wire sendCommand to forward to the CRX backend
+    window.sendCommand = async (data: { method: string; params?: any }) => {
+      port.postMessage({ type: 'recorderEvent', event: data.method, params: data.params ?? {} });
+      if (data.method === 'fileChanged')
+        setSelectedFileId(data.params.fileId);
     };
+
     loadSettings().then(settings => {
       setSettings(settings);
       setSelectedFileId(settings.targetLanguage);
@@ -179,14 +175,6 @@ export const CrxRecorder: React.FC = ({
     };
   }, [selectedFileId, settings, saveCode]);
 
-  const dispatchEditedCode = React.useCallback((code: string) => {
-    window.dispatch({ event: 'codeChanged', params: { code } });
-  }, []);
-
-  const dispatchCursorActivity = React.useCallback((position: { line: number }) => {
-    window.dispatch({ event: 'cursorActivity', params: { position } });
-  }, []);
-
   return <>
     <ModalContainer />
 
@@ -205,7 +193,7 @@ export const CrxRecorder: React.FC = ({
           <ToolbarButton icon='settings-gear' title='Preferences' onClick={showPreferences}></ToolbarButton>
         </Toolbar>
       </>}
-      <Recorder sources={sources} paused={paused} log={log} mode={mode} onEditedCode={dispatchEditedCode} onCursorActivity={dispatchCursorActivity} />
+      <Recorder />
     </div>
   </>;
 };
