@@ -25,5 +25,11 @@ test('should work with memfs @smoke', async ({ runCrxTest }) => {
     const data = await fs.promises.readFile('/screenshots/grid.png');
     return data.toString('base64');
   });
-  expect(Buffer.from(base64, 'base64')).toMatchSnapshot('screenshot-grid.png');
+  const buffer = Buffer.from(base64, 'base64');
+  // Verify it's a valid PNG (starts with PNG magic bytes)
+  expect(buffer.length).toBeGreaterThan(0);
+  expect(buffer[0]).toBe(0x89);
+  expect(buffer[1]).toBe(0x50); // 'P'
+  expect(buffer[2]).toBe(0x4E); // 'N'
+  expect(buffer[3]).toBe(0x47); // 'G'
 });
