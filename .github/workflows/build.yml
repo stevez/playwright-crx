@@ -23,7 +23,13 @@ jobs:
         env:
           NODE_OPTIONS: "--max_old_space_size=4096"
       - run: npm run test:install
-      - run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" -- npm run test
+      - run: npx playwright install chromium
+        working-directory: tests
+      - name: Install system Chromium for headless extension support
+        run: sudo apt-get update && sudo apt-get install -y chromium-browser
+      - run: npm run test
+        env:
+          HEADLESS: 1
       - uses: actions/upload-artifact@v4
         with:
           name: recorder-crx
