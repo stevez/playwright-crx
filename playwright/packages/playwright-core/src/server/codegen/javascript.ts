@@ -37,7 +37,7 @@ export class JavaScriptLanguageGenerator implements LanguageGenerator {
 
   generateAction(actionInContext: actions.ActionInContext): string {
     const action = actionInContext.action;
-    if (this._isTest && actionInContext.frame.pageAlias === 'page' && (action.name === 'openPage' || action.name === 'closePage'))
+    if (this._isTest && (action.name === 'openPage' || action.name === 'closePage'))
       return '';
 
     const pageAlias = actionInContext.frame.pageAlias;
@@ -118,8 +118,10 @@ export class JavaScriptLanguageGenerator implements LanguageGenerator {
         const assertion = action.value ? `toHaveValue(${quote(action.value)})` : `toBeEmpty()`;
         return `${this._isTest ? '' : '// '}await expect(${subject}.${this._asLocator(action.selector)}).${assertion};`;
       }
-      case 'assertSnapshot':
-        return `${this._isTest ? '' : '// '}await expect(${subject}.${this._asLocator(action.selector)}).toMatchAriaSnapshot(${quoteMultiline(action.snapshot)});`;
+      case 'assertSnapshot': {
+        const commentIfNeeded = this._isTest ? '' : '// ';
+        return `${commentIfNeeded}await expect(${subject}.${this._asLocator(action.selector)}).toMatchAriaSnapshot(${quoteMultiline(action.ariaSnapshot, `${commentIfNeeded}  `)});`;
+      }
     }
   }
 
@@ -127,9 +129,9 @@ export class JavaScriptLanguageGenerator implements LanguageGenerator {
     return asLocator('javascript', selector);
   }
 
-  generateHeader(options: LanguageGeneratorOptions, includeContext?: boolean): string {
+  generateHeader(options: LanguageGeneratorOptions): string {
     if (this._isTest)
-      return this.generateTestHeader(options, includeContext);
+      return this.generateTestHeader(options);
     return this.generateStandaloneHeader(options);
   }
 
@@ -139,13 +141,13 @@ export class JavaScriptLanguageGenerator implements LanguageGenerator {
     return this.generateStandaloneFooter(saveStorage);
   }
 
-  generateTestHeader(options: LanguageGeneratorOptions, includeContext?: boolean): string {
+  generateTestHeader(options: LanguageGeneratorOptions): string {
     const formatter = new JavaScriptFormatter();
     const useText = formatContextOptions(options.contextOptions, options.deviceName, this._isTest);
     formatter.add(`
       import { test, expect${options.deviceName ? ', devices' : ''} } from '@playwright/test';
 ${useText ? '\ntest.use(' + useText + ');\n' : ''}
-      test('test', async ({ page${includeContext ? ', context' : ''} }) => {`);
+      test('test', async ({ page }) => {`);
     if (options.contextOptions.recordHar) {
       const url = options.contextOptions.recordHar.urlFilter;
       formatter.add(`  await page.routeFromHAR(${quote(options.contextOptions.recordHar.path)}${url ? `, ${formatOptions({ url }, false)}` : ''});`);
