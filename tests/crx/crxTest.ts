@@ -103,6 +103,7 @@ export const test = base.extend<CrxFixtureOptions & {
         context: async ({ extensionPath, createUserDataDir }, use) => {
           const headless = !!process.env.HEADLESS;
           const context = await chromium.launchPersistentContext(createUserDataDir(), {
+            channel: headless ? 'chromium' : undefined,
             headless,
             args: [
               `--disable-extensions-except=${extensionPath}`,
