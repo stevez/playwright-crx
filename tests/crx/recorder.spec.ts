@@ -18,8 +18,7 @@ import fs from 'fs';
 import path from 'path';
 import { test, expect } from './crxRecorderTest';
 
-test('should record @smoke', async ({ page, attachRecorder, recordAction, baseURL }) => {
-  const recorderPage = await attachRecorder(page);
+test('should record @smoke', async ({ page, recorderPage, recordAction, baseURL }) => {
 
   await recordAction(() => page.goto(`${baseURL}/input/textarea.html`));
   await recordAction(() => page.locator('textarea').click());

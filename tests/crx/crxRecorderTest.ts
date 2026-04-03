@@ -89,7 +89,23 @@ export const test = crxTest.extend<{
         attachRecorder: async ({ extensionServiceWorker, extensionId, context }, run) => {
           await run(async (page: Page) => {
             let recorderPage = context.pages().find(p => p.url().startsWith(`chrome-extension://${extensionId}`));
-            const recorderPagePromise = recorderPage ? undefined : context.waitForEvent('page');
+            const recorderPagePromise = recorderPage ? undefined : new Promise<Page>(resolve => {
+              const onPage = (p: Page) => {
+                if (p.url().startsWith(`chrome-extension://${extensionId}`)) {
+                  context.off('page', onPage);
+                  resolve(p);
+                } else {
+                  // wait for navigation in case URL isn't set yet
+                  p.once('framenavigated', () => {
+                    if (p.url().startsWith(`chrome-extension://${extensionId}`)) {
+                      context.off('page', onPage);
+                      resolve(p);
+                    }
+                  });
+                }
+              };
+              context.on('page', onPage);
+            });
 
             await page.bringToFront();
             await extensionServiceWorker.evaluate(async () => {
