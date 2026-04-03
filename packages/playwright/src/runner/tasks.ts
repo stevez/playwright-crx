@@ -23,7 +23,7 @@ import { debug } from 'playwright-core/lib/utilsBundle';
 
 import { Dispatcher  } from './dispatcher';
 import { FailureTracker } from './failureTracker';
-import { collectProjectsAndTestFiles, createRootSuite, loadFileSuites, loadGlobalHook } from './loadUtils';
+import { collectProjectsAndTestFiles, createRootSuite, loadFileSuites, loadGlobalHook, loadTestList } from './loadUtils';
 import { buildDependentProjects, buildTeardownToSetupsMap, filterProjects } from './projectUtils';
 import { applySuggestedRebaselines, clearSuggestedRebaselines } from './rebase';
 import { TaskRunner } from './taskRunner';
@@ -31,10 +31,9 @@ import { detectChangedTestFiles } from './vcs';
 import { Suite } from '../common/test';
 import { createTestGroups } from '../runner/testGroups';
 import { cacheDir } from '../transform/compilationCache';
-import { removeDirAndLogToConsole } from '../util';
+import { createFileMatcherFromArguments, removeDirAndLogToConsole } from '../util';
 
 import type { TestGroup } from '../runner/testGroups';
-import type { Matcher } from '../util';
 import type { EnvByProjectId } from './dispatcher';
 import type { TestRunnerPluginRegistration } from '../plugins';
 import type { Task } from './taskRunner';
@@ -64,11 +63,12 @@ export class TestRun {
   readonly phases: Phase[] = [];
   projectFiles: Map<FullProjectInternal, string[]> = new Map();
   projectSuites: Map<FullProjectInternal, Suite[]> = new Map();
+  topLevelProjects: FullProjectInternal[] = [];
 
-  constructor(config: FullConfigInternal, reporter: InternalReporter) {
+  constructor(config: FullConfigInternal, reporter: InternalReporter, options?: { pauseOnError?: boolean, pauseAtEnd?: boolean }) {
     this.config = config;
     this.reporter = reporter;
-    this.failureTracker = new FailureTracker(config);
+    this.failureTracker = new FailureTracker(config, options);
   }
 }
 
@@ -103,7 +103,7 @@ async function finishTaskRun(testRun: TestRun, status: FullResult['status']) {
 
 export function createGlobalSetupTasks(config: FullConfigInternal) {
   const tasks: Task<TestRun>[] = [];
-  if (!config.configCLIOverrides.preserveOutputDir && !process.env.PW_TEST_NO_REMOVE_OUTPUT_DIRS)
+  if (!config.configCLIOverrides.preserveOutputDir)
     tasks.push(createRemoveOutputDirsTask());
   tasks.push(
       ...createPluginSetupTasks(config),
@@ -233,8 +233,9 @@ export function createListFilesTask(): Task<TestRun> {
   return {
     title: 'load tests',
     setup: async (testRun, errors) => {
-      testRun.rootSuite = await createRootSuite(testRun, errors, false);
-      testRun.failureTracker.onRootSuite(testRun.rootSuite);
+      const { rootSuite, topLevelProjects } = await createRootSuite(testRun, errors, false);
+      testRun.rootSuite = rootSuite;
+      testRun.failureTracker.onRootSuite(rootSuite, topLevelProjects);
       await collectProjectsAndTestFiles(testRun, false);
       for (const [project, files] of testRun.projectFiles) {
         const projectSuite = new Suite(project.project.name, 'project');
@@ -257,6 +258,24 @@ export function createLoadTask(mode: 'out-of-process' | 'in-process', options: {
   return {
     title: 'load tests',
     setup: async (testRun, errors, softErrors) => {
+      if (testRun.config.cliArgs.length)
+        testRun.config.loadFileFilters.push(createFileMatcherFromArguments(testRun.config.cliArgs));
+
+      if (testRun.config.cliTestList) {
+        const { testFilter, fileFilter } = await loadTestList(testRun.config, testRun.config.cliTestList);
+        testRun.config.preOnlyTestFilters.push(testFilter);
+        testRun.config.loadFileFilters.push(fileFilter);
+      }
+
+      if (testRun.config.cliTestListInvert) {
+        // Note: invert list does not mean we can filter files. For example, the following invert list
+        // can still run tests from foo.spec.ts:
+        //
+        // foo.spec.ts > some test
+        const { testFilter } = await loadTestList(testRun.config, testRun.config.cliTestListInvert);
+        testRun.config.preOnlyTestFilters.push(test => !testFilter(test));
+      }
+
       await collectProjectsAndTestFiles(testRun, !!options.doNotRunDepsOutsideProjectFilter);
       await loadFileSuites(testRun, mode, options.failOnLoadErrors ? errors : softErrors);
 
@@ -265,16 +284,19 @@ export function createLoadTask(mode: 'out-of-process' | 'in-process', options: {
           await plugin.instance?.populateDependencies?.();
       }
 
-      let cliOnlyChangedMatcher: Matcher | undefined = undefined;
       if (testRun.config.cliOnlyChanged) {
         const changedFiles = await detectChangedTestFiles(testRun.config.cliOnlyChanged, testRun.config.configDir);
-        cliOnlyChangedMatcher = file => changedFiles.has(file);
+        testRun.config.preOnlyTestFilters.push(test => changedFiles.has(test.location.file));
       }
 
-      testRun.rootSuite = await createRootSuite(testRun, options.failOnLoadErrors ? errors : softErrors, !!options.filterOnly, cliOnlyChangedMatcher);
-      testRun.failureTracker.onRootSuite(testRun.rootSuite);
+      const { rootSuite, topLevelProjects } = await createRootSuite(testRun, options.failOnLoadErrors ? errors : softErrors, !!options.filterOnly);
+      testRun.rootSuite = rootSuite;
+      testRun.failureTracker.onRootSuite(rootSuite, topLevelProjects);
       // Fail when no tests.
-      if (options.failOnLoadErrors && !testRun.rootSuite.allTests().length && !testRun.config.cliPassWithNoTests && !testRun.config.config.shard && !testRun.config.cliOnlyChanged) {
+      if (options.failOnLoadErrors && !testRun.rootSuite.allTests().length
+          && !testRun.config.cliPassWithNoTests
+          && !testRun.config.config.shard && !testRun.config.cliOnlyChanged
+          && !testRun.config.cliTestList && !testRun.config.cliTestListInvert) {
         if (testRun.config.cliArgs.length) {
           throw new Error([
             `No tests found.`,

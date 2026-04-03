@@ -17,6 +17,7 @@
 import { EventEmitter } from 'events';
 
 import { createGuid } from './utils/crypto';
+import { debugLogger } from './utils/debugLogger';
 
 import type { Browser } from './browser';
 import type { BrowserContext } from './browserContext';
@@ -29,6 +30,7 @@ import type { Page } from './page';
 import type { Playwright } from './playwright';
 import type { CallMetadata } from '@protocol/callMetadata';
 export type { CallMetadata } from '@protocol/callMetadata';
+import type { LogName } from './utils/debugLogger';
 
 export type Attribution = {
   playwright: Playwright;
@@ -39,10 +41,14 @@ export type Attribution = {
   frame?: Frame;
 };
 
-export class SdkObject extends EventEmitter {
+
+export type EventMap = Record<string | symbol, any[]>;
+
+export class SdkObject<EM extends EventMap = EventMap> extends EventEmitter<EM> {
   guid: string;
   attribution: Attribution;
   instrumentation: Instrumentation;
+  logName?: LogName;
 
   constructor(parent: SdkObject, guidPrefix?: string, guid?: string) {
     super();
@@ -51,12 +57,30 @@ export class SdkObject extends EventEmitter {
     this.attribution = { ...parent.attribution };
     this.instrumentation = parent.instrumentation;
   }
+
+  apiLog(message: string) {
+    if (!this.attribution.playwright.options.isInternalPlaywright)
+      debugLogger.log('api', message);
+  }
+
+  closeReason(): string | undefined {
+    return this.attribution.page?._closeReason ||
+      this.attribution.context?._closeReason ||
+      this.attribution.browser?._closeReason;
+  }
+}
+
+export function createRootSdkObject() {
+  const fakeParent = { attribution: {}, instrumentation: createInstrumentation() };
+  const root = new SdkObject(fakeParent as any);
+  root.guid = '';
+  return root;
 }
 
 export interface Instrumentation {
   addListener(listener: InstrumentationListener, context: BrowserContext | APIRequestContext | null): void;
   removeListener(listener: InstrumentationListener): void;
-  onBeforeCall(sdkObject: SdkObject, metadata: CallMetadata): Promise<void>;
+  onBeforeCall(sdkObject: SdkObject, metadata: CallMetadata, parentId?: string): Promise<void>;
   onBeforeInputAction(sdkObject: SdkObject, metadata: CallMetadata): Promise<void>;
   onCallLog(sdkObject: SdkObject, metadata: CallMetadata, logName: string, message: string): void;
   onAfterCall(sdkObject: SdkObject, metadata: CallMetadata): Promise<void>;
@@ -69,7 +93,7 @@ export interface Instrumentation {
 }
 
 export interface InstrumentationListener {
-  onBeforeCall?(sdkObject: SdkObject, metadata: CallMetadata): Promise<void>;
+  onBeforeCall?(sdkObject: SdkObject, metadata: CallMetadata, parentId?: string): Promise<void>;
   onBeforeInputAction?(sdkObject: SdkObject, metadata: CallMetadata): Promise<void>;
   onCallLog?(sdkObject: SdkObject, metadata: CallMetadata, logName: string, message: string): void;
   onAfterCall?(sdkObject: SdkObject, metadata: CallMetadata): Promise<void>;
@@ -101,17 +125,4 @@ export function createInstrumentation(): Instrumentation {
       };
     },
   });
-}
-
-export function serverSideCallMetadata(): CallMetadata {
-  return {
-    id: '',
-    startTime: 0,
-    endTime: 0,
-    type: 'Internal',
-    method: '',
-    params: {},
-    log: [],
-    isServerSide: true,
-  };
 }

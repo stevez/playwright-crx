@@ -18,6 +18,7 @@ import * as rawClockSource from '../generated/clockSource';
 
 import type { BrowserContext } from './browserContext';
 import type { InitScript } from './page';
+import type { Progress } from '@protocol/progress';
 
 export class Clock {
   private _browserContext: BrowserContext;
@@ -27,8 +28,8 @@ export class Clock {
     this._browserContext = browserContext;
   }
 
-  async resetForReuse() {
-    await this._browserContext.removeInitScripts(this._initScripts);
+  async uninstall(progress: Progress) {
+    await progress.race(Promise.all(this._initScripts.map(script => script.dispose())));
     this._initScripts = [];
   }
 
@@ -53,7 +54,17 @@ export class Clock {
     await this._evaluateInFrames(`globalThis.__pwClock.controller.pauseAt(${timeMillis})`);
   }
 
-  async resume() {
+  resumeNoReply() {
+    if (!this._initScripts.length)
+      return;
+    const doResume = async () => {
+      this._initScripts.push(await this._browserContext.addInitScript(`globalThis.__pwClock.controller.log('resume', ${Date.now()})`));
+      await this._evaluateInFrames(`globalThis.__pwClock.controller.resume()`);
+    };
+    doResume().catch(() => {});
+  }
+
+  async resume(progress: Progress) {
     await this._installIfNeeded();
     this._initScripts.push(await this._browserContext.addInitScript(`globalThis.__pwClock.controller.log('resume', ${Date.now()})`));
     await this._evaluateInFrames(`globalThis.__pwClock.controller.resume()`);
@@ -86,10 +97,12 @@ export class Clock {
     const script = `(() => {
       const module = {};
       ${rawClockSource.source}
-      globalThis.__pwClock = (module.exports.inject())(globalThis);
+      if (!globalThis.__pwClock)
+        globalThis.__pwClock = (module.exports.inject())(globalThis, ${JSON.stringify(this._browserContext._browser.options.name)});
     })();`;
-    this._initScripts.push(await this._browserContext.addInitScript(script));
+    const initScript = await this._browserContext.addInitScript(script);
     await this._evaluateInFrames(script);
+    this._initScripts.push(initScript);
   }
 
   private async _evaluateInFrames(script: string) {

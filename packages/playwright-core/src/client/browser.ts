@@ -34,8 +34,9 @@ export class Browser extends ChannelOwner<channels.BrowserChannel> implements ap
   private _closedPromise: Promise<void>;
   _shouldCloseConnectionOnClose = false;
   _browserType!: BrowserType;
-  _options: LaunchOptions = {};
+  private _options: LaunchOptions = {};
   readonly _name: string;
+  readonly _browserName: 'chromium' | 'webkit' | 'firefox';
   private _path: string | undefined;
   _closeReason: string | undefined;
 
@@ -46,6 +47,7 @@ export class Browser extends ChannelOwner<channels.BrowserChannel> implements ap
   constructor(parent: ChannelOwner, type: string, guid: string, initializer: channels.BrowserInitializer) {
     super(parent, type, guid, initializer);
     this._name = initializer.name;
+    this._browserName = initializer.browserName;
     this._channel.on('context', ({ context }) => this._didCreateContext(BrowserContext.from(context)));
     this._channel.on('close', () => this._didClose());
     this._closedPromise = new Promise(f => this.once(Events.Browser.Disconnected, f));
@@ -60,29 +62,28 @@ export class Browser extends ChannelOwner<channels.BrowserChannel> implements ap
   }
 
   async _newContextForReuse(options: BrowserContextOptions = {}): Promise<BrowserContext> {
-    return await this._wrapApiCall(async () => {
-      for (const context of this._contexts) {
-        await this._instrumentation.runBeforeCloseBrowserContext(context);
-        for (const page of context.pages())
-          page._onClose();
-        context._onClose();
-      }
-      return await this._innerNewContext(options, true);
-    }, { internal: true });
+    return await this._innerNewContext(options, true);
   }
 
-  async _stopPendingOperations(reason: string) {
-    await this._channel.stopPendingOperations({ reason });
+  async _disconnectFromReusedContext(reason: string) {
+    const context = [...this._contexts].find(context => context._forReuse);
+    if (!context)
+      return;
+    await this._instrumentation.runBeforeCloseBrowserContext(context);
+    for (const page of context.pages())
+      page._onClose();
+    context._onClose();
+    await this._channel.disconnectFromReusedContext({ reason });
   }
 
-  async _innerNewContext(options: BrowserContextOptions = {}, forReuse: boolean): Promise<BrowserContext> {
-    options = this._browserType._playwright.selectors._withSelectorOptions({
-      ...this._browserType._playwright._defaultContextOptions,
-      ...options,
-    });
+  async _innerNewContext(userOptions: BrowserContextOptions = {}, forReuse: boolean): Promise<BrowserContext> {
+    const options = this._browserType._playwright.selectors._withSelectorOptions(userOptions);
+    await this._instrumentation.runBeforeCreateBrowserContext(options);
     const contextOptions = await prepareBrowserContextParams(this._platform, options);
     const response = forReuse ? await this._channel.newContextForReuse(contextOptions) : await this._channel.newContext(contextOptions);
     const context = BrowserContext.from(response.context);
+    if (forReuse)
+      context._forReuse = true;
     if (options.logger)
       context._logger = options.logger;
     await context._initializeHarFromOptions(options.recordHar);
@@ -125,6 +126,15 @@ export class Browser extends ChannelOwner<channels.BrowserChannel> implements ap
 
   version(): string {
     return this._initializer.version;
+  }
+
+  async bind(title: string, options: { workspaceDir?: string, metadata?: Record<string, any>, host?: string, port?: number } = {}): Promise<{ endpoint: string }> {
+    const { endpoint } = await this._channel.startServer({ title, ...options });
+    return { endpoint };
+  }
+
+  async unbind(): Promise<void> {
+    await this._channel.stopServer();
   }
 
   async newPage(options: BrowserContextOptions = {}): Promise<Page> {

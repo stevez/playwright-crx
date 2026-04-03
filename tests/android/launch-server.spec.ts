@@ -19,7 +19,7 @@ import { androidTest as test, expect } from './androidTest';
 import { kTargetClosedErrorMessage } from '../config/errors';
 
 // Force a separate worker to avoid messing up with `androidDevice` fixture.
-test.use({ launchOptions: {} });
+test.use({ launchOptions: [async ({ launchOptions }, use) => use(launchOptions), { scope: 'worker' }] });
 
 test('android.launchServer should connect to a device', async ({ playwright }) => {
   const browserServer = await playwright._android.launchServer();
@@ -152,4 +152,16 @@ test('android.launchServer should terminate WS connection when device gets disco
     await browserServer.close();
     await new Promise(f => forwardingServer.close(f));
   }
+});
+
+test('android.launchServer should be able to launch browser', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36911' } }, async ({ playwright }) => {
+  const browserServer = await playwright._android.launchServer();
+  const device = await playwright._android.connect(browserServer.wsEndpoint());
+  const context = await device.launchBrowser();
+  const [page] = context.pages();
+  await page.goto('data:text/html,<title>Hello world!</title>');
+  expect(await page.title()).toBe('Hello world!');
+  await context.close();
+  await device.close();
+  await browserServer.close();
 });

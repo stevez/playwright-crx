@@ -16,12 +16,15 @@
 
 import { Artifact } from './artifact';
 import { ChannelOwner } from './channelOwner';
+import { DisposableStub } from './disposable';
 
 import type * as api from '../../types/types';
 import type * as channels from '@protocol/channels';
 
 export class Tracing extends ChannelOwner<channels.TracingChannel> implements api.Tracing {
   private _includeSources = false;
+  private _additionalSources = new Set<string>();
+  private _isLive = false;
   _tracesDir: string | undefined;
   private _stacksId: string | undefined;
   private _isTracing = false;
@@ -34,51 +37,66 @@ export class Tracing extends ChannelOwner<channels.TracingChannel> implements ap
     super(parent, type, guid, initializer);
   }
 
-  async start(options: { name?: string, title?: string, snapshots?: boolean, screenshots?: boolean, sources?: boolean, _live?: boolean } = {}) {
-    this._includeSources = !!options.sources;
-    await this._channel.tracingStart({
-      name: options.name,
-      snapshots: options.snapshots,
-      screenshots: options.screenshots,
-      live: options._live,
+  async start(options: { name?: string, title?: string, snapshots?: boolean, screenshots?: boolean, sources?: boolean, live?: boolean } = {}) {
+    await this._wrapApiCall(async () => {
+      this._includeSources = !!options.sources;
+      this._isLive = !!options.live;
+      await this._channel.tracingStart({
+        name: options.name,
+        snapshots: options.snapshots,
+        screenshots: options.screenshots,
+        live: options.live,
+      });
+      const { traceName } = await this._channel.tracingStartChunk({ name: options.name, title: options.title });
+      await this._startCollectingStacks(traceName, this._isLive);
     });
-    const { traceName } = await this._channel.tracingStartChunk({ name: options.name, title: options.title });
-    await this._startCollectingStacks(traceName);
   }
 
   async startChunk(options: { name?: string, title?: string } = {}) {
-    const { traceName } = await this._channel.tracingStartChunk(options);
-    await this._startCollectingStacks(traceName);
+    await this._wrapApiCall(async () => {
+      const { traceName } = await this._channel.tracingStartChunk(options);
+      await this._startCollectingStacks(traceName, this._isLive);
+    });
   }
 
   async group(name: string, options: { location?: { file: string, line?: number, column?: number } } = {}) {
+    if (options.location)
+      this._additionalSources.add(options.location.file);
     await this._channel.tracingGroup({ name, location: options.location });
+    return new DisposableStub(() => this.groupEnd());
   }
 
   async groupEnd() {
     await this._channel.tracingGroupEnd();
   }
 
-  private async _startCollectingStacks(traceName: string) {
+  private async _startCollectingStacks(traceName: string, live: boolean) {
     if (!this._isTracing) {
       this._isTracing = true;
       this._connection.setIsTracing(true);
     }
-    const result = await this._connection.localUtils()?.tracingStarted({ tracesDir: this._tracesDir, traceName });
+    const result = await this._connection.localUtils()?.tracingStarted({ tracesDir: this._tracesDir, traceName, live });
     this._stacksId = result?.stacksId;
   }
 
   async stopChunk(options: { path?: string } = {}) {
-    await this._doStopChunk(options.path);
+    await this._wrapApiCall(async () => {
+      await this._doStopChunk(options.path);
+    });
   }
 
   async stop(options: { path?: string } = {}) {
-    await this._doStopChunk(options.path);
-    await this._channel.tracingStop();
+    await this._wrapApiCall(async () => {
+      await this._doStopChunk(options.path);
+      await this._channel.tracingStop();
+    });
   }
 
   private async _doStopChunk(filePath: string | undefined) {
     this._resetStackCounter();
+
+    const additionalSources = [...this._additionalSources];
+    this._additionalSources.clear();
 
     if (!filePath) {
       // Not interested in artifacts.
@@ -96,7 +114,7 @@ export class Tracing extends ChannelOwner<channels.TracingChannel> implements ap
 
     if (isLocal) {
       const result = await this._channel.tracingStopChunk({ mode: 'entries' });
-      await localUtils.zip({ zipFile: filePath, entries: result.entries!, mode: 'write', stacksId: this._stacksId, includeSources: this._includeSources });
+      await localUtils.zip({ zipFile: filePath, entries: result.entries!, mode: 'write', stacksId: this._stacksId, includeSources: this._includeSources, additionalSources });
       return;
     }
 
@@ -114,7 +132,7 @@ export class Tracing extends ChannelOwner<channels.TracingChannel> implements ap
     await artifact.saveAs(filePath);
     await artifact.delete();
 
-    await localUtils.zip({ zipFile: filePath, entries: [], mode: 'append', stacksId: this._stacksId, includeSources: this._includeSources });
+    await localUtils.zip({ zipFile: filePath, entries: [], mode: 'append', stacksId: this._stacksId, includeSources: this._includeSources, additionalSources });
   }
 
   _resetStackCounter() {

@@ -1,7 +1,7 @@
 /**
  * Copyright (c) Microsoft Corporation.
  *
- * Licensed under the Apache License, Version 2.0 (the 'License");
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
@@ -39,12 +39,13 @@ export class HarBackend {
   }
 
   async lookup(url: string, method: string, headers: HeadersArray, postData: Buffer | undefined, isNavigationRequest: boolean): Promise<{
-      action: 'error' | 'redirect' | 'fulfill' | 'noentry',
-      message?: string,
-      redirectURL?: string,
-      status?: number,
-      headers?: HeadersArray,
-      body?: Buffer }> {
+    action: 'error' | 'redirect' | 'fulfill' | 'noentry',
+    message?: string,
+    redirectURL?: string,
+    status?: number,
+    headers?: HeadersArray,
+    body?: Buffer
+  }> {
     let entry;
     try {
       entry = await this._harFindResponse(url, method, headers, postData);

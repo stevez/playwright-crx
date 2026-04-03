@@ -39,6 +39,7 @@ export const testModeTest = test.extend<TestModeTestFixtures, TestModeWorkerOpti
       'service': new DefaultTestMode(),
       'service2': new DefaultTestMode(),
       'service-grid': new DefaultTestMode(),
+      'wsl': new DefaultTestMode(),
       'driver': new DriverTestMode(),
     }[mode];
     const playwright = await testMode.setup();
@@ -47,7 +48,7 @@ export const testModeTest = test.extend<TestModeTestFixtures, TestModeWorkerOpti
   }, { scope: 'worker' }],
 
   toImplInWorkerScope: [async ({ playwright }, use) => {
-    await use((playwright as any)._toImpl);
+    await use((playwright as any)._connection.toImpl);
   }, { scope: 'worker' }],
 
   toImpl: async ({ toImplInWorkerScope: toImplWorker, mode }, use, testInfo) => {

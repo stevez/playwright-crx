@@ -18,6 +18,10 @@ export function isJsonMimeType(mimeType: string) {
   return !!mimeType.match(/^(application\/json|application\/.*?\+json|text\/(x-)?json)(;\s*charset=.*)?$/);
 }
 
+export function isXmlMimeType(mimeType: string) {
+  return !!mimeType.match(/^(application\/xml|application\/.*?\+xml|text\/xml)(;\s*charset=.*)?$/);
+}
+
 export function isTextualMimeType(mimeType: string) {
   return !!mimeType.match(/^(text\/.*?|application\/(json|(x-)?javascript|xml.*?|ecmascript|graphql|x-www-form-urlencoded)|image\/svg(\+xml)?|application\/.*?(\+json|\+xml))(;\s*charset=.*)?$/);
 }
@@ -430,7 +434,7 @@ const types: Map<string, string> = new Map([
   ['jpgm', 'video/jpm'],
   ['mj2', 'video/mj2'],
   ['mjp2', 'video/mj2'],
-  ['ts', 'video/mp2t'],
+  ['ts', 'application/typescript'],
   ['mp4', 'video/mp4'],
   ['mp4v', 'video/mp4'],
   ['mpg4', 'video/mp4'],

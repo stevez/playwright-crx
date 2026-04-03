@@ -14,14 +14,15 @@
  * limitations under the License.
  */
 
-import crypto from 'crypto';
 import fs from 'fs';
 import Module from 'module';
 import path from 'path';
 import url from 'url';
 
+import crypto from 'crypto';
+
 import { loadTsConfig } from '../third_party/tsconfig-loader';
-import { createFileMatcher, fileIsModule, resolveImportSpecifierAfterMapping } from '../util';
+import { createFileMatcher, debugTest, fileIsModule, resolveImportSpecifierAfterMapping } from '../util';
 import { sourceMapSupport } from '../utilsBundle';
 import { belongsToNodeModules, currentFileDepsCollector, getFromCompilationCache, installSourceMapSupport } from './compilationCache';
 import { addHook } from '../third_party/pirates';
@@ -220,9 +221,9 @@ export function setTransformData(pluginName: string, value: any) {
 
 export function transformHook(originalCode: string, filename: string, moduleUrl?: string): { code: string, serializedCache?: any } {
   const hasPreprocessor =
-      process.env.PW_TEST_SOURCE_TRANSFORM &&
-      process.env.PW_TEST_SOURCE_TRANSFORM_SCOPE &&
-      process.env.PW_TEST_SOURCE_TRANSFORM_SCOPE.split(pathSeparator).some(f => filename.startsWith(f));
+    process.env.PW_TEST_SOURCE_TRANSFORM &&
+    process.env.PW_TEST_SOURCE_TRANSFORM_SCOPE &&
+    process.env.PW_TEST_SOURCE_TRANSFORM_SCOPE.split(pathSeparator).some(f => filename.startsWith(f));
   const pluginsPrologue = _transformConfig.babelPlugins;
   const pluginsEpilogue = hasPreprocessor ? [[process.env.PW_TEST_SOURCE_TRANSFORM!]] as BabelPlugin[] : [];
   const hash = calculateHash(originalCode, filename, !!moduleUrl, pluginsPrologue, pluginsEpilogue);
@@ -259,16 +260,22 @@ function calculateHash(content: string, filePath: string, isModule: boolean, plu
 export async function requireOrImport(file: string) {
   installTransformIfNeeded();
   const isModule = fileIsModule(file);
-  const esmImport = () => eval(`import(${JSON.stringify(url.pathToFileURL(file))})`);
   if (isModule) {
-    return await esmImport().finally(async () => {
-      // Compilation cache, which includes source maps, is populated in a post task.
-      // When importing a module results in an error, the very next access to `error.stack`
-      // will need source maps. To make sure source maps have arrived, we insert a task
-      // that will be processed after compilation cache and guarantee that
-      // source maps are available, before `error.stack` is accessed.
-      await new Promise(resolve => setTimeout(resolve, 0));
-    });
+    const fileName = url.pathToFileURL(file);
+    const esmImport = () => eval(`import(${JSON.stringify(fileName)})`);
+
+    // For ESM imports, issue a preflight to populate the compilation cache with the
+    // source maps. This allows inline test() calls to resolve wrapFunctionWithLocation.
+    await eval(`import(${JSON.stringify(fileName + '.esm.preflight')})`)
+        .catch((error: any) => debugTest('Failed to load preflight for ' + file + ', source maps may be missing for errors thrown during loading.', error))
+        .finally(nextTask);
+
+    // Compilation cache, which includes source maps, is populated in a post task.
+    // When importing a module results in an error, the very next access to `error.stack`
+    // will need source maps. To make sure source maps have arrived, we insert a task
+    // that will be processed after compilation cache and guarantee that
+    // source maps are available, before `error.stack` is accessed.
+    return await esmImport().finally(nextTask);
   }
   const result = require(file);
   const depsCollector = currentFileDepsCollector();
@@ -342,4 +349,8 @@ export function wrapFunctionWithLocation<A extends any[], R>(func: (location: Lo
 
 function isRelativeSpecifier(specifier: string) {
   return specifier === '.' || specifier === '..' || specifier.startsWith('./') || specifier.startsWith('../');
+}
+
+async function nextTask() {
+  return new Promise(resolve => setTimeout(resolve, 0));
 }

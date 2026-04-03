@@ -15,8 +15,7 @@
  */
 
 import { ElementHandle } from './elementHandle';
-import { parseResult, serializeArgument } from './jsHandle';
-import { asLocator } from '../utils/isomorphic/locatorGenerators';
+import { asLocatorDescription, locatorCustomDescription } from '../utils/isomorphic/locatorGenerators';
 import { getByAltTextSelector, getByLabelSelector, getByPlaceholderSelector, getByRoleSelector, getByTestIdSelector, getByTextSelector, getByTitleSelector } from '../utils/isomorphic/locatorUtils';
 import { escapeForTextSelector } from '../utils/isomorphic/stringUtils';
 import { isString } from '../utils/isomorphic/rtti';
@@ -142,7 +141,7 @@ export class Locator implements api.Locator {
   }
 
   async clear(options: channels.ElementHandleFillOptions = {}): Promise<void> {
-    return await this.fill('', options);
+    await this._frame._wrapApiCall(() => this.fill('', options), { title: 'Clear' });
   }
 
   async _highlight() {
@@ -214,6 +213,10 @@ export class Locator implements api.Locator {
     return new Locator(this._frame, this._selector + ' >> internal:describe=' + JSON.stringify(description));
   }
 
+  description(): string | null {
+    return locatorCustomDescription(this._selector) || null;
+  }
+
   first(): Locator {
     return new Locator(this._frame, this._selector + ' >> nth=0');
   }
@@ -246,12 +249,14 @@ export class Locator implements api.Locator {
     await this._frame._channel.blur({ selector: this._selector, strict: true, ...options, timeout: this._frame._timeout(options) });
   }
 
-  async count(): Promise<number> {
-    return await this._frame._queryCount(this._selector);
+  // options are only here for testing
+  async count(_options?: {}): Promise<number> {
+    return await this._frame._queryCount(this._selector, _options);
   }
 
-  async _generateLocatorString(): Promise<string | null> {
-    return await this._withElement(h => h._generateLocatorString(), { title: 'Generate locator string', internal: true });
+  async normalize(): Promise<Locator> {
+    const { resolvedSelector } = await this._frame._channel.resolveSelector({ selector: this._selector });
+    return new Locator(this._frame, resolvedSelector);
   }
 
   async getAttribute(name: string, options?: TimeoutOptions): Promise<string | null> {
@@ -307,8 +312,8 @@ export class Locator implements api.Locator {
     return await this._withElement((h, timeout) => h.screenshot({ ...options, mask, timeout }), { title: 'Screenshot', timeout: options.timeout });
   }
 
-  async ariaSnapshot(options?: TimeoutOptions): Promise<string> {
-    const result = await this._frame._channel.ariaSnapshot({ ...options, selector: this._selector, timeout: this._frame._timeout(options) });
+  async ariaSnapshot(options: TimeoutOptions & { mode?: 'ai' | 'default', depth?: number } = {}): Promise<string> {
+    const result = await this._frame._channel.ariaSnapshot({ timeout: this._frame._timeout(options), mode: options.mode, selector: this._selector, depth: options.depth });
     return result.snapshot;
   }
 
@@ -373,13 +378,12 @@ export class Locator implements api.Locator {
     await this._frame._channel.waitForSelector({ selector: this._selector, strict: true, omitReturnValue: true, ...options, timeout: this._frame._timeout(options) });
   }
 
-  async _expect(expression: string, options: FrameExpectParams): Promise<{ matches: boolean, received?: any, log?: string[], timedOut?: boolean }> {
-    const params: channels.FrameExpectParams = { selector: this._selector, expression, ...options, isNot: !!options.isNot };
-    params.expectedValue = serializeArgument(options.expectedValue);
-    const result = (await this._frame._channel.expect(params));
-    if (result.received !== undefined)
-      result.received = parseResult(result.received);
-    return result;
+
+  async _expect(expression: string, options: FrameExpectParams): Promise<{ matches: boolean, received?: any, log?: string[], timedOut?: boolean, errorMessage?: string }> {
+    return this._frame._expect(expression, {
+      ...options,
+      selector: this._selector,
+    });
   }
 
   private _inspect() {
@@ -387,7 +391,7 @@ export class Locator implements api.Locator {
   }
 
   toString() {
-    return asLocator('javascript', this._selector);
+    return asLocatorDescription('javascript', this._selector);
   }
 }
 

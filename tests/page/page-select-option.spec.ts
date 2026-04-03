@@ -222,7 +222,7 @@ it('should throw if passed wrong types', async ({ page, server }) => {
   } catch (e) {
     error = e;
   }
-  expect(error.message).toContain('options[0].index: expected number, got string');
+  expect(error.message).toContain('options[0].index: expected integer, got string');
 });
 // @see https://github.com/GoogleChrome/puppeteer/issues/3327
 it('should work when re-defining top-level Event class', async ({ page, server }) => {
@@ -320,7 +320,7 @@ it('input event.composed should be true and cross shadow dom boundary', async ({
   expect(await page.evaluate(() => window['firedBodyEvents'])).toEqual(['input:true']);
 });
 
-it('should wait for option to be enabled', async ({ page }) => {
+it('should wait for select to be enabled', async ({ page }) => {
   await page.setContent(`
     <select disabled>
       <option>one</option>
@@ -337,6 +337,68 @@ it('should wait for option to be enabled', async ({ page }) => {
     }
     </script>
   `);
+
+  const selectPromise = page.locator('select').selectOption('two');
+  await new Promise(f => setTimeout(f, 1000));
+  await page.evaluate(() => (window as any).hydrate());
+  await selectPromise;
+  expect(await page.evaluate(() => window['result'])).toEqual('two');
+  await expect(page.locator('select')).toHaveValue('two');
+});
+
+it('should wait for option to be enabled', async ({ page }) => {
+  await page.setContent(`
+    <select>
+      <option>one</option>
+      <option disabled id=myoption>two</option>
+    </select>
+
+    <script>
+    function hydrate() {
+      const option = document.querySelector('#myoption');
+      option.removeAttribute('disabled');
+      const select = document.querySelector('select');
+      select.addEventListener('change', () => {
+        window['result'] = select.value;
+      });
+    }
+    </script>
+  `);
+
+  const error = await page.locator('select').selectOption('two', { timeout: 1000 }).catch(e => e);
+  expect(error.message).toContain('option being selected is not enabled');
+
+  const selectPromise = page.locator('select').selectOption('two');
+  await new Promise(f => setTimeout(f, 1000));
+  await page.evaluate(() => (window as any).hydrate());
+  await selectPromise;
+  expect(await page.evaluate(() => window['result'])).toEqual('two');
+  await expect(page.locator('select')).toHaveValue('two');
+});
+
+it('should wait for optgroup to be enabled', async ({ page }) => {
+  await page.setContent(`
+    <select>
+      <option>one</option>
+      <optgroup label="Group" disabled id=mygroup>
+        <option>two</option>
+      </optgroup>
+    </select>
+
+    <script>
+    function hydrate() {
+      const group = document.querySelector('#mygroup');
+      group.removeAttribute('disabled');
+      const select = document.querySelector('select');
+      select.addEventListener('change', () => {
+        window['result'] = select.value;
+      });
+    }
+    </script>
+  `);
+
+  const error = await page.locator('select').selectOption('two', { timeout: 1000 }).catch(e => e);
+  expect(error.message).toContain('option being selected is not enabled');
 
   const selectPromise = page.locator('select').selectOption('two');
   await new Promise(f => setTimeout(f, 1000));

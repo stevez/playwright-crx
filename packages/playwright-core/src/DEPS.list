@@ -4,6 +4,8 @@ server/
 server/utils
 utils/isomorphic/
 utilsBundle.ts
+protocol/validator.ts
+protocol/validatorPrimitives.ts
 
 [androidServerImpl.ts]
 remote/
@@ -25,3 +27,6 @@ protocol/
 utils/
 utils/isomorphic
 server/utils
+
+[serverRegistry.ts]
+"strict"

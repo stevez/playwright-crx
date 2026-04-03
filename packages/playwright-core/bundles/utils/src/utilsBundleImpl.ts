@@ -22,6 +22,9 @@ export const colors = colorsLibrary;
 import debugLibrary from 'debug';
 export const debug = debugLibrary;
 
+import * as iniLibrary from 'ini';
+export const ini = iniLibrary;
+
 import * as diffLibrary from 'diff';
 export const diff = diffLibrary;
 
@@ -50,14 +53,12 @@ export const open = openLibrary;
 export { PNG } from 'pngjs';
 
 export { program } from 'commander';
+export { Option as ProgramOption } from 'commander';
 
 import progressLibrary from 'progress';
 export const progress = progressLibrary;
 
 export { SocksProxyAgent } from 'socks-proxy-agent';
-
-import yamlLibrary from 'yaml';
-export const yaml = yamlLibrary;
 
 // @ts-ignore
 import wsLibrary, { WebSocketServer, Receiver, Sender } from 'ws';
@@ -65,3 +66,6 @@ export const ws = wsLibrary;
 export const wsServer = WebSocketServer;
 export const wsReceiver = Receiver;
 export const wsSender = Sender;
+
+import yamlLibrary from 'yaml';
+export const yaml = yamlLibrary;

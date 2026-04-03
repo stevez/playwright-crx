@@ -14,9 +14,12 @@
  * limitations under the License.
  */
 
-export * from './utils/isomorphic/colors';
+export * from './utils/isomorphic/ariaSnapshot';
 export * from './utils/isomorphic/assert';
+export * from './utils/isomorphic/colors';
 export * from './utils/isomorphic/headers';
+export * from './utils/isomorphic/imageUtils';
+export * from './utils/isomorphic/jsonSchema';
 export * from './utils/isomorphic/locatorGenerators';
 export * from './utils/isomorphic/manualPromise';
 export * from './utils/isomorphic/mimeType';
@@ -27,9 +30,11 @@ export * from './utils/isomorphic/rtti';
 export * from './utils/isomorphic/semaphore';
 export * from './utils/isomorphic/stackTrace';
 export * from './utils/isomorphic/stringUtils';
+export * from './utils/isomorphic/formatUtils';
 export * from './utils/isomorphic/time';
 export * from './utils/isomorphic/timeoutRunner';
 export * from './utils/isomorphic/urlMatch';
+export * from './utils/isomorphic/yaml';
 
 export * from './server/utils/ascii';
 export * from './server/utils/comparators';

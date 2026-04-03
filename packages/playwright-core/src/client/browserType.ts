@@ -18,12 +18,9 @@ import { Browser } from './browser';
 import { BrowserContext, prepareBrowserContextParams } from './browserContext';
 import { ChannelOwner } from './channelOwner';
 import { envObjectToArray } from './clientHelper';
-import { Events } from './events';
 import { assert } from '../utils/isomorphic/assert';
 import { headersObjectToArray } from '../utils/isomorphic/headers';
-import { monotonicTime } from '../utils/isomorphic/time';
-import { raceAgainstDeadline } from '../utils/isomorphic/timeoutRunner';
-import { connectOverWebSocket } from './webSocket';
+import { connectToBrowser } from './connect';
 import { TimeoutSettings } from './timeoutSettings';
 
 import type { Playwright } from './playwright';
@@ -91,13 +88,14 @@ export class BrowserType extends ChannelOwner<channels.BrowserTypeChannel> imple
   }
 
   async launchPersistentContext(userDataDir: string, options: LaunchPersistentContextOptions = {}): Promise<BrowserContext> {
-    const logger = options.logger || this._playwright._defaultLaunchOptions?.logger;
     assert(!(options as any).port, 'Cannot specify a port without launching as a server.');
     options = this._playwright.selectors._withSelectorOptions({
       ...this._playwright._defaultLaunchOptions,
-      ...this._playwright._defaultContextOptions,
       ...options,
     });
+    await this._instrumentation.runBeforeCreateBrowserContext(options);
+
+    const logger = options.logger || this._playwright._defaultLaunchOptions?.logger;
     const contextParams = await prepareBrowserContextParams(this._platform, options);
     const persistentParams: channels.BrowserTypeLaunchPersistentContextParams = {
       ...contextParams,
@@ -108,75 +106,33 @@ export class BrowserType extends ChannelOwner<channels.BrowserTypeChannel> imple
       userDataDir: (this._platform.path().isAbsolute(userDataDir) || !userDataDir) ? userDataDir : this._platform.path().resolve(userDataDir),
       timeout: new TimeoutSettings(this._platform).launchTimeout(options),
     };
-    return await this._wrapApiCall(async () => {
+    const context = await this._wrapApiCall(async () => {
       const result = await this._channel.launchPersistentContext(persistentParams);
       const browser = Browser.from(result.browser);
       browser._connectToBrowserType(this, options, logger);
       const context = BrowserContext.from(result.context);
       await context._initializeHarFromOptions(options.recordHar);
-      await this._instrumentation.runAfterCreateBrowserContext(context);
       return context;
     });
+    await this._instrumentation.runAfterCreateBrowserContext(context);
+    return context;
   }
 
-  connect(options: api.ConnectOptions & { wsEndpoint: string }): Promise<api.Browser>;
-  connect(wsEndpoint: string, options?: api.ConnectOptions): Promise<api.Browser>;
-  async connect(optionsOrWsEndpoint: string | (api.ConnectOptions & { wsEndpoint: string }), options?: api.ConnectOptions): Promise<Browser>{
-    if (typeof optionsOrWsEndpoint === 'string')
-      return await this._connect({ ...options, wsEndpoint: optionsOrWsEndpoint });
-    assert(optionsOrWsEndpoint.wsEndpoint, 'options.wsEndpoint is required');
-    return await this._connect(optionsOrWsEndpoint);
+  connect(options: api.ConnectOptions & { wsEndpoint: string }): Promise<Browser>;
+  connect(endpoint: string, options?: api.ConnectOptions): Promise<Browser>;
+  async connect(optionsOrEndpoint: string | (api.ConnectOptions & { wsEndpoint?: string }), options?: api.ConnectOptions): Promise<Browser>{
+    if (typeof optionsOrEndpoint === 'string')
+      return await this._connect({ ...options, endpoint: optionsOrEndpoint });
+    assert(optionsOrEndpoint.wsEndpoint, 'options.wsEndpoint is required');
+    return await this._connect({ ...options, endpoint: optionsOrEndpoint.wsEndpoint });
   }
 
   async _connect(params: ConnectOptions): Promise<Browser> {
     const logger = params.logger;
     return await this._wrapApiCall(async () => {
-      const deadline = params.timeout ? monotonicTime() + params.timeout : 0;
-      const headers = { 'x-playwright-browser': this.name(), ...params.headers };
-      const connectParams: channels.LocalUtilsConnectParams = {
-        wsEndpoint: params.wsEndpoint,
-        headers,
-        exposeNetwork: params.exposeNetwork ?? params._exposeNetwork,
-        slowMo: params.slowMo,
-        timeout: params.timeout || 0,
-      };
-      if ((params as any).__testHookRedirectPortForwarding)
-        connectParams.socksProxyRedirectPortForTest = (params as any).__testHookRedirectPortForwarding;
-      const connection = await connectOverWebSocket(this._connection, connectParams);
-      let browser: Browser;
-      connection.on('close', () => {
-        // Emulate all pages, contexts and the browser closing upon disconnect.
-        for (const context of browser?.contexts() || []) {
-          for (const page of context.pages())
-            page._onClose();
-          context._onClose();
-        }
-        setTimeout(() => browser?._didClose(), 0);
-      });
-
-      const result = await raceAgainstDeadline(async () => {
-        // For tests.
-        if ((params as any).__testHookBeforeCreateBrowser)
-          await (params as any).__testHookBeforeCreateBrowser();
-
-        const playwright = await connection!.initializePlaywright();
-        if (!playwright._initializer.preLaunchedBrowser) {
-          connection.close();
-          throw new Error('Malformed endpoint. Did you use BrowserType.launchServer method?');
-        }
-        playwright.selectors = this._playwright.selectors;
-        browser = Browser.from(playwright._initializer.preLaunchedBrowser!);
-        browser._connectToBrowserType(this, {}, logger);
-        browser._shouldCloseConnectionOnClose = true;
-        browser.on(Events.Browser.Disconnected, () => connection.close());
-        return browser;
-      }, deadline);
-      if (!result.timedOut) {
-        return result.result;
-      } else {
-        connection.close();
-        throw new Error(`Timeout ${params.timeout}ms exceeded`);
-      }
+      const browser = await connectToBrowser(this._playwright, { browserName: this.name(), ...params });
+      browser._connectToBrowserType(this, {}, logger);
+      return browser;
     });
   }
 
@@ -199,9 +155,21 @@ export class BrowserType extends ChannelOwner<channels.BrowserTypeChannel> imple
       headers,
       slowMo: params.slowMo,
       timeout: new TimeoutSettings(this._platform).timeout(params),
+      isLocal: params.isLocal,
     });
     const browser = Browser.from(result.browser);
     browser._connectToBrowserType(this, {}, params.logger);
+    if (result.defaultContext)
+      await this._instrumentation.runAfterCreateBrowserContext(BrowserContext.from(result.defaultContext));
+    return browser;
+  }
+
+  async _connectOverCDPTransport(transport: /* ConnectionTransport */ any) {
+    if (this.name() !== 'chromium')
+      throw new Error('Connecting over CDP is only supported in Chromium.');
+    const result = await this._channel.connectOverCDPTransport({ transport });
+    const browser = Browser.from(result.browser);
+    browser._connectToBrowserType(this, {}, undefined);
     if (result.defaultContext)
       await this._instrumentation.runAfterCreateBrowserContext(BrowserContext.from(result.defaultContext));
     return browser;
