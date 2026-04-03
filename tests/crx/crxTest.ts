@@ -101,11 +101,15 @@ export const test = base.extend<CrxFixtureOptions & {
         },
 
         context: async ({ extensionPath, createUserDataDir }, use) => {
+          const headless = !!process.env.HEADLESS;
           const context = await chromium.launchPersistentContext(createUserDataDir(), {
-            headless: false,
+            channel: headless ? 'chromium' : undefined,
+            headless,
             args: [
               `--disable-extensions-except=${extensionPath}`,
               `--load-extension=${extensionPath}`,
+              '--no-first-run',
+              '--no-default-browser-check',
             ],
           });
           // prevents playwright from handling alerts, prompts, etc., and leave it to playwright-crx

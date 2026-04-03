@@ -20,6 +20,12 @@ import sourcemaps from 'rollup-plugin-sourcemaps';
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  resolve: {
+    alias: {
+      'playwright-crx/test': path.resolve(__dirname, '../../lib/test.mjs'),
+      'playwright-crx': path.resolve(__dirname, '../../lib/index.mjs'),
+    },
+  },
   build: {
     // code cannot be obfuscated
     minify: false,
@@ -27,6 +33,10 @@ export default defineConfig({
     rollupOptions: {
       // @ts-ignore
       plugins: [sourcemaps()],
+      external: [
+        /playwright-core\/index\.mjs$/,
+        /playwright-core\/index\.js$/,
+      ],
       input: {
         'background': path.resolve(__dirname, 'src/background.ts'),
       },
