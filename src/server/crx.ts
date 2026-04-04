@@ -30,6 +30,10 @@ import { BrowserContext } from 'playwright-core/lib/server/browserContext';
 import { createTab } from './utils';
 import { deviceDescriptors } from 'playwright-core/lib/server/deviceDescriptors';
 import type { DeviceDescriptor } from 'playwright-core/lib/server/types';
+import { parse } from './recorder/parser';
+import { generateCode } from 'playwright-core/lib/server/codegen/language';
+import { languageSet } from 'playwright-core/lib/server/codegen/languages';
+import type { LanguageGeneratorOptions } from 'playwright-core/lib/server/codegen/types';
 
 const kTabIdSymbol = Symbol('kTabIdSymbol');
 
@@ -285,6 +289,13 @@ export class CrxApplication extends SdkObject {
     }
 
     await this._context.close({});
+  }
+
+  async parseForTest(originCode: string) {
+    const [{ actions, options }] = parse(originCode);
+    const jsLanguage = [...languageSet()].find(l => l.id === 'playwright-test');
+    const code = generateCode(actions, jsLanguage!, { browserName: '', launchOptions: {}, contextOptions: {}, ...options } as LanguageGeneratorOptions).text;
+    return { actions, options, code };
   }
 
   private onWindowRemoved = async () => {
