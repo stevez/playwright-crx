@@ -352,7 +352,7 @@ export class CrxRecorderApp extends EventEmitter {
   private _actionIndex = 0;
   private _completedCallLogs: CallLog[] = [];
 
-  private _buildCallLog(action: ActionInContextWithLocation, status: 'done' | 'paused' | 'in-progress' | 'error', startTime?: number): CallLog {
+  private _buildCallLog(action: ActionInContextWithLocation, status: 'done' | 'paused' | 'in-progress' | 'error', startTime?: number, error?: Error): CallLog {
     const traceParams = traceParamsForAction(action as ActionInContext);
     const metadata: CallMetadata = {
       id: `call@${createGuid()}`,
@@ -368,6 +368,8 @@ export class CrxRecorderApp extends EventEmitter {
       playing: true,
       ...traceParams,
     };
+    if (error)
+      metadata.error = { error: { message: error.message, name: error.name, stack: error.stack ?? '' } };
     return metadataToCallLog(metadata, status);
   }
 
@@ -408,7 +410,7 @@ export class CrxRecorderApp extends EventEmitter {
             this._completedCallLogs.push(this._buildCallLog(action, 'done', startTime));
           } catch (e) {
             actionError = e as Error;
-            this._completedCallLogs.push(this._buildCallLog(action, 'error', startTime));
+            this._completedCallLogs.push(this._buildCallLog(action, 'error', startTime, actionError));
           }
         }
       }
@@ -446,7 +448,7 @@ export class CrxRecorderApp extends EventEmitter {
           await this._crx.player.run(crxApp._context, [actions[i]]);
           this._completedCallLogs.push(this._buildCallLog(actions[i], 'done', startTime));
         } catch (e) {
-          this._completedCallLogs.push(this._buildCallLog(actions[i], 'error', startTime));
+          this._completedCallLogs.push(this._buildCallLog(actions[i], 'error', startTime, e as Error));
           if (actions[i].location?.line)
             this._highlightLine(actions[i].location!.line!, 'error', (e as Error).message);
           break;
