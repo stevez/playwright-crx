@@ -94,6 +94,15 @@ export const CrxRecorder: React.FC = ({
           }
           return newLog;
         }); break;
+        case 'setCallLogs': {
+          const newLog = new Map<string, CallLog>();
+          for (const callLog of msg.callLogs) {
+            callLog.reveal = true;
+            newLog.set(callLog.id, callLog);
+          }
+          setLog(newLog);
+          break;
+        }
         case 'elementPicked': setElementPicked(msg.elementInfo, msg.userGesture); break;
       }
     };

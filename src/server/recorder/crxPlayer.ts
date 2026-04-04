@@ -99,8 +99,13 @@ export default class CrxPlayer extends EventEmitter {
         context.instrumentation.addListener(instrumentationListener, context);
     }
 
-    this._pageAliases.clear();
-    this._pageAliases.set(page, 'page');
+    // Only initialize page aliases if 'page' isn't already mapped.
+    // When called per-action from the step/resume loop, we must preserve
+    // aliases created by openPage actions in previous run() calls.
+    if (!this._pageAliases.has(page)) {
+      this._pageAliases.clear();
+      this._pageAliases.set(page, 'page');
+    }
     this.emit('start');
 
     try {
@@ -123,6 +128,10 @@ export default class CrxPlayer extends EventEmitter {
 
   isPlaying() {
     return !!this._currAction;
+  }
+
+  resetPageAliases() {
+    this._pageAliases.clear();
   }
 
   async stop() {
@@ -200,22 +209,18 @@ export default class CrxPlayer extends EventEmitter {
         return await mainFrame.uncheck(progress, selector, { strict: true });
       if (action.name === 'select')
         return await mainFrame.selectOption(progress, selector, [], action.options.map((value: any) => ({ value })), { strict: true });
-      const expectAndCheck = async (opts: Parameters<typeof mainFrame.expect>[2]) => {
-        const result = await mainFrame.expect(progress, selector, opts);
-        if (result.matches === opts.isNot)
-          throw new Error(`Expect failed`);
-        return result;
-      };
+      // Use mainFrame.expect directly - it handles isNot internally and throws on failure.
+      // No wrapper needed (the upstream recorderRunner does the same).
       if (action.name === 'assertChecked')
-        return await expectAndCheck({ selector, expression: 'to.be.checked', expectedValue: { checked: action.checked }, isNot: !action.checked });
+        return await mainFrame.expect(progress, selector, { selector, expression: 'to.be.checked', expectedValue: undefined, isNot: !action.checked });
       if (action.name === 'assertText')
-        return await expectAndCheck({ selector, expression: 'to.have.text', expectedText: serializeExpectedTextValues([action.text], { matchSubstring: true, normalizeWhiteSpace: true }), isNot: false });
+        return await mainFrame.expect(progress, selector, { selector, expression: 'to.have.text', expectedText: serializeExpectedTextValues([action.text], { matchSubstring: true, normalizeWhiteSpace: true }), isNot: false });
       if (action.name === 'assertValue')
-        return await expectAndCheck({ selector, expression: 'to.have.value', expectedText: serializeExpectedTextValues([action.value], { matchSubstring: false, normalizeWhiteSpace: true }), isNot: false });
+        return await mainFrame.expect(progress, selector, { selector, expression: 'to.have.value', expectedText: serializeExpectedTextValues([action.value], { matchSubstring: false, normalizeWhiteSpace: true }), isNot: false });
       if (action.name === 'assertVisible')
-        return await expectAndCheck({ selector, expression: 'to.be.visible', isNot: false });
+        return await mainFrame.expect(progress, selector, { selector, expression: 'to.be.visible', isNot: false });
       if (action.name === 'assertSnapshot')
-        return await expectAndCheck({ selector, expression: 'to.match.aria', expectedValue: parseAriaSnapshotUnsafe(yaml, action.ariaSnapshot), isNot: false });
+        return await mainFrame.expect(progress, selector, { selector, expression: 'to.match.aria', expectedValue: parseAriaSnapshotUnsafe(yaml, action.ariaSnapshot), isNot: false });
       throw new Error('Internal error: unexpected action ' + (action as any).name);
     }, kActionTimeout);
   }

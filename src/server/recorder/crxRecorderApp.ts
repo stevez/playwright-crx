@@ -38,6 +38,7 @@ import { traceParamsForAction } from './recorderUtils';
 export type RecorderMessage = { type: 'recorder' } & (
   | { method: 'resetCallLogs' }
   | { method: 'updateCallLogs', callLogs: CallLog[] }
+  | { method: 'setCallLogs', callLogs: CallLog[] }
   | { method: 'setPaused', paused: boolean }
   | { method: 'setMode', mode: Mode }
   | { method: 'setSources', sources: Source[] }
@@ -76,12 +77,18 @@ export class CrxRecorderApp extends EventEmitter {
     this._recorder = recorder;
     this._crx.player.on('start', () => {
       this._recorder.clearErrors();
-      this.resetCallLogs().catch(() => {});
     });
 
     // Wire recorder events for code generation (replaces old ContextRecorder flow)
     recorder.on(RecorderEvent.ActionAdded, (action: actions.ActionInContext) => {
       this._recordedActions.push(action);
+      // Clear any edited code state since new recorded actions supersede it.
+      // Without this, stale EditedCode (created by CodeMirror onChange) would
+      // take priority in _getActions() and miss newly recorded assertions.
+      if (this._editedCode) {
+        this._editedCode.stopLoad();
+        this._editedCode = undefined;
+      }
       this._generateSources();
     });
     recorder.on(RecorderEvent.SignalAdded, (signal: actions.SignalInContext) => {
@@ -260,7 +267,23 @@ export class CrxRecorderApp extends EventEmitter {
     if (!code)
       return;
 
-    this._editedCode = new EditedCode(this._recorder, code, () => this._updateLocator(this._currentCursorPosition));
+    this._editedCode = new EditedCode(this._recorder, code, () => {
+      this._updateLocator(this._currentCursorPosition);
+      // After code is loaded, refresh sources to propagate error highlights
+      // and reflect edited code actions in other language sources.
+      if (this._editedCode && !this._editedCode.hasErrors()) {
+        // Use edited code's parsed actions for generating other language sources,
+        // but don't overwrite _recordedActions since the recorder has richer data
+        // (page GUIDs, signals, etc.) that the parser can't reconstruct.
+        const editedActions = this._editedCode.actions();
+        const savedActions = this._recordedActions;
+        this._recordedActions = editedActions;
+        this._generateSources();
+        this._recordedActions = savedActions;
+      } else {
+        this._generateSources();
+      }
+    });
   }
 
   private async _updateLocator(position?: { line: number}) {
@@ -377,7 +400,9 @@ export class CrxRecorderApp extends EventEmitter {
     const logs = [...this._completedCallLogs];
     if (pausedAction)
       logs.push(this._buildCallLog(pausedAction, 'paused'));
-    this.updateCallLogs(logs);
+    // Use setCallLogs to REPLACE the entire log atomically, avoiding
+    // accumulation issues with the merge-based updateCallLogs.
+    this._sendMessage({ type: 'recorder', method: 'setCallLogs', callLogs: logs });
   }
 
   async _run(step: boolean) {
@@ -399,6 +424,13 @@ export class CrxRecorderApp extends EventEmitter {
 
     if (step) {
       // Step mode: first call pauses at current action, subsequent calls execute and advance.
+      // Reset only when all actions have been both executed and logged (i.e., after the
+      // final step completes). Don't reset when the last action is still paused and pending.
+      if (this._actionIndex >= allActions.length && this._completedCallLogs.length >= allActions.length) {
+        this._actionIndex = 0;
+        this._completedCallLogs = [];
+        this._crx.player.resetPageAliases();
+      }
       let actionError: Error | undefined;
       if (this._actionIndex > 0) {
         // Execute the previously paused action
@@ -437,10 +469,12 @@ export class CrxRecorderApp extends EventEmitter {
       debugger_?.setMuted(false);
       this.setPaused(hasPausedAction);
     } else {
-      // Resume mode: run remaining actions (execute the paused one + the rest)
+      // Resume mode: always start from the beginning
+      this._actionIndex = 0;
+      this._completedCallLogs = [];
+      this._crx.player.resetPageAliases();
       this._highlightLine(undefined);
-      const startIdx = this._actionIndex > 0 ? this._actionIndex - 1 : 0;
-      const actions = allActions.slice(startIdx);
+      const actions = allActions;
       const startTime = monotonicTime();
       // Run actions one by one to track which one fails
       for (let i = 0; i < actions.length; i++) {

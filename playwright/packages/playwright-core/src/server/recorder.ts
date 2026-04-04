@@ -435,7 +435,22 @@ export class Recorder extends EventEmitter<RecorderEventMap> implements Instrume
 
   // patch(playwright-crx): setOutput - set language output order
   setOutput(codegenId: string, _outputFile: string | undefined) {
-    this._currentLanguage = codegenId as Language;
+    // Map codegen IDs (e.g. 'playwright-test', 'python-pytest') to valid Language values
+    // that asLocator() understands (e.g. 'javascript', 'python').
+    const languageMap: Record<string, Language> = {
+      'playwright-test': 'javascript',
+      'javascript': 'javascript',
+      'python-pytest': 'python',
+      'python': 'python',
+      'python-async': 'python',
+      'java-junit': 'java',
+      'java': 'java',
+      'csharp-mstest': 'csharp',
+      'csharp-nunit': 'csharp',
+      'csharp': 'csharp',
+      'jsonl': 'jsonl',
+    };
+    this._currentLanguage = (languageMap[codegenId] ?? 'javascript') as Language;
   }
 
   // patch(playwright-crx): loadScript - stub for CrxRecorderApp compatibility
