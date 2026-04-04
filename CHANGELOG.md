@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.16.1
+
+### Improvements
+
+- **Extract CRX patches from vendored playwright** — Moved all inline patches out of `playwright/` vendor folder into `src/`. Recorder patches are now applied via monkey-patching (`src/server/crxRecorderPatches.ts`), and the CSP unsafe-eval guard uses a Vite alias shim (`src/shims/javascript.ts`). Future playwright subtree upgrades are now a clean pull with no patch conflicts.
+
 ## 1.16.0
 
 ### Breaking Changes
