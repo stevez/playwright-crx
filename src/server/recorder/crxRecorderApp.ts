@@ -361,7 +361,7 @@ export class CrxRecorderApp extends EventEmitter {
       pageId: '',
       frameId: '',
       startTime: startTime ?? monotonicTime(),
-      endTime: status === 'done' ? monotonicTime() : 0,
+      endTime: (status === 'done' || status === 'error') ? monotonicTime() : 0,
       type: 'Frame',
       log: [],
       location: action.location,
