@@ -20,6 +20,7 @@ import './protocol/validator';
 import './server/crxRecorderPatches';
 
 import { DispatcherConnection, RootDispatcher } from 'playwright-core/lib/server';
+import { ChannelOwner } from 'playwright-core/lib/client/channelOwner';
 import { CrxConnection } from './client/crxConnection';
 import type { CrxPlaywright as CrxPlaywrightAPI } from './client/crxPlaywright';
 import { CrxPlaywright } from './server/crxPlaywright';
@@ -56,6 +57,11 @@ clientConnection.onmessage = message => setImmediate(() => dispatcherConnection.
 
 clientConnection.toImpl = (x: any) => x ? dispatcherConnection._dispatcherByGuid.get(x._guid)!._object : dispatcherConnection._dispatcherByGuid.get('');
 (playwrightAPI as any)._toImpl = clientConnection.toImpl;
+
+// Restore _toImpl on all client objects (removed from ChannelOwner in 1.55)
+(ChannelOwner.prototype as any)._toImpl = function() {
+  return (this as any)._connection.toImpl?.(this);
+};
 
 export const { _crx: crx, selectors, errors } = playwrightAPI;
 export default playwrightAPI;
