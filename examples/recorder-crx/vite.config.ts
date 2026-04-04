@@ -23,6 +23,8 @@ import sourcemaps from 'rollup-plugin-sourcemaps';
 export default defineConfig({
   resolve: {
     alias: {
+      'playwright-crx': path.resolve(__dirname, '../../lib/index.mjs'),
+      'playwright-crx/test': path.resolve(__dirname, '../../lib/test.mjs'),
       '@isomorphic': path.resolve(__dirname, '../../playwright/packages/playwright-core/src/utils/isomorphic'),
       '@protocol': path.resolve(__dirname, '../../playwright/packages/protocol/src'),
       '@web': path.resolve(__dirname, '../../playwright/packages/web/src'),

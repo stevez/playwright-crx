@@ -3,7 +3,7 @@ from playwright.sync_api import Playwright, sync_playwright, expect
 
 
 def run(playwright: Playwright) -> None:
-    browser = playwright.chromium.launch(headless=False)
+    browser = playwright.chromium.launch()
     context = browser.new_context()
     page = context.new_page()
     page.goto("http://127.0.0.1:3000/input/textarea.html")

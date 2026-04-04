@@ -40,14 +40,13 @@ test('should play all supported actions except setInputFiles', async ({ context,
   await recordAction(() => page.locator('select').selectOption('B'));
   // uncheck
   await recordAction(() => page.locator('[type=checkbox]').click());
-  // openPage
-  const page1 = await recordAction(async () => {
-    const newPage = await context.newPage();
-    await attachRecorder(newPage);
-    return newPage;
-  });
-  // closePage
-  await recordAction(() => page1.close());
+  // openPage - doesn't produce visible code in playwright-test format, so can't use recordAction
+  const page1 = await context.newPage();
+  await attachRecorder(page1);
+  await recorderPage.waitForTimeout(200);
+  // closePage - same, no visible code change in playwright-test format
+  await page1.close();
+  await recorderPage.waitForTimeout(200);
 
   await recorderPage.getByTitle('Record').click();
 

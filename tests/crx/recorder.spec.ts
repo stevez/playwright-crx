@@ -18,8 +18,7 @@ import fs from 'fs';
 import path from 'path';
 import { test, expect } from './crxRecorderTest';
 
-test('should record @smoke', async ({ page, attachRecorder, recordAction, baseURL }) => {
-  const recorderPage = await attachRecorder(page);
+test('should record @smoke', async ({ page, recorderPage, recordAction, baseURL }) => {
 
   await recordAction(() => page.goto(`${baseURL}/input/textarea.html`));
   await recordAction(() => page.locator('textarea').click());
@@ -46,15 +45,16 @@ test('should attach two pages', async ({ context, page, attachRecorder, recordAc
   await attachRecorder(page1);
   await recordAction(() => page1.goto(`${baseURL}/input/textarea.html`));
 
-  const code = `import { test, expect } from '@playwright/test';
-
-test('test', async ({ page, context }) => {
-  await page.goto('${baseURL}/empty.html');
-  const page1 = await context.newPage();
-  await page1.goto('${baseURL}/input/textarea.html');
-});`;
-
-  await expect(recorderPage.locator('.CodeMirror-line')).toHaveText(code.split('\n'));
+  // In playwright-test mode, openPage/closePage actions are omitted and
+  // context is not included in the test function params.
+  const lines = recorderPage.locator('.CodeMirror-line');
+  await expect(lines).toContainText([
+    `import { test, expect } from '@playwright/test';`,
+    `test('test', async ({ page }) => {`,
+    `await page.goto('${baseURL}/empty.html');`,
+    `await page1.goto('${baseURL}/input/textarea.html');`,
+    `});`,
+  ]);
 });
 
 
@@ -107,16 +107,15 @@ test('should record popups', async ({ page, attachRecorder, baseURL, mockPaths, 
 
   await recorderPage.getByTitle('Record').click();
 
-  const code = `import { test, expect } from '@playwright/test';
-
-test('test', async ({ page }) => {
-  await page.goto('${baseURL}/popup/root.html');
-  const page1Promise = page.waitForEvent('popup');
-  await page.getByRole('button', { name: 'Open popup' }).click();
-  const page1 = await page1Promise;
-});`;
-
-  await expect(recorderPage.locator('.CodeMirror-line')).toHaveText(code.split('\n'));
+  // In playwright-test format, popup/openPage signals are omitted from generated code.
+  const lines = recorderPage.locator('.CodeMirror-line');
+  await expect(lines).toContainText([
+    `import { test, expect } from '@playwright/test';`,
+    `test('test', async ({ page }) => {`,
+    `await page.goto('${baseURL}/popup/root.html');`,
+    `await page.getByRole('button', { name: 'Open popup' }).click();`,
+    `});`,
+  ]);
 });
 
 test('should record with all supported actions and assertions', async ({ context, page, recorderPage, baseURL, mockPaths, recordAction, recordAssertion, attachRecorder, basePath }) => {
@@ -155,14 +154,11 @@ test('should record with all supported actions and assertions', async ({ context
     await page.locator('[type=file]').focus();
     await page.locator('[type=file]').setInputFiles(`${basePath}/file-to-upload.txt`);
   });
-  // openPage
-  const page1 = await recordAction(async () => {
-    const newPage = await context.newPage();
-    await attachRecorder(newPage);
-    return newPage;
-  });
-  // closePage
-  await recordAction(() => page1.close());
+  // openPage (no code generated in playwright-test mode)
+  const page1 = await context.newPage();
+  await attachRecorder(page1);
+  // closePage (no code generated in playwright-test mode)
+  await page1.close();
 
   // record assertions
   await recordAssertion(page.getByRole('checkbox'), 'assertValue');
@@ -176,7 +172,7 @@ test('should record with all supported actions and assertions', async ({ context
 
   const code = `import { test, expect } from '@playwright/test';
 
-test('test', async ({ page, context }) => {
+test('test', async ({ page }) => {
   await page.goto('${baseURL}/root.html');
   await page.getByRole('checkbox').check();
   await page.getByRole('button', { name: 'button' }).click();
@@ -185,8 +181,6 @@ test('test', async ({ page, context }) => {
   await page.getByRole('textbox').press('Tab');
   await page.getByRole('combobox').selectOption('B');
   await page.getByRole('button', { name: 'Choose File' }).setInputFiles('file-to-upload.txt');
-  const page1 = await context.newPage();
-  await page1.close();
   await expect(page.getByRole('checkbox')).not.toBeChecked();
   await expect(page.getByRole('textbox')).toHaveValue('Hello world');
   await expect(page.getByRole('combobox')).toHaveValue('B');

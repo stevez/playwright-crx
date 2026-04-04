@@ -47,6 +47,8 @@ const disabledFeatures = (assistantMode?: boolean) => [
   'ThirdPartyStoragePartitioning',
   // See https://github.com/microsoft/playwright/issues/16126
   'Translate',
+  // See https://issues.chromium.org/u/1/issues/435410220
+  'AutoDeElevate',
   assistantMode ? 'AutomationControlled' : '',
 ].filter(Boolean);
 
@@ -84,5 +86,7 @@ export const chromiumSwitches = (assistantMode?: boolean, channel?: string) => [
   '--disable-search-engine-choice-screen',
   // https://issues.chromium.org/41491762
   '--unsafely-disable-devtools-self-xss-warnings',
+  // Edge can potentially restart on Windows (msRelaunchNoCompatLayer) which looses its file descriptors (stdout/stderr) and CDP (3/4). Disable until fixed upstream.
+  '--edge-skip-compat-layer-relaunch',
   assistantMode ? '' : '--enable-automation',
 ].filter(Boolean);

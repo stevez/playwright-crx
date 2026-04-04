@@ -32,9 +32,6 @@ function setElementPicked(elementInfo: ElementInfo, userGesture?: boolean) {
   window.playwrightElementPicked(elementInfo, userGesture);
 }
 
-function setRunningFileId(fileId: string) {
-  window.playwrightSetRunningFile(fileId);
-}
 
 function download(filename: string, text: string) {
   const blob = new Blob([text], { type: 'text/plain' });
@@ -97,7 +94,15 @@ export const CrxRecorder: React.FC = ({
           }
           return newLog;
         }); break;
-        case 'setRunningFile': setRunningFileId(msg.file); break;
+        case 'setCallLogs': {
+          const newLog = new Map<string, CallLog>();
+          for (const callLog of msg.callLogs) {
+            callLog.reveal = true;
+            newLog.set(callLog.id, callLog);
+          }
+          setLog(newLog);
+          break;
+        }
         case 'elementPicked': setElementPicked(msg.elementInfo, msg.userGesture); break;
       }
     };
@@ -106,7 +111,7 @@ export const CrxRecorder: React.FC = ({
     window.dispatch = async (data: any) => {
       port.postMessage({ type: 'recorderEvent', ...data });
       if (data.event === 'fileChanged')
-        setSelectedFileId(data.params.file);
+        setSelectedFileId(data.params.fileId);
     };
     loadSettings().then(settings => {
       setSettings(settings);

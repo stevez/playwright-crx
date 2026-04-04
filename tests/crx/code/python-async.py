@@ -4,7 +4,7 @@ from playwright.async_api import Playwright, async_playwright, expect
 
 
 async def run(playwright: Playwright) -> None:
-    browser = await playwright.chromium.launch(headless=False)
+    browser = await playwright.chromium.launch()
     context = await browser.new_context()
     page = await context.new_page()
     await page.goto("http://127.0.0.1:3000/input/textarea.html")

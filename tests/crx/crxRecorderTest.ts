@@ -89,7 +89,23 @@ export const test = crxTest.extend<{
         attachRecorder: async ({ extensionServiceWorker, extensionId, context }, run) => {
           await run(async (page: Page) => {
             let recorderPage = context.pages().find(p => p.url().startsWith(`chrome-extension://${extensionId}`));
-            const recorderPagePromise = recorderPage ? undefined : context.waitForEvent('page');
+            const recorderPagePromise = recorderPage ? undefined : new Promise<Page>(resolve => {
+              const onPage = (p: Page) => {
+                if (p.url().startsWith(`chrome-extension://${extensionId}`)) {
+                  context.off('page', onPage);
+                  resolve(p);
+                } else {
+                  // wait for navigation in case URL isn't set yet
+                  p.once('framenavigated', () => {
+                    if (p.url().startsWith(`chrome-extension://${extensionId}`)) {
+                      context.off('page', onPage);
+                      resolve(p);
+                    }
+                  });
+                }
+              };
+              context.on('page', onPage);
+            });
 
             await page.bringToFront();
             await extensionServiceWorker.evaluate(async () => {
@@ -130,9 +146,10 @@ export const test = crxTest.extend<{
           await run(async action => {
             // just to make sure code is up-to-date
             await recorderPage.waitForTimeout(100);
-            const count = await recorderPage.locator('.CodeMirror-line').count();
+            const text = await recorderPage.locator('.CodeMirror').textContent();
             const result = await action();
-            await expect(recorderPage.locator('.CodeMirror-line')).not.toHaveCount(count);
+            // Wait for code to change (line count or content)
+            await expect.poll(async () => await recorderPage.locator('.CodeMirror').textContent()).not.toBe(text);
             return result;
           });
         },
@@ -155,10 +172,9 @@ export const test = crxTest.extend<{
                   await locator.click();
                   break;
                 case 'assertSnapshot':
-                  // ensure snapshot is toggled (for some reason, it may take more than one click)
-                  const assertBtn = recorderPage.getByTitle('Assert snapshot');
-                  while (await assertBtn.evaluate(e => !e.classList.contains('toggled')))
-                    await assertBtn.click();
+                  await recorderPage.getByTitle('Assert snapshot').click();
+                  // Wait for assertingSnapshot mode to propagate to the page overlay
+                  await page.locator('x-pw-glass').locator('x-pw-tool-item.snapshot.toggled').waitFor({ timeout: 5000 });
                   await locator.click();
                   break;
               }

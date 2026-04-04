@@ -70,7 +70,7 @@ const expectFnActions: Record<AssertFnAction, (...args: Expression[]) => [action
   'toBeVisible': () => ['assertVisible'],
   'toHaveValue': value => ['assertValue', { value }],
   'toBeEmpty': () => ['assertValue'],
-  'toMatchAriaSnapshot': snapshot => ['assertSnapshot', { snapshot }],
+  'toMatchAriaSnapshot': ariaSnapshot => ['assertSnapshot', { ariaSnapshot }],
 };
 
 const fnActions: Record<Exclude<ActionFnName, AssertFnAction>, (...args: any[]) => [action: Exclude<Action, AssertAction>['name'] | 'routeFromHAR', ...any]> = {
