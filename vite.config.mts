@@ -26,6 +26,11 @@ const baseDir = __dirname.replace(/\\/g, '/');
 export default defineConfig({
   resolve: {
     alias: {
+      // CRX shims for vendored playwright (must be before the general alias)
+      'playwright-core/lib/server/javascript': path.resolve(__dirname, './src/shims/javascript'),
+      // Stub pixelmatch (CJS module not used in CRX, causes ESM interop issues)
+      [path.resolve(__dirname, './playwright/packages/playwright-core/src/third_party/pixelmatch')]: path.resolve(__dirname, './src/shims/pixelmatch'),
+
       'playwright-core/lib': path.resolve(__dirname, './playwright/packages/playwright-core/src'),
       '@playwright/test/lib': path.resolve(__dirname, './playwright/packages/playwright/src'),
       'playwright-core': path.resolve(__dirname, './src/index'),
