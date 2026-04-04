@@ -17,6 +17,7 @@
 import './shims/global';
 
 import './protocol/validator';
+import './server/crxRecorderPatches';
 
 import { DispatcherConnection, RootDispatcher } from 'playwright-core/lib/server';
 import { CrxConnection } from './client/crxConnection';

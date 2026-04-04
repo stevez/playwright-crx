@@ -26,6 +26,9 @@ const baseDir = __dirname.replace(/\\/g, '/');
 export default defineConfig({
   resolve: {
     alias: {
+      // CRX shims for vendored playwright (must be before the general alias)
+      'playwright-core/lib/server/javascript': path.resolve(__dirname, './src/shims/javascript'),
+
       'playwright-core/lib': path.resolve(__dirname, './playwright/packages/playwright-core/src'),
       '@playwright/test/lib': path.resolve(__dirname, './playwright/packages/playwright/src'),
       'playwright-core': path.resolve(__dirname, './src/index'),
