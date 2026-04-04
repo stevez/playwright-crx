@@ -218,7 +218,7 @@ export default class CrxPlayer extends EventEmitter {
         return result;
       };
       if (action.name === 'assertChecked')
-        return await expectAndCheck({ selector, expression: 'to.be.checked', expectedValue: undefined, isNot: !action.checked });
+        return await expectAndCheck({ selector, expression: 'to.be.checked', expectedValue: { checked: action.checked }, isNot: false });
       if (action.name === 'assertText')
         return await expectAndCheck({ selector, expression: 'to.have.text', expectedText: serializeExpectedTextValues([action.text], { matchSubstring: true, normalizeWhiteSpace: true }), isNot: false });
       if (action.name === 'assertValue')
