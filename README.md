@@ -1,130 +1,168 @@
-# Playwright CRX
+# 🎭 Playwright
 
-> **Fork notice:** This is a fork of [nicolo-ribaudo/playwright-crx](https://github.com/nicolo-ribaudo/playwright-crx), published as [`@playwright-repl/playwright-crx`](https://www.npmjs.com/package/@playwright-repl/playwright-crx) for use with [playwright-repl](https://github.com/stevez/playwright-repl). It includes patches for tab-switching reliability (`chrome.debugger.attach` frame ID handling) and graceful detach recovery. See [CHANGELOG.md](./CHANGELOG.md) for details.
+[![npm version](https://img.shields.io/npm/v/playwright.svg)](https://www.npmjs.com/package/playwright) <!-- GEN:chromium-version-badge -->[![Chromium version](https://img.shields.io/badge/chromium-141.0.7390.37-blue.svg?logo=google-chrome)](https://www.chromium.org/Home)<!-- GEN:stop --> <!-- GEN:firefox-version-badge -->[![Firefox version](https://img.shields.io/badge/firefox-142.0.1-blue.svg?logo=firefoxbrowser)](https://www.mozilla.org/en-US/firefox/new/)<!-- GEN:stop --> <!-- GEN:webkit-version-badge -->[![WebKit version](https://img.shields.io/badge/webkit-26.0-blue.svg?logo=safari)](https://webkit.org/)<!-- GEN:stop --> [![Join Discord](https://img.shields.io/badge/join-discord-informational)](https://aka.ms/playwright/discord)
 
-This package contains the [Chrome Extensions](https://developer.chrome.com/docs/extensions/) flavor of the [Playwright](http://github.com/microsoft/playwright) library.
+## [Documentation](https://playwright.dev) | [API reference](https://playwright.dev/docs/api/class-playwright)
 
-For that, it relies on [`chrome.debugger`](https://developer.chrome.com/docs/extensions/reference/debugger/) to implement [playwright's `ConnectionTransport`](https://github.com/microsoft/playwright/blob/f8a30fb726bc35d4058a2d010b2ed5f6ca2409a3/packages/playwright-core/src/server/transport.ts#L54) interface.
+Playwright is a framework for Web Testing and Automation. It allows testing [Chromium](https://www.chromium.org/Home), [Firefox](https://www.mozilla.org/en-US/firefox/new/) and [WebKit](https://webkit.org/) with a single API. Playwright is built to enable cross-browser web automation that is **ever-green**, **capable**, **reliable** and **fast**.
 
-**NOTE:** If you want to write end-to-end tests, you should use [@playwright/test](https://playwright.dev/docs/intro) instead.
+|          | Linux | macOS | Windows |
+|   :---   | :---: | :---: | :---:   |
+| Chromium <!-- GEN:chromium-version -->141.0.7390.37<!-- GEN:stop --> | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+| WebKit <!-- GEN:webkit-version -->26.0<!-- GEN:stop --> | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+| Firefox <!-- GEN:firefox-version -->142.0.1<!-- GEN:stop --> | :white_check_mark: | :white_check_mark: | :white_check_mark: |
 
-## Recorder / Player
+Headless execution is supported for all browsers on all platforms. Check out [system requirements](https://playwright.dev/docs/intro#system-requirements) for details.
 
-**Note:** This extension is available in [Chrome Web Store](https://chrome.google.com/webstore/detail/playwright-crx/jambeljnbnfbkcpnoiaedcabbgmnnlcd).
+Looking for Playwright for [Python](https://playwright.dev/python/docs/intro), [.NET](https://playwright.dev/dotnet/docs/intro), or [Java](https://playwright.dev/java/docs/intro)?
 
-A small demo of Playwright CRX recorder and player in action:
+## Installation
 
-![Playwright CRX Recorder / Player](./docs/assets/recorder-player.gif)
+Playwright has its own test runner for end-to-end tests, we call it Playwright Test.
 
-It provides playwright recorder (the same used in `playwright codegen`) bundled as a chrome extension, with no other dependencies.
-This way, with your normal chrome / chromium / edge browser, you can record playwright scripts in your prefered language.
+### Using init command
 
-In terms of chrome extension functionality, it provides:
+The easiest way to get started with Playwright Test is to run the init command.
 
-- [action button](https://developer.chrome.com/docs/extensions/reference/action/) for attaching current tab into recorder (it opens the recorder if it's closed)
-- [context menu](https://developer.chrome.com/docs/extensions/reference/contextMenus/) for the same purpose
-- [side panel](https://developer.chrome.com/docs/extensions/reference/api/sidePanel) to display the recorder by default (it can be disabled in the options, falling back to a popup window)
-- [command shortcuts](https://developer.chrome.com/docs/extensions/reference/api/commands):
-  - `Alt + Shift + R` starts recording
-  - `Alt + Shift + C` starts inspecting
-- [options page](https://developer.chrome.com/docs/extensions/develop/ui/options-page) to configure:
-  - **Default language** (defaults to **Node Library**)
-  - **TestID Attribute Name** (defaults to `data-testid`)
-  - **Open in Side Panel** (defaults to `true`, and falls back to a popup window if set to `false`) 
-- pages must be explicitly attached to be recordable, except if they are opened from already attached pages
-- closing the recorder window will detach all pages and uninstall injected scripts (highlights and event listeners)
-- a player that will run the recorded instructions, in any supported language*
-   - it actually doesn't run Java, Python or C#, but it uses an internal JSONL format to know which instructions it needs to run and how to map them into the current selected code. This way, it can highlight the lines being executed.
+```Shell
+# Run from your project's root directory
+npm init playwright@latest
+# Or create a new project
+npm init playwright@latest new-project
+```
 
-## API
+This will create a configuration file, optionally add examples, a GitHub Action workflow and a first test example.spec.ts. You can now jump directly to writing assertions section.
 
-It's possible to use `playwright-crx` as a library to create new chrome extensions.
+### Manually
 
-Here's a simple example of a background service worker for a chrome extension using **playwright-crx**:
+Add dependency and install browsers.
 
-```ts
-import { crx, expect } from 'playwright-crx/test';
+```Shell
+npm i -D @playwright/test
+# install supported browsers
+npx playwright install
+```
 
-// if you don't need assertions, you can reduce the bundle size by importing crx from playwright-crx
-// import { crx } from 'playwright-crx';
+You can optionally install only selected browsers, see [install browsers](https://playwright.dev/docs/cli#install-browsers) for more details. Or you can install no browsers at all and use existing [browser channels](https://playwright.dev/docs/browsers).
 
-chrome.action.onClicked.addListener(async ({ id: tabId }) => {
-  const crxApp = await crx.start({ slowMo: 500 });
+* [Getting started](https://playwright.dev/docs/intro)
+* [API reference](https://playwright.dev/docs/api/class-playwright)
 
-  try {
-    // tries to connect to the active tab, or creates a new one
-    const page = await crxApp.attach(tabId!).catch(() => crxApp.newPage());
+## Capabilities
 
-    await page.goto('https://demo.playwright.dev/todomvc/#/');
-    await page.getByPlaceholder('What needs to be done?').click();
-    await page.getByPlaceholder('What needs to be done?').fill('Hello World!');
-    await page.getByPlaceholder('What needs to be done?').press('Enter');
+### Resilient • No flaky tests
 
-    // assertions work too
-    await expect(page.getByTestId('todo-title')).toHaveText('Hello World!');
-  } finally {
-    // page stays open, but no longer controlled by playwright
-    await crxApp.detach(page);
-    // releases chrome.debugger
-    await crxApp.close();
-  }
+**Auto-wait**. Playwright waits for elements to be actionable prior to performing actions. It also has a rich set of introspection events. The combination of the two eliminates the need for artificial timeouts - a primary cause of flaky tests.
+
+**Web-first assertions**. Playwright assertions are created specifically for the dynamic web. Checks are automatically retried until the necessary conditions are met.
+
+**Tracing**. Configure test retry strategy, capture execution trace, videos and screenshots to eliminate flakes.
+
+### No trade-offs • No limits
+
+Browsers run web content belonging to different origins in different processes. Playwright is aligned with the architecture of the modern browsers and runs tests out-of-process. This makes Playwright free of the typical in-process test runner limitations.
+
+**Multiple everything**. Test scenarios that span multiple tabs, multiple origins and multiple users. Create scenarios with different contexts for different users and run them against your server, all in one test.
+
+**Trusted events**. Hover elements, interact with dynamic controls and produce trusted events. Playwright uses real browser input pipeline indistinguishable from the real user.
+
+Test frames, pierce Shadow DOM. Playwright selectors pierce shadow DOM and allow entering frames seamlessly.
+
+### Full isolation • Fast execution
+
+**Browser contexts**. Playwright creates a browser context for each test. Browser context is equivalent to a brand new browser profile. This delivers full test isolation with zero overhead. Creating a new browser context only takes a handful of milliseconds.
+
+**Log in once**. Save the authentication state of the context and reuse it in all the tests. This bypasses repetitive log-in operations in each test, yet delivers full isolation of independent tests.
+
+### Powerful Tooling
+
+**[Codegen](https://playwright.dev/docs/codegen)**. Generate tests by recording your actions. Save them into any language.
+
+**[Playwright inspector](https://playwright.dev/docs/inspector)**. Inspect page, generate selectors, step through the test execution, see click points and explore execution logs.
+
+**[Trace Viewer](https://playwright.dev/docs/trace-viewer)**. Capture all the information to investigate the test failure. Playwright trace contains test execution screencast, live DOM snapshots, action explorer, test source and many more.
+
+Looking for Playwright for [TypeScript](https://playwright.dev/docs/intro), [JavaScript](https://playwright.dev/docs/intro), [Python](https://playwright.dev/python/docs/intro), [.NET](https://playwright.dev/dotnet/docs/intro), or [Java](https://playwright.dev/java/docs/intro)?
+
+## Examples
+
+To learn how to run these Playwright Test examples, check out our [getting started docs](https://playwright.dev/docs/intro).
+
+#### Page screenshot
+
+This code snippet navigates to Playwright homepage and saves a screenshot.
+
+```TypeScript
+import { test } from '@playwright/test';
+
+test('Page Screenshot', async ({ page }) => {
+  await page.goto('https://playwright.dev/');
+  await page.screenshot({ path: `example.png` });
 });
 ```
 
-A more complete example can be found in `examples/todomvc-crx`.
+#### Mobile and geolocation
 
-### Tracing
+This snippet emulates Mobile Safari on a device at given geolocation, navigates to maps.google.com, performs the action and takes a screenshot.
 
-Playwright CRX also supports [tracing](https://playwright.dev/docs/api/class-tracing), compatible with [Playwright Trace Viewer](https://trace.playwright.dev).
+```TypeScript
+import { test, devices } from '@playwright/test';
 
-Here's an example on how to run it:
+test.use({
+  ...devices['iPhone 13 Pro'],
+  locale: 'en-US',
+  geolocation: { longitude: 12.492507, latitude: 41.889938 },
+  permissions: ['geolocation'],
+})
 
-```ts
-await page.context().tracing.start({ screenshots: true, snapshots: true });
-
-await page.goto('https://demo.playwright.dev/todomvc');
-const newTodo = page.getByPlaceholder('What needs to be done?');
-await newTodo.fill('buy some cheese');
-await newTodo.press('Enter');
-await expect(page.getByTestId('todo-title')).toHaveText('buy some cheese');
-
-// stores in memfs and then reads its data
-await page.context().tracing.stop({ path: '/tmp/trace.zip' });
-const data = crx.fs.readFileSync('/tmp/trace.zip');
-
-// opens playwright traceviewer
-const tracePage = await crxApp.newPage();
-await tracePage.goto('https://trace.playwright.dev');
-const [filechooser] = await Promise.all([
-  tracePage.waitForEvent('filechooser'),
-  tracePage.getByRole('button', { name: 'Select file(s)' }).click(),
-]);
-
-// uploads the trace data buffer (file paths from memfs are not supported)
-await filechooser.setFiles({
-  name: 'trace.zip',
-  mimeType: 'application/zip',
-  buffer: Buffer.from(data),
+test('Mobile and geolocation', async ({ page }) => {
+  await page.goto('https://maps.google.com');
+  await page.getByText('Your location').click();
+  await page.waitForRequest(/.*preview\/pwa/);
+  await page.screenshot({ path: 'colosseum-iphone.png' });
 });
 ```
 
-You can give it a try with `playwright-crx/examples/todomvc-crx`.
+#### Evaluate in browser context
 
-## Build
+This code snippet navigates to example.com, and executes a script in the page context.
 
-To build `playwright-crx`:
+```TypeScript
+import { test } from '@playwright/test';
 
-```bash
-npm ci
-npm run build
+test('Evaluate in browser context', async ({ page }) => {
+  await page.goto('https://www.example.com/');
+  const dimensions = await page.evaluate(() => {
+    return {
+      width: document.documentElement.clientWidth,
+      height: document.documentElement.clientHeight,
+      deviceScaleFactor: window.devicePixelRatio
+    }
+  });
+  console.log(dimensions);
+});
 ```
 
-## Updating Playwright
+#### Intercept network requests
 
-Playwright is nested as a git subtree.
+This code snippet sets up request routing for a page to log all network requests.
 
-To update it, just run the following command (replace `v1.48.0` with the desired release tag):
+```TypeScript
+import { test } from '@playwright/test';
 
-```bash
-git subtree pull --prefix=playwright git@github.com:microsoft/playwright.git v1.48.0 --squash
+test('Intercept network requests', async ({ page }) => {
+  // Log and continue all network requests
+  await page.route('**', route => {
+    console.log(route.request().url());
+    route.continue();
+  });
+  await page.goto('http://todomvc.com');
+});
 ```
+
+## Resources
+
+* [Documentation](https://playwright.dev)
+* [API reference](https://playwright.dev/docs/api/class-playwright/)
+* [Contribution guide](CONTRIBUTING.md)
+* [Changelog](https://github.com/microsoft/playwright/releases)
