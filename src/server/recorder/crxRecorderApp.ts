@@ -469,12 +469,20 @@ export class CrxRecorderApp extends EventEmitter {
       debugger_?.setMuted(false);
       this.setPaused(hasPausedAction);
     } else {
-      // Resume mode: always start from the beginning
-      this._actionIndex = 0;
-      this._completedCallLogs = [];
-      this._crx.player.resetPageAliases();
+      // Resume mode: continue from paused action if mid-step, otherwise restart.
+      // Mid-step means: we've been stepping (actionIndex > 0) but haven't completed
+      // all actions yet, and there's no error in the completed logs.
+      const hasError = this._completedCallLogs.some(l => l.status === 'error');
+      const allDone = this._completedCallLogs.length >= allActions.length;
+      const isMidStep = this._actionIndex > 0 && !allDone && !hasError;
+      if (!isMidStep) {
+        this._actionIndex = 0;
+        this._completedCallLogs = [];
+        this._crx.player.resetPageAliases();
+      }
       this._highlightLine(undefined);
-      const actions = allActions;
+      const startIdx = isMidStep ? this._actionIndex - 1 : 0;
+      const actions = allActions.slice(startIdx);
       const startTime = monotonicTime();
       // Run actions one by one to track which one fails
       for (let i = 0; i < actions.length; i++) {

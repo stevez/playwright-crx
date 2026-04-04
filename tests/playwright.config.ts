@@ -20,7 +20,7 @@ export default defineConfig<CrxFixtureOptions>({
   testDir: './crx',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
+  retries: process.env.CI ? 1 : 0,
   workers: process.env.CI ? 2 : 2,
   reporter: process.env.CI ? 'list' : 'html',
   use: {
