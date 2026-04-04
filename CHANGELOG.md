@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.17.1
+
+### Breaking Changes
+
+- **Removed recorder app, player, and related tests** — The recorder UI (`crxRecorderApp`), step/resume player (`crxPlayer`), and recorder example extension have been removed. These depended on Recorder internals that changed between playwright versions, making upgrades painful. The parser (`parse()`, `parseForTest()`) is retained as a standalone utility. ~4,500 lines removed, 77 tests remain.
+
 ## 1.17.0
 
 ### Breaking Changes
