@@ -154,14 +154,11 @@ test('should record with all supported actions and assertions', async ({ context
     await page.locator('[type=file]').focus();
     await page.locator('[type=file]').setInputFiles(`${basePath}/file-to-upload.txt`);
   });
-  // openPage
-  const page1 = await recordAction(async () => {
-    const newPage = await context.newPage();
-    await attachRecorder(newPage);
-    return newPage;
-  });
-  // closePage
-  await recordAction(() => page1.close());
+  // openPage (no code generated in playwright-test mode)
+  const page1 = await context.newPage();
+  await attachRecorder(page1);
+  // closePage (no code generated in playwright-test mode)
+  await page1.close();
 
   // record assertions
   await recordAssertion(page.getByRole('checkbox'), 'assertValue');
@@ -175,7 +172,7 @@ test('should record with all supported actions and assertions', async ({ context
 
   const code = `import { test, expect } from '@playwright/test';
 
-test('test', async ({ page, context }) => {
+test('test', async ({ page }) => {
   await page.goto('${baseURL}/root.html');
   await page.getByRole('checkbox').check();
   await page.getByRole('button', { name: 'button' }).click();
@@ -184,8 +181,6 @@ test('test', async ({ page, context }) => {
   await page.getByRole('textbox').press('Tab');
   await page.getByRole('combobox').selectOption('B');
   await page.getByRole('button', { name: 'Choose File' }).setInputFiles('file-to-upload.txt');
-  const page1 = await context.newPage();
-  await page1.close();
   await expect(page.getByRole('checkbox')).not.toBeChecked();
   await expect(page.getByRole('textbox')).toHaveValue('Hello world');
   await expect(page.getByRole('combobox')).toHaveValue('B');

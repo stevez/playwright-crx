@@ -205,7 +205,7 @@ export default class CrxPlayer extends EventEmitter {
       if (action.name === 'assertText')
         return await mainFrame.expect(progress, selector, { selector, expression: 'to.have.text', expectedText: serializeExpectedTextValues([action.text], { matchSubstring: true, normalizeWhiteSpace: true }), isNot: false });
       if (action.name === 'assertValue')
-        return await mainFrame.expect(progress, selector, { selector, expression: 'to.have.value', expectedValue: action.value, isNot: false });
+        return await mainFrame.expect(progress, selector, { selector, expression: 'to.have.value', expectedText: serializeExpectedTextValues([action.value], { matchSubstring: false, normalizeWhiteSpace: true }), isNot: false });
       if (action.name === 'assertVisible')
         return await mainFrame.expect(progress, selector, { selector, expression: 'to.be.visible', isNot: false });
       if (action.name === 'assertSnapshot')

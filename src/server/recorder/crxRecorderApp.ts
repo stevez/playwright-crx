@@ -317,8 +317,7 @@ export class CrxRecorderApp extends EventEmitter {
         break;
       case 'resume':
         this.setPaused(false);
-        // eslint-disable-next-line no-console
-        this._run(false).catch((e: any) => console.log('[CRX] resume error:', e));
+        this._run(false).catch(() => {});
         break;
       case 'pause':
         this._crx.player.stop().catch(() => {});
@@ -424,10 +423,11 @@ export class CrxRecorderApp extends EventEmitter {
       this._highlightPausedLine(undefined);
       const startIdx = this._actionIndex > 0 ? this._actionIndex - 1 : 0;
       const actions = allActions.slice(startIdx);
+      const startTime = monotonicTime();
       if (actions.length)
         await this._crx.player.run(crxApp._context, actions);
       for (const action of actions)
-        this._completedCallLogs.push(this._buildCallLog(action, 'done'));
+        this._completedCallLogs.push(this._buildCallLog(action, 'done', startTime));
       this._actionIndex = allActions.length;
       this._updateStepCallLogs();
       debugger_?.setMuted(false);

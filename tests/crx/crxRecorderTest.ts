@@ -146,9 +146,10 @@ export const test = crxTest.extend<{
           await run(async action => {
             // just to make sure code is up-to-date
             await recorderPage.waitForTimeout(100);
-            const count = await recorderPage.locator('.CodeMirror-line').count();
+            const text = await recorderPage.locator('.CodeMirror').textContent();
             const result = await action();
-            await expect(recorderPage.locator('.CodeMirror-line')).not.toHaveCount(count);
+            // Wait for code to change (line count or content)
+            await expect.poll(async () => await recorderPage.locator('.CodeMirror').textContent()).not.toBe(text);
             return result;
           });
         },
