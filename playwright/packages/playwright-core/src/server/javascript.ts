@@ -292,7 +292,8 @@ export function normalizeEvaluationExpression(expression: string, isFunction: bo
     try {
       new Function('(' + expression + ')');
     } catch (e1) {
-      // check if CSP doesn't allow 'unsafe-eval'
+      // patch(playwright-crx): check if CSP doesn't allow 'unsafe-eval'
+      // (e.g. Chrome Extension MV3). In that case, skip validation.
       if (!(e1 instanceof EvalError) || !e1.message.includes('unsafe-eval')) {
         // This means we might have a function shorthand. Try another
         // time prefixing 'function '.

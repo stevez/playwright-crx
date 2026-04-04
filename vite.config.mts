@@ -27,7 +27,7 @@ export default defineConfig({
   resolve: {
     alias: {
       // CRX shims for vendored playwright (must be before the general alias)
-      'playwright-core/lib/server/javascript': path.resolve(__dirname, './src/shims/javascript'),
+      // Note: javascript.ts CSP patch must stay in vendor (shim can't override internal function calls)
       // Stub pixelmatch (CJS module not used in CRX, causes ESM interop issues)
       [path.resolve(__dirname, './playwright/packages/playwright-core/src/third_party/pixelmatch')]: path.resolve(__dirname, './src/shims/pixelmatch'),
 

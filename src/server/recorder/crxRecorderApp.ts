@@ -29,7 +29,6 @@ import { collapseActions } from 'playwright-core/lib/server/recorder/recorderUti
 import { languageSet } from 'playwright-core/lib/server/codegen/languages';
 import type { Crx } from '../crx';
 import type { LanguageGeneratorOptions } from 'playwright-core/lib/server/codegen/types';
-import { serverSideCallMetadata } from 'playwright-core/lib/server';
 import { createGuid, monotonicTime } from 'playwright-core/lib/utils';
 import type { CallMetadata } from '@protocol/callMetadata';
 import { metadataToCallLog } from 'playwright-core/lib/server/recorder/recorderUtils';
@@ -80,7 +79,9 @@ export class CrxRecorderApp extends EventEmitter {
     });
 
     // Wire recorder events for code generation (replaces old ContextRecorder flow)
-    recorder.on(RecorderEvent.ActionAdded, (action: actions.ActionInContext) => {
+    // Cast to 'any' because the typed EventEmitter<RecorderEventMap> doesn't expose .on() in TS
+    const rec = recorder as any;
+    rec.on(RecorderEvent.ActionAdded, (action: actions.ActionInContext) => {
       this._recordedActions.push(action);
       // Clear any edited code state since new recorded actions supersede it.
       // Without this, stale EditedCode (created by CodeMirror onChange) would
@@ -91,13 +92,13 @@ export class CrxRecorderApp extends EventEmitter {
       }
       this._generateSources();
     });
-    recorder.on(RecorderEvent.SignalAdded, (signal: actions.SignalInContext) => {
-      const lastAction = this._recordedActions.findLast(a => a.frame.pageGuid === signal.frame.pageGuid);
+    rec.on(RecorderEvent.SignalAdded, (signal: actions.SignalInContext) => {
+      const lastAction = [...this._recordedActions].reverse().find((a: ActionInContextWithLocation) => a.frame.pageGuid === signal.frame.pageGuid);
       if (lastAction)
         lastAction.action.signals.push(signal.signal);
       this._generateSources();
     });
-    recorder.on(RecorderEvent.ModeChanged, (mode: Mode) => {
+    rec.on(RecorderEvent.ModeChanged, (mode: Mode) => {
       this.setMode(mode);
     });
     // CRX manages paused state independently via step/resume/setMode handlers.
@@ -105,10 +106,10 @@ export class CrxRecorderApp extends EventEmitter {
     // our manually managed paused state and disable the step button.
     // CRX manages call logs independently via _updateStepCallLogs during step/resume.
     // Don't forward the recorder's call logs — they would override our manually-built logs.
-    recorder.on(RecorderEvent.UserSourcesChanged, (sources: Source[]) => {
+    rec.on(RecorderEvent.UserSourcesChanged, (sources: Source[]) => {
       this.setSources([...this._recorderSources, ...sources]);
     });
-    recorder.on(RecorderEvent.ElementPicked, (elementInfo: ElementInfo, userGesture?: boolean) => {
+    rec.on(RecorderEvent.ElementPicked, (elementInfo: ElementInfo, userGesture?: boolean) => {
       this.elementPicked(elementInfo, userGesture);
     });
   }
@@ -124,12 +125,9 @@ export class CrxRecorderApp extends EventEmitter {
       contextOptions: {},
     };
 
-    const primaryLanguage = this._filename ?? 'playwright-test';
     for (const languageGenerator of languageSet()) {
       const { header, footer, actionTexts, text } = generateCode(actions, languageGenerator, languageGeneratorOptions);
       const source: Source = {
-        isPrimary: languageGenerator.id === primaryLanguage,
-        timestamp: 0,
         isRecorded: true,
         label: languageGenerator.name,
         group: languageGenerator.groupName,
@@ -202,7 +200,7 @@ export class CrxRecorderApp extends EventEmitter {
   }
 
   async setMode(mode: Mode) {
-    if (!this._recorder._isRecording()) {
+    if (!(this._recorder as any)._isRecording()) {
       this._crx.player.stop().catch(() => {});
       this._actionIndex = 0;
       this._completedCallLogs = [];
@@ -253,7 +251,7 @@ export class CrxRecorderApp extends EventEmitter {
   async setActions(actions: ActionInContext[], sources: Source[]) {
     this._recordedActions = Array.from(actions);
     this._sources = Array.from(sources);
-    if (this._recorder._isRecording())
+    if ((this._recorder as any)._isRecording())
       this._updateCode(null);
   }
 
@@ -388,7 +386,6 @@ export class CrxRecorderApp extends EventEmitter {
       type: 'Frame',
       log: [],
       location: action.location,
-      playing: true,
       ...traceParams,
     };
     if (error)
@@ -413,7 +410,7 @@ export class CrxRecorderApp extends EventEmitter {
       const incognitoCrxApp = await this._crx.get({ incognito });
       await incognitoCrxApp?.close({ closeWindows: true });
     }
-    const crxApp = await this._crx.get({ incognito }) ?? await this._crx.start({ incognito }, serverSideCallMetadata());
+    const crxApp = await this._crx.get({ incognito }) ?? await this._crx.start({ incognito });
     // Filter openPage for 'page' alias (player skips it), but line numbers from
     // _getActions() are already calculated with openPage included, so they're correct.
     const allActions = this._getActions().filter(a => !(a.action.name === 'openPage' && a.frame.pageAlias === 'page'));
@@ -499,15 +496,15 @@ export class CrxRecorderApp extends EventEmitter {
       this._actionIndex = allActions.length;
       this._updateStepCallLogs();
       debugger_?.setMuted(false);
-      this.setPaused(!this._recorder._isRecording());
+      this.setPaused(!(this._recorder as any)._isRecording());
     }
   }
 
-  private _highlightLine(line: number | undefined, type: 'paused' | 'error' | 'running' = 'paused', message?: string) {
+  private _highlightLine(line: number | undefined, type: 'paused' | 'error' | 'running' = 'paused', _message?: string) {
     const sources = this._recorderSources.map(s => ({
       ...s,
       // Only highlight the active language source
-      highlight: line && s.id === this._filename ? [{ line, type, message }] : [],
+      highlight: line && s.id === this._filename ? [{ line, type }] : [],
       revealLine: s.id === this._filename ? line : undefined,
     }));
     this.setSources(sources);
@@ -616,7 +613,7 @@ class EditedCode {
       this._actions = [];
       // syntax error / parsing error
       const line = error.loc.line ?? error.loc.start.line ?? this.code.split('\n').length;
-      this._highlight = [{ line, type: 'error', message: error.message }];
+      this._highlight = [{ line, type: 'error' as const }];
       this._recorder.loadScript({ actions: this._actions, deviceName: '', contextOptions: {}, text: this.code, highlight: this._highlight });
     }
 

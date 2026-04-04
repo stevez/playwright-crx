@@ -20,14 +20,33 @@ import type { LanguageGenerator, LanguageGeneratorOptions } from './types';
 import type * as actions from '@recorder/actions';
 
 export function generateCode(actions: actions.ActionInContext[], languageGenerator: LanguageGenerator, options: LanguageGeneratorOptions) {
-  let includeContext = false;
-  if (actions.some(a => a.action.name === 'openPage' && a.frame.pageAlias !== 'page'))
-    includeContext = true;
-  const header = languageGenerator.generateHeader(options, includeContext);
+  const header = languageGenerator.generateHeader(options);
   const footer = languageGenerator.generateFooter(options.saveStorage);
-  const actionTexts = actions.map(a => languageGenerator.generateAction(a)).filter(Boolean);
+  const actionTexts = actions.map(a => generateActionText(languageGenerator, a, !!options.generateAutoExpect)).filter(Boolean) as string[];
   const text = [header, ...actionTexts, footer].join('\n');
   return { header, footer, actionTexts, text };
+}
+
+function generateActionText(generator: LanguageGenerator, action: actions.ActionInContext, generateAutoExpect: boolean): string | undefined {
+  let text = generator.generateAction(action);
+  if (!text)
+    return;
+  if (generateAutoExpect && action.action.preconditionSelector) {
+    const expectAction: actions.ActionInContext = {
+      frame: action.frame,
+      startTime: action.startTime,
+      endTime: action.startTime,
+      action: {
+        name: 'assertVisible',
+        selector: action.action.preconditionSelector,
+        signals: [],
+      },
+    };
+    const expectText = generator.generateAction(expectAction);
+    if (expectText)
+      text = expectText + '\n\n' + text;
+  }
+  return text;
 }
 
 export function sanitizeDeviceOptions(device: any, options: BrowserContextOptions): BrowserContextOptions {

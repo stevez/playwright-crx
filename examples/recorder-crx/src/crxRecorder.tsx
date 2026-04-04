@@ -184,14 +184,6 @@ export const CrxRecorder: React.FC = ({
     };
   }, [selectedFileId, settings, saveCode]);
 
-  const dispatchEditedCode = React.useCallback((code: string) => {
-    window.dispatch({ event: 'codeChanged', params: { code } });
-  }, []);
-
-  const dispatchCursorActivity = React.useCallback((position: { line: number }) => {
-    window.dispatch({ event: 'cursorActivity', params: { position } });
-  }, []);
-
   return <>
     <ModalContainer />
 
@@ -210,7 +202,7 @@ export const CrxRecorder: React.FC = ({
           <ToolbarButton icon='settings-gear' title='Preferences' onClick={showPreferences}></ToolbarButton>
         </Toolbar>
       </>}
-      <Recorder sources={sources} paused={paused} log={log} mode={mode} onEditedCode={dispatchEditedCode} onCursorActivity={dispatchCursorActivity} />
+      <Recorder sources={sources} paused={paused} log={log} mode={mode} />
     </div>
   </>;
 };

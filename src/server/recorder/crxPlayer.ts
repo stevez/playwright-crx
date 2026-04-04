@@ -24,7 +24,6 @@ import type { ActionInContextWithLocation, Location } from './parser';
 import type { FrameDescription } from '@recorder/actions';
 import { toClickOptions } from 'playwright-core/lib/server/recorder/recorderRunner';
 import { parseAriaSnapshotUnsafe } from 'playwright-core/lib/utils/isomorphic/ariaSnapshot';
-import { serverSideCallMetadata } from 'playwright-core/lib/server';
 import { ProgressController } from 'playwright-core/lib/server/progress';
 import type { Crx } from '../crx';
 import type { InstrumentationListener } from 'playwright-core/lib/server/instrumentation';
@@ -80,7 +79,8 @@ export default class CrxPlayer extends EventEmitter {
       context = page.context();
     } else {
       context = pageOrContext;
-      page = context.pages()[0] ?? await context.newPage(serverSideCallMetadata());
+      const newPageController = new ProgressController();
+      page = context.pages()[0] ?? await newPageController.run(progress => context.newPage(progress, false), 30000);
     }
 
     const crxApp = await this._crx.get({ incognito: false });
@@ -164,11 +164,10 @@ export default class CrxPlayer extends EventEmitter {
       const pageAlias = actionInContext.frame.pageAlias;
       if ([...pageAliases.values()].includes(pageAlias))
         throw new Error(`Page with alias ${pageAlias} already exists`);
-      const callMetadata = serverSideCallMetadata();
-      const controller = new ProgressController(callMetadata, context);
+      const controller = new ProgressController();
       const newPage = await controller.run(progress => context.newPage(progress, false), kActionTimeout);
       if (action.url && action.url !== 'about:blank' && action.url !== 'chrome://newtab/') {
-        const navController = new ProgressController(serverSideCallMetadata(), newPage.mainFrame());
+        const navController = new ProgressController();
         await navController.run(progress => newPage.mainFrame().goto(progress, action.url), kActionTimeout);
       }
       pageAliases.set(newPage, pageAlias);
@@ -187,7 +186,7 @@ export default class CrxPlayer extends EventEmitter {
       return;
     }
 
-    const controller = new ProgressController(serverSideCallMetadata(), mainFrame);
+    const controller = new ProgressController();
     await controller.run(async progress => {
       this._checkStopped();
       if (action.name === 'navigate')
