@@ -30,7 +30,7 @@ import { wrapClientApis } from './client/crxZone';
 import { nodePlatform } from 'playwright-core/lib/utils';
 
 export { debug as _debug } from 'debug';
-export { setUnderTest as _setUnderTest, isUnderTest as _isUnderTest } from 'playwright-core/lib/utils';
+export { setUnderTest as _setUnderTest, isUnderTest as _isUnderTest } from './shims/debug';
 
 // avoid conflicts with playwright when testing
 PageBinding.kBindingName = '__crx__binding__';
