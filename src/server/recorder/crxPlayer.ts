@@ -17,11 +17,7 @@
 import EventEmitter from 'events';
 import type { BrowserContext } from 'playwright-core/lib/server/browserContext';
 import { Page } from 'playwright-core/lib/server/page';
-import { createGuid, isUnderTest, ManualPromise, monotonicTime, serializeExpectedTextValues } from 'playwright-core/lib/utils';
-import type { CallMetadata } from '@protocol/callMetadata';
-import type { ActionInContext } from '@recorder/actions';
-import { serializeError } from 'playwright-core/lib/server/errors';
-import { traceParamsForAction } from './recorderUtils';
+import { isUnderTest, ManualPromise, serializeExpectedTextValues } from 'playwright-core/lib/utils';
 import { buildFullSelector } from 'playwright-core/lib/server/recorder/recorderUtils';
 import { toKeyboardModifiers } from 'playwright-core/lib/server/codegen/language';
 import type { ActionInContextWithLocation, Location } from './parser';
@@ -182,123 +178,40 @@ export default class CrxPlayer extends EventEmitter {
       return;
     }
 
-    // Build call metadata for recorder call log tracking
-    const traceParams = traceParamsForAction(actionInContext as ActionInContext);
-    const callMetadata: CallMetadata = {
-      id: `call@${createGuid()}`,
-      internal: false,
-      objectId: mainFrame.guid,
-      pageId: mainFrame._page.guid,
-      frameId: mainFrame.guid,
-      startTime: monotonicTime(),
-      endTime: 0,
-      type: 'Frame',
-      log: [],
-      location: actionInContext.location,
-      playing: true,
-      ...traceParams,
-    };
-
-    // Notify recorder directly (bypass instrumentation to avoid debugger blocking)
-    const crxApp = await this._crx.get({ incognito: false });
-    const recorder = crxApp?._recorder();
-    if (recorder)
-      await recorder.onBeforeCall(mainFrame, callMetadata);
-
     const controller = new ProgressController(serverSideCallMetadata(), mainFrame);
-    try {
-      await controller.run(async progress => {
-        this._checkStopped();
-        if (action.name === 'navigate') {
-          await mainFrame.goto(progress, action.url);
-          return;
-        }
-        const selector = buildFullSelector(actionInContext.frame.framePath, action.selector);
-        if (action.name === 'click') {
-          const options = toClickOptions(action);
-          await mainFrame.click(progress, selector, { ...options, strict: true });
-          return;
-        }
-        if (action.name === 'press') {
-          const modifiers = toKeyboardModifiers(action.modifiers);
-          const shortcut = [...modifiers, action.key].join('+');
-          await mainFrame.press(progress, selector, shortcut, { strict: true });
-          return;
-        }
-        if (action.name === 'fill') {
-          await mainFrame.fill(progress, selector, action.text, { strict: true });
-          return;
-        }
-        if (action.name === 'setInputFiles')
-          throw new Error('player does not support setInputFiles yet');
-        if (action.name === 'check') {
-          await mainFrame.check(progress, selector, { strict: true });
-          return;
-        }
-        if (action.name === 'uncheck') {
-          await mainFrame.uncheck(progress, selector, { strict: true });
-          return;
-        }
-        if (action.name === 'select') {
-          const values = action.options.map((value: any) => ({ value }));
-          await mainFrame.selectOption(progress, selector, [], values, { strict: true });
-          return;
-        }
-        if (action.name === 'assertChecked') {
-          await mainFrame.expect(progress, selector, {
-            selector,
-            expression: 'to.be.checked',
-            expectedValue: { checked: action.checked },
-            isNot: !action.checked,
-          });
-          return;
-        }
-        if (action.name === 'assertText') {
-          await mainFrame.expect(progress, selector, {
-            selector,
-            expression: 'to.have.text',
-            expectedText: serializeExpectedTextValues([action.text], { matchSubstring: true, normalizeWhiteSpace: true }),
-            isNot: false,
-          });
-          return;
-        }
-        if (action.name === 'assertValue') {
-          await mainFrame.expect(progress, selector, {
-            selector,
-            expression: 'to.have.value',
-            expectedValue: action.value,
-            isNot: false,
-          });
-          return;
-        }
-        if (action.name === 'assertVisible') {
-          await mainFrame.expect(progress, selector, {
-            selector,
-            expression: 'to.be.visible',
-            isNot: false,
-          });
-          return;
-        }
-        if (action.name === 'assertSnapshot') {
-          await mainFrame.expect(progress, selector, {
-            selector,
-            expression: 'to.match.aria',
-            expectedValue: parseAriaSnapshotUnsafe(yaml, action.ariaSnapshot),
-            isNot: false,
-          });
-          return;
-        }
-        throw new Error('Internal error: unexpected action ' + (action as any).name);
-      }, kActionTimeout);
-    } catch (e) {
-      callMetadata.error = serializeError(e);
-    } finally {
-      callMetadata.endTime = monotonicTime();
-      if (recorder)
-        await recorder.onAfterCall(mainFrame, callMetadata);
-      if (callMetadata.error)
-        throw callMetadata.error.error;
-    }
+    await controller.run(async progress => {
+      this._checkStopped();
+      if (action.name === 'navigate')
+        return await mainFrame.goto(progress, action.url);
+      const selector = buildFullSelector(actionInContext.frame.framePath, action.selector);
+      if (action.name === 'click')
+        return await mainFrame.click(progress, selector, { ...toClickOptions(action), strict: true });
+      if (action.name === 'press') {
+        const shortcut = [...toKeyboardModifiers(action.modifiers), action.key].join('+');
+        return await mainFrame.press(progress, selector, shortcut, { strict: true });
+      }
+      if (action.name === 'fill')
+        return await mainFrame.fill(progress, selector, action.text, { strict: true });
+      if (action.name === 'setInputFiles')
+        throw new Error('player does not support setInputFiles yet');
+      if (action.name === 'check')
+        return await mainFrame.check(progress, selector, { strict: true });
+      if (action.name === 'uncheck')
+        return await mainFrame.uncheck(progress, selector, { strict: true });
+      if (action.name === 'select')
+        return await mainFrame.selectOption(progress, selector, [], action.options.map((value: any) => ({ value })), { strict: true });
+      if (action.name === 'assertChecked')
+        return await mainFrame.expect(progress, selector, { selector, expression: 'to.be.checked', expectedValue: { checked: action.checked }, isNot: !action.checked });
+      if (action.name === 'assertText')
+        return await mainFrame.expect(progress, selector, { selector, expression: 'to.have.text', expectedText: serializeExpectedTextValues([action.text], { matchSubstring: true, normalizeWhiteSpace: true }), isNot: false });
+      if (action.name === 'assertValue')
+        return await mainFrame.expect(progress, selector, { selector, expression: 'to.have.value', expectedValue: action.value, isNot: false });
+      if (action.name === 'assertVisible')
+        return await mainFrame.expect(progress, selector, { selector, expression: 'to.be.visible', isNot: false });
+      if (action.name === 'assertSnapshot')
+        return await mainFrame.expect(progress, selector, { selector, expression: 'to.match.aria', expectedValue: parseAriaSnapshotUnsafe(yaml, action.ariaSnapshot), isNot: false });
+      throw new Error('Internal error: unexpected action ' + (action as any).name);
+    }, kActionTimeout);
   }
 
   private _checkStopped() {

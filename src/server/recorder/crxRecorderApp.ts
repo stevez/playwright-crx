@@ -30,6 +30,10 @@ import { languageSet } from 'playwright-core/lib/server/codegen/languages';
 import type { Crx } from '../crx';
 import type { LanguageGeneratorOptions } from 'playwright-core/lib/server/codegen/types';
 import { serverSideCallMetadata } from 'playwright-core/lib/server';
+import { createGuid, monotonicTime } from 'playwright-core/lib/utils';
+import type { CallMetadata } from '@protocol/callMetadata';
+import { metadataToCallLog } from 'playwright-core/lib/server/recorder/recorderUtils';
+import { traceParamsForAction } from './recorderUtils';
 
 export type RecorderMessage = { type: 'recorder' } & (
   | { method: 'resetCallLogs' }
@@ -195,6 +199,7 @@ export class CrxRecorderApp extends EventEmitter {
     if (!this._recorder._isRecording()) {
       this._crx.player.stop().catch(() => {});
       this._actionIndex = 0;
+      this._completedCallLogs = [];
       // Signal paused state so step/resume buttons are enabled
       this.setPaused(true);
     } else {
@@ -283,12 +288,17 @@ export class CrxRecorderApp extends EventEmitter {
       case 'clear':
         this._recordedActions = [];
         this._actionIndex = 0;
+        this._completedCallLogs = [];
         this._generateSources();
         this._recorder.clear();
         break;
       case 'fileChanged':
         this._filename = params.fileId;
         this._recorder.setOutput(params.fileId, undefined);
+        // Reset step state when switching language
+        this._actionIndex = 0;
+        this._completedCallLogs = [];
+        this._highlightPausedLine(undefined);
         if (this._editedCode?.hasErrors()) {
           this._updateCode(null);
           // force editor sources to refresh
@@ -334,6 +344,33 @@ export class CrxRecorderApp extends EventEmitter {
   }
 
   private _actionIndex = 0;
+  private _completedCallLogs: CallLog[] = [];
+
+  private _buildCallLog(action: ActionInContextWithLocation, status: 'done' | 'paused' | 'in-progress' | 'error', startTime?: number): CallLog {
+    const traceParams = traceParamsForAction(action as ActionInContext);
+    const metadata: CallMetadata = {
+      id: `call@${createGuid()}`,
+      internal: false,
+      objectId: '',
+      pageId: '',
+      frameId: '',
+      startTime: startTime ?? monotonicTime(),
+      endTime: status === 'done' ? monotonicTime() : 0,
+      type: 'Frame',
+      log: [],
+      location: action.location,
+      playing: true,
+      ...traceParams,
+    };
+    return metadataToCallLog(metadata, status);
+  }
+
+  private _updateStepCallLogs(pausedAction?: ActionInContextWithLocation) {
+    const logs = [...this._completedCallLogs];
+    if (pausedAction)
+      logs.push(this._buildCallLog(pausedAction, 'paused'));
+    this.updateCallLogs(logs);
+  }
 
   async _run(step: boolean) {
     if (this._crx.player.isPlaying())
@@ -344,7 +381,8 @@ export class CrxRecorderApp extends EventEmitter {
       await incognitoCrxApp?.close({ closeWindows: true });
     }
     const crxApp = await this._crx.get({ incognito }) ?? await this._crx.start({ incognito }, serverSideCallMetadata());
-    // Filter out the initial openPage for 'page' alias since the player skips it
+    // Filter openPage for 'page' alias (player skips it), but line numbers from
+    // _getActions() are already calculated with openPage included, so they're correct.
     const allActions = this._getActions().filter(a => !(a.action.name === 'openPage' && a.frame.pageAlias === 'page'));
 
     // Mute the debugger so it doesn't intercept player's frame actions
@@ -352,39 +390,50 @@ export class CrxRecorderApp extends EventEmitter {
     debugger_?.setMuted(true);
 
     if (step) {
-      // Step mode: run one action at a time
-      const action = allActions[this._actionIndex];
-      if (action) {
-        await this._crx.player.run(crxApp._context, [action]);
-        this._actionIndex++;
+      // Step mode: first call pauses at current action, subsequent calls execute and advance.
+      if (this._actionIndex > 0) {
+        // Execute the previously paused action
+        const action = allActions[this._actionIndex - 1];
+        if (action) {
+          const startTime = monotonicTime();
+          await this._crx.player.run(crxApp._context, [action]);
+          this._completedCallLogs.push(this._buildCallLog(action, 'done', startTime));
+        }
       }
-      const hasMore = this._actionIndex < allActions.length;
-      if (hasMore) {
-        // Highlight the next action line as "paused" in the recorder sources
-        const nextAction = allActions[this._actionIndex];
-        if (nextAction?.location?.line)
-          this._highlightPausedLine(nextAction.location.line);
+      const pausedAction = allActions[this._actionIndex];
+      if (pausedAction) {
+        if (pausedAction.location?.line)
+          this._highlightPausedLine(pausedAction.location.line);
+        this._actionIndex++;
+        this._updateStepCallLogs(pausedAction);
       } else {
         this._highlightPausedLine(undefined);
+        this._updateStepCallLogs();
       }
       debugger_?.setMuted(false);
-      this.setPaused(hasMore);
+      this.setPaused(!!pausedAction);
     } else {
-      // Resume mode: run all remaining actions
+      // Resume mode: run remaining actions (execute the paused one + the rest)
       this._highlightPausedLine(undefined);
-      const actions = allActions.slice(this._actionIndex);
-      await this._crx.player.run(crxApp._context, actions);
+      const startIdx = this._actionIndex > 0 ? this._actionIndex - 1 : 0;
+      const actions = allActions.slice(startIdx);
+      if (actions.length)
+        await this._crx.player.run(crxApp._context, actions);
+      for (const action of actions)
+        this._completedCallLogs.push(this._buildCallLog(action, 'done'));
       this._actionIndex = allActions.length;
+      this._updateStepCallLogs();
       debugger_?.setMuted(false);
-      this.setPaused(false);
+      this.setPaused(!this._recorder._isRecording());
     }
   }
 
   private _highlightPausedLine(line: number | undefined) {
     const sources = this._recorderSources.map(s => ({
       ...s,
-      highlight: line ? [{ line, type: 'paused' as const }] : [],
-      revealLine: line,
+      // Only highlight the active language source
+      highlight: line && s.id === this._filename ? [{ line, type: 'paused' as const }] : [],
+      revealLine: s.id === this._filename ? line : undefined,
     }));
     this.setSources(sources);
   }
