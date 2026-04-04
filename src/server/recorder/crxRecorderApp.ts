@@ -417,7 +417,7 @@ export class CrxRecorderApp extends EventEmitter {
         // Show error highlight on the failed action line
         const failedAction = allActions[this._actionIndex - 1];
         if (failedAction?.location?.line)
-          this._highlightLine(failedAction.location.line, 'error');
+          this._highlightLine(failedAction.location.line, 'error', actionError.message);
         this._updateStepCallLogs();
       } else {
         const pausedAction = allActions[this._actionIndex];
@@ -440,18 +440,16 @@ export class CrxRecorderApp extends EventEmitter {
       const startIdx = this._actionIndex > 0 ? this._actionIndex - 1 : 0;
       const actions = allActions.slice(startIdx);
       const startTime = monotonicTime();
-      try {
-        if (actions.length)
-          await this._crx.player.run(crxApp._context, actions);
-        for (const action of actions)
-          this._completedCallLogs.push(this._buildCallLog(action, 'done', startTime));
-      } catch (e) {
-        // Mark completed actions as done, failing action as error
-        for (let i = 0; i < actions.length; i++) {
-          const isLast = i === actions.length - 1;
-          this._completedCallLogs.push(this._buildCallLog(actions[i], isLast ? 'error' : 'done', startTime));
-          if (isLast && actions[i].location?.line)
-            this._highlightLine(actions[i].location!.line!, 'error');
+      // Run actions one by one to track which one fails
+      for (let i = 0; i < actions.length; i++) {
+        try {
+          await this._crx.player.run(crxApp._context, [actions[i]]);
+          this._completedCallLogs.push(this._buildCallLog(actions[i], 'done', startTime));
+        } catch (e) {
+          this._completedCallLogs.push(this._buildCallLog(actions[i], 'error', startTime));
+          if (actions[i].location?.line)
+            this._highlightLine(actions[i].location!.line!, 'error', (e as Error).message);
+          break;
         }
       }
       this._actionIndex = allActions.length;
@@ -461,11 +459,11 @@ export class CrxRecorderApp extends EventEmitter {
     }
   }
 
-  private _highlightLine(line: number | undefined, type: 'paused' | 'error' | 'running' = 'paused') {
+  private _highlightLine(line: number | undefined, type: 'paused' | 'error' | 'running' = 'paused', message?: string) {
     const sources = this._recorderSources.map(s => ({
       ...s,
       // Only highlight the active language source
-      highlight: line && s.id === this._filename ? [{ line, type }] : [],
+      highlight: line && s.id === this._filename ? [{ line, type, message }] : [],
       revealLine: s.id === this._filename ? line : undefined,
     }));
     this.setSources(sources);
