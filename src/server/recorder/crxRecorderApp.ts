@@ -297,7 +297,7 @@ export class CrxRecorderApp extends EventEmitter {
         // Reset step state when switching language
         this._actionIndex = 0;
         this._completedCallLogs = [];
-        this._highlightPausedLine(undefined);
+        this._highlightLine(undefined);
         if (this._editedCode?.hasErrors()) {
           this._updateCode(null);
           // force editor sources to refresh
@@ -397,37 +397,63 @@ export class CrxRecorderApp extends EventEmitter {
 
     if (step) {
       // Step mode: first call pauses at current action, subsequent calls execute and advance.
+      let actionError: Error | undefined;
       if (this._actionIndex > 0) {
         // Execute the previously paused action
         const action = allActions[this._actionIndex - 1];
         if (action) {
           const startTime = monotonicTime();
-          await this._crx.player.run(crxApp._context, [action]);
-          this._completedCallLogs.push(this._buildCallLog(action, 'done', startTime));
+          try {
+            await this._crx.player.run(crxApp._context, [action]);
+            this._completedCallLogs.push(this._buildCallLog(action, 'done', startTime));
+          } catch (e) {
+            actionError = e as Error;
+            this._completedCallLogs.push(this._buildCallLog(action, 'error', startTime));
+          }
         }
       }
-      const pausedAction = allActions[this._actionIndex];
-      if (pausedAction) {
-        if (pausedAction.location?.line)
-          this._highlightPausedLine(pausedAction.location.line);
-        this._actionIndex++;
-        this._updateStepCallLogs(pausedAction);
-      } else {
-        this._highlightPausedLine(undefined);
+      let hasPausedAction = false;
+      if (actionError) {
+        // Show error highlight on the failed action line
+        const failedAction = allActions[this._actionIndex - 1];
+        if (failedAction?.location?.line)
+          this._highlightLine(failedAction.location.line, 'error');
         this._updateStepCallLogs();
+      } else {
+        const pausedAction = allActions[this._actionIndex];
+        if (pausedAction) {
+          hasPausedAction = true;
+          if (pausedAction.location?.line)
+            this._highlightLine(pausedAction.location.line);
+          this._actionIndex++;
+          this._updateStepCallLogs(pausedAction);
+        } else {
+          this._highlightLine(undefined);
+          this._updateStepCallLogs();
+        }
       }
       debugger_?.setMuted(false);
-      this.setPaused(!!pausedAction);
+      this.setPaused(hasPausedAction);
     } else {
       // Resume mode: run remaining actions (execute the paused one + the rest)
-      this._highlightPausedLine(undefined);
+      this._highlightLine(undefined);
       const startIdx = this._actionIndex > 0 ? this._actionIndex - 1 : 0;
       const actions = allActions.slice(startIdx);
       const startTime = monotonicTime();
-      if (actions.length)
-        await this._crx.player.run(crxApp._context, actions);
-      for (const action of actions)
-        this._completedCallLogs.push(this._buildCallLog(action, 'done', startTime));
+      try {
+        if (actions.length)
+          await this._crx.player.run(crxApp._context, actions);
+        for (const action of actions)
+          this._completedCallLogs.push(this._buildCallLog(action, 'done', startTime));
+      } catch (e) {
+        // Mark completed actions as done, failing action as error
+        for (let i = 0; i < actions.length; i++) {
+          const isLast = i === actions.length - 1;
+          this._completedCallLogs.push(this._buildCallLog(actions[i], isLast ? 'error' : 'done', startTime));
+          if (isLast && actions[i].location?.line)
+            this._highlightLine(actions[i].location!.line!, 'error');
+        }
+      }
       this._actionIndex = allActions.length;
       this._updateStepCallLogs();
       debugger_?.setMuted(false);
@@ -435,11 +461,11 @@ export class CrxRecorderApp extends EventEmitter {
     }
   }
 
-  private _highlightPausedLine(line: number | undefined) {
+  private _highlightLine(line: number | undefined, type: 'paused' | 'error' | 'running' = 'paused') {
     const sources = this._recorderSources.map(s => ({
       ...s,
       // Only highlight the active language source
-      highlight: line && s.id === this._filename ? [{ line, type: 'paused' as const }] : [],
+      highlight: line && s.id === this._filename ? [{ line, type }] : [],
       revealLine: s.id === this._filename ? line : undefined,
     }));
     this.setSources(sources);
