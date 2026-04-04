@@ -292,20 +292,17 @@ export function normalizeEvaluationExpression(expression: string, isFunction: bo
     try {
       new Function('(' + expression + ')');
     } catch (e1) {
-      // check if CSP doesn't allow 'unsafe-eval'
-      if (!(e1 instanceof EvalError) || !e1.message.includes('unsafe-eval')) {
-        // This means we might have a function shorthand. Try another
-        // time prefixing 'function '.
-        if (expression.startsWith('async '))
-          expression = 'async function ' + expression.substring('async '.length);
-        else
-          expression = 'function ' + expression;
-        try {
-          new Function('(' + expression  + ')');
-        } catch (e2) {
-          // We tried hard to serialize, but there's a weird beast here.
-          throw new Error('Passed function is not well-serializable!');
-        }
+      // This means we might have a function shorthand. Try another
+      // time prefixing 'function '.
+      if (expression.startsWith('async '))
+        expression = 'async function ' + expression.substring('async '.length);
+      else
+        expression = 'function ' + expression;
+      try {
+        new Function('(' + expression  + ')');
+      } catch (e2) {
+        // We tried hard to serialize, but there's a weird beast here.
+        throw new Error('Passed function is not well-serializable!');
       }
     }
   }

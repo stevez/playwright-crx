@@ -20,13 +20,12 @@ import { methodMetainfo } from '../utils/isomorphic/protocolMetainfo';
 import { captureLibraryStackTrace } from './clientStackTrace';
 import { stringifyStackFrames } from '../utils/isomorphic/stackTrace';
 
-import type { ClientInstrumentation } from './clientInstrumentation';
+import type { ClientInstrumentation, RecoverFromApiErrorHandler } from './clientInstrumentation';
 import type { Connection } from './connection';
 import type { Logger } from './types';
 import type { ValidatorContext } from '../protocol/validator';
 import type { Platform } from './platform';
 import type * as channels from '@protocol/channels';
-import { currentZone } from '../utils';
 
 type Listener = (...args: any[]) => void;
 
@@ -180,10 +179,8 @@ export abstract class ChannelOwner<T extends channels.Channel = channels.Channel
     if (existingApiZone)
       return await func(existingApiZone);
 
-    const crxZone = currentZone().data<{ apiName: string }>('crxZone');
-
     const stackTrace = captureLibraryStackTrace(this._platform);
-    const apiZone: ApiZone = { title: options?.title, apiName: crxZone?.apiName ?? stackTrace.apiName, frames: stackTrace.frames, internal: options?.internal ?? false, reported: false, userData: undefined, stepId: undefined };
+    const apiZone: ApiZone = { title: options?.title, apiName: stackTrace.apiName, frames: stackTrace.frames, internal: options?.internal ?? false, reported: false, userData: undefined, stepId: undefined };
 
     try {
       const result = await this._platform.zones.current().push(apiZone).run(async () => await func(apiZone));
@@ -202,16 +199,19 @@ export abstract class ChannelOwner<T extends channels.Channel = channels.Channel
       else
         e.stack = '';
       if (!options?.internal) {
+        const recoveryHandlers: RecoverFromApiErrorHandler[] = [];
         apiZone.error = e;
+        this._instrumentation.onApiCallRecovery(apiZone, e, recoveryHandlers);
+        for (const handler of recoveryHandlers) {
+          const recoverResult = await handler();
+          if (recoverResult.status === 'recovered')
+            return recoverResult.value as R;
+        }
         logApiCall(this._platform, logger, `<= ${apiZone.apiName} failed`);
         this._instrumentation.onApiCallEnd(apiZone);
       }
       throw e;
     }
-  }
-
-  _toImpl(): any {
-    return this._connection.toImpl?.(this);
   }
 
   private toJSON() {

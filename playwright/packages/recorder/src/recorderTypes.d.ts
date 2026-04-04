@@ -80,18 +80,15 @@ export type CallLog = {
 export type SourceHighlight = {
   line: number;
   type: 'running' | 'paused' | 'error';
-  message?: string;
 };
 
 export type Source = {
-  isPrimary: boolean;
   isRecorded: boolean;
   id: string;
   label: string;
   text: string;
   language: Language;
   highlight: SourceHighlight[];
-  timestamp: number;
   revealLine?: number;
   // used to group the language generators
   group?: string;
@@ -105,6 +102,7 @@ declare global {
     playwrightSetMode: (mode: Mode) => void;
     playwrightSetPaused: (paused: boolean) => void;
     playwrightSetSources: (sources: Source[]) => void;
+    playwrightSelectSource: (sourceId: string) => void;
     playwrightSetPageURL: (url: string | undefined) => void;
     playwrightSetOverlayVisible: (visible: boolean) => void;
     playwrightUpdateLogs: (callLogs: CallLog[]) => void;
