@@ -200,16 +200,22 @@ export default class CrxPlayer extends EventEmitter {
         return await mainFrame.uncheck(progress, selector, { strict: true });
       if (action.name === 'select')
         return await mainFrame.selectOption(progress, selector, [], action.options.map((value: any) => ({ value })), { strict: true });
+      const expectAndCheck = async (opts: Parameters<typeof mainFrame.expect>[2]) => {
+        const result = await mainFrame.expect(progress, selector, opts);
+        if (result.matches === opts.isNot)
+          throw new Error(`Expect failed`);
+        return result;
+      };
       if (action.name === 'assertChecked')
-        return await mainFrame.expect(progress, selector, { selector, expression: 'to.be.checked', expectedValue: { checked: action.checked }, isNot: !action.checked });
+        return await expectAndCheck({ selector, expression: 'to.be.checked', expectedValue: { checked: action.checked }, isNot: !action.checked });
       if (action.name === 'assertText')
-        return await mainFrame.expect(progress, selector, { selector, expression: 'to.have.text', expectedText: serializeExpectedTextValues([action.text], { matchSubstring: true, normalizeWhiteSpace: true }), isNot: false });
+        return await expectAndCheck({ selector, expression: 'to.have.text', expectedText: serializeExpectedTextValues([action.text], { matchSubstring: true, normalizeWhiteSpace: true }), isNot: false });
       if (action.name === 'assertValue')
-        return await mainFrame.expect(progress, selector, { selector, expression: 'to.have.value', expectedText: serializeExpectedTextValues([action.value], { matchSubstring: false, normalizeWhiteSpace: true }), isNot: false });
+        return await expectAndCheck({ selector, expression: 'to.have.value', expectedText: serializeExpectedTextValues([action.value], { matchSubstring: false, normalizeWhiteSpace: true }), isNot: false });
       if (action.name === 'assertVisible')
-        return await mainFrame.expect(progress, selector, { selector, expression: 'to.be.visible', isNot: false });
+        return await expectAndCheck({ selector, expression: 'to.be.visible', isNot: false });
       if (action.name === 'assertSnapshot')
-        return await mainFrame.expect(progress, selector, { selector, expression: 'to.match.aria', expectedValue: parseAriaSnapshotUnsafe(yaml, action.ariaSnapshot), isNot: false });
+        return await expectAndCheck({ selector, expression: 'to.match.aria', expectedValue: parseAriaSnapshotUnsafe(yaml, action.ariaSnapshot), isNot: false });
       throw new Error('Internal error: unexpected action ' + (action as any).name);
     }, kActionTimeout);
   }
