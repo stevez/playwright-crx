@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.17.0
+
+### Breaking Changes
+
+- **Upgrade to Playwright 1.55.1** — All internal APIs updated to match Playwright 1.55 architecture.
+- **Recorder/player tests excluded from CI** — Recorder popup initialization changed in 1.55; recorder and player tests are excluded pending fix.
+
+### Changes
+
+- `tNumber` replaced with `tInt`/`tFloat` in protocol validator.
+- `serverSideCallMetadata` removed — uses `ProgressController()` defaults.
+- `setUnderTest` restored via `src/shims/debug.ts` for extension service worker compatibility.
+- `_toImpl` restored on `ChannelOwner.prototype` (removed upstream in 1.55).
+- CSP `unsafe-eval` guard restored in vendored `javascript.ts` for MV3 extension compat.
+- Removed `isPrimary`/`timestamp` from `Source`, `playing` from `CallMetadata`, `message` from `SourceHighlight` (removed upstream).
+- Removed `onEditedCode`/`onCursorActivity` props from recorder example (removed upstream).
+
 ## 1.16.1
 
 ### Improvements
