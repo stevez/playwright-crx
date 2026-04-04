@@ -25,17 +25,9 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium chrome
         working-directory: tests
-      - name: Run tests (excluding recorder/player)
-        run: cd tests && npx playwright test --project "Chrome" -- crx/api.spec.ts crx/cookies.spec.ts crx/dialog.spec.ts crx/incognito.spec.ts crx/tracing.spec.ts crx/parse.spec.ts
+      - run: npm run test
         env:
           HEADLESS: 1
-          CI: 1
-      - uses: actions/upload-artifact@v4
-        with:
-          name: recorder-crx
-          path: |
-            examples/recorder-crx/dist/
-          retention-days: 5
       - uses: actions/upload-artifact@v4
         if: always()
         with:

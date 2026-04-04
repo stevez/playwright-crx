@@ -14,13 +14,11 @@
  * limitations under the License.
  */
 
-import { EventEmitter } from 'events';
 import { ChannelOwner } from 'playwright-core/lib/client/channelOwner';
 import type api from '../types/types';
 import type * as channels from '../protocol/channels';
 import { Page } from 'playwright-core/lib/client/page';
 import type { BrowserContext } from 'playwright-core/lib/client/browserContext';
-import type { Mode } from '@recorder/recorderTypes';
 import fs from '../shims/fs';
 
 function from<T>(obj: any): T {
@@ -66,65 +64,8 @@ export class Crx extends ChannelOwner<channels.CrxChannel> implements api.Crx {
   }
 }
 
-export class CrxRecorder extends EventEmitter implements api.CrxRecorder {
-  private _channel: channels.CrxApplicationChannel;
-  private _hidden: boolean = true;
-  private _mode: Mode = 'none';
-
-  constructor(channel: channels.CrxApplicationChannel) {
-    super();
-    this._channel = channel;
-    this._channel.on('hide', () => {
-      this._hidden = true;
-      this.emit('hide');
-    });
-    this._channel.on('show', () => {
-      this._hidden = false;
-      this.emit('show');
-    });
-    this._channel.on('modeChanged', event => {
-      this._mode = event.mode;
-      this.emit('modechanged', event);
-    });
-  }
-
-  mode() {
-    return this._mode;
-  }
-
-  isHidden() {
-    return this._hidden;
-  }
-
-  async setMode(mode: Mode) {
-    await this._channel.setMode({ mode });
-  }
-
-  async show(options?: channels.CrxApplicationShowRecorderOptions) {
-    await this._channel.showRecorder(options ?? {});
-  }
-
-  async hide() {
-    await this._channel.hideRecorder();
-  }
-
-  async list(code: string) {
-    const { tests } = await this._channel.list({ code });
-    return tests;
-  }
-
-  async load(code: string) {
-    await this._channel.load({ code });
-  }
-
-  async run(code: string, page?: Page): Promise<void> {
-    await this._channel.run({ code, page: page?._channel });
-  }
-}
-
 export class CrxApplication extends ChannelOwner<channels.CrxApplicationChannel> implements api.CrxApplication {
   private _context: BrowserContext;
-  readonly recorder: api.CrxRecorder;
 
   static from(crxApplication: channels.CrxApplicationChannel): CrxApplication {
     return (crxApplication as any)._object;
@@ -133,7 +74,6 @@ export class CrxApplication extends ChannelOwner<channels.CrxApplicationChannel>
   constructor(parent: ChannelOwner, type: string, guid: string, initializer: channels.CrxApplicationInitializer) {
     super(parent, type, guid, initializer);
     this._context = (initializer.context as any)._object;
-    this.recorder = new CrxRecorder(this._channel);
     this._channel.on('attached', ({ page, tabId }) => {
       this.emit('attached', { tabId, page: Page.from(page) });
     });

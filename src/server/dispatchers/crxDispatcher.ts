@@ -44,20 +44,11 @@ export class CrxApplicationDispatcher extends Dispatcher<CrxApplication, channel
     super(scope, crxApplication, 'CrxApplication', { context });
     this._context = context;
     const dispatchEvent = (this._dispatchEvent as any).bind(this);
-    this.addObjectListener(CrxApplication.Events.RecorderHide, () => {
-      dispatchEvent('hide');
-    });
-    this.addObjectListener(CrxApplication.Events.RecorderShow, () => {
-      dispatchEvent('show');
-    });
     this.addObjectListener(CrxApplication.Events.Attached, ({ tabId, page }) => {
       dispatchEvent('attached', { tabId, page: PageDispatcher.from(this._context, page) });
     });
     this.addObjectListener(CrxApplication.Events.Detached, ({ tabId }) => {
       dispatchEvent('detached', { tabId });
-    });
-    this.addObjectListener(CrxApplication.Events.ModeChanged, event => {
-      dispatchEvent('modeChanged', event);
     });
   }
 
@@ -85,34 +76,9 @@ export class CrxApplicationDispatcher extends Dispatcher<CrxApplication, channel
     return { page: PageDispatcher.from(this._context, await this._object.newPage(params)) };
   }
 
-  async showRecorder(params: channels.CrxApplicationShowRecorderParams): Promise<void> {
-    await this._object.showRecorder(params);
-  }
-
-  async hideRecorder(): Promise<void> {
-    await this._object.hideRecorder();
-  }
-
-  async setMode(params: channels.CrxApplicationSetModeParams): Promise<channels.CrxApplicationSetModeResult> {
-    this._object.setMode(params.mode);
-  }
-
   async close(): Promise<void> {
     await this._object.close();
     this._dispose();
-  }
-
-  async list(params: channels.CrxApplicationListParams): Promise<channels.CrxApplicationListResult> {
-    const tests = this._object.list(params.code);
-    return { tests };
-  }
-
-  async load(params: channels.CrxApplicationLoadParams): Promise<channels.CrxApplicationLoadResult> {
-    this._object.load(params.code);
-  }
-
-  async run(params: channels.CrxApplicationRunParams): Promise<void> {
-    await this._object.run(params.code, (params.page as PageDispatcher)?._object);
   }
 
   async extendInjectedScript(params: channels.CrxApplicationExtendInjectedScriptParams): Promise<void> {

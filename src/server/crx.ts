@@ -23,21 +23,13 @@ import { helper } from 'playwright-core/lib/server/helper';
 import { SdkObject } from 'playwright-core/lib/server/instrumentation';
 import { Page } from 'playwright-core/lib/server/page';
 import type { Playwright } from 'playwright-core/lib/server/playwright';
-import { Recorder } from 'playwright-core/lib/server/recorder';
 import { assert } from 'playwright-core/lib/utils';
 import type * as crxchannels from '../protocol/channels';
-import { CrxRecorderApp } from './recorder/crxRecorderApp';
 import { CrxTransport } from './transport/crxTransport';
 import { BrowserContext } from 'playwright-core/lib/server/browserContext';
-import type { Mode } from '@recorder/recorderTypes';
-import CrxPlayer from './recorder/crxPlayer';
 import { createTab } from './utils';
-import { parse } from './recorder/parser';
-import { generateCode } from 'playwright-core/lib/server/codegen/language';
-import { languageSet } from 'playwright-core/lib/server/codegen/languages';
 import { deviceDescriptors } from 'playwright-core/lib/server/deviceDescriptors';
 import type { DeviceDescriptor } from 'playwright-core/lib/server/types';
-import type { LanguageGeneratorOptions } from 'playwright-core/lib/server/codegen/types';
 
 const kTabIdSymbol = Symbol('kTabIdSymbol');
 
@@ -51,11 +43,8 @@ export class Crx extends SdkObject {
   private _browserPromise?: Promise<CRBrowser>;
   private _crxApplicationPromise: Promise<CrxApplication> | undefined;
   private _incognitoCrxApplicationPromise: Promise<CrxApplication> | undefined;
-  readonly player: CrxPlayer;
-
   constructor(playwright: Playwright) {
     super(playwright, 'crx');
-    this.player = new CrxPlayer(this);
   }
 
   async start(options?: crxchannels.CrxStartParams): Promise<CrxApplication> {
@@ -165,27 +154,21 @@ export class Crx extends SdkObject {
 
 export class CrxApplication extends SdkObject {
   static Events = {
-    RecorderHide: 'hide',
-    RecorderShow: 'show',
     Attached: 'attached',
     Detached: 'detached',
-    ModeChanged: 'modeChanged',
   };
 
-  private _crx: Crx;
   readonly _context: CRBrowserContext;
   private _transport: CrxTransport;
-  private _recorderApp?: CrxRecorderApp;
   _closed = false;
 
-  constructor(crx: Crx, context: CRBrowserContext, transport: CrxTransport) {
+  constructor(_crx: Crx, context: CRBrowserContext, transport: CrxTransport) {
     super(context, 'crxApplication');
     this.instrumentation.addListener({
       onPageClose: page => {
         page.hideHighlight();
       },
     }, null);
-    this._crx = crx;
     this._context = context;
     this._transport = transport;
     context.on(BrowserContext.Events.Page, (page: Page) => {
@@ -228,29 +211,6 @@ export class CrxApplication extends SdkObject {
       return;
 
     return this._transport.getTabId(targetId);
-  }
-
-  async showRecorder(options?: crxchannels.CrxApplicationShowRecorderParams) {
-    if (!this._recorderApp) {
-      const { mode, ...otherOptions } = options ?? {};
-      const recorderParams = {
-        language: options?.language ?? 'playwright-test',
-        mode: mode === 'none' ? undefined : mode,
-        ...otherOptions
-      };
-      const recorder = await Recorder.forContext(this._context, recorderParams);
-      await this._createRecorderApp(recorder);
-    }
-
-    await this._recorderApp!.open(options);
-  }
-
-  async hideRecorder() {
-    await this._recorderApp?.close();
-  }
-
-  setMode(mode: Mode) {
-    this._recorderApp?._recorder.setMode(mode);
   }
 
   async extendInjectedScript(source: string, arg?: any) {
@@ -327,43 +287,6 @@ export class CrxApplication extends SdkObject {
     await this._context.close({});
   }
 
-  list(code: string) {
-    const tests = parse(code);
-    return tests.map(({ title, options, location }) => ({ title, options, location }));
-  }
-
-  load(code: string) {
-    this._recorderApp?.load(code);
-  }
-
-  async run(code: string, page?: Page) {
-    const [{ actions }] = parse(code);
-    await this._crx.player.run(page ?? this._context, actions);
-  }
-
-  async parseForTest(originCode: string) {
-    const [{ actions, options }] = parse(originCode);
-    const jsLanguage = [...languageSet()].find(l => l.id === 'playwright-test');
-    const code = generateCode(actions, jsLanguage!, { browserName: '', launchOptions: {}, contextOptions: {}, ...options } as LanguageGeneratorOptions).text;
-    return { actions, options, code };
-  }
-
-  async _createRecorderApp(recorder: Recorder) {
-    if (!this._recorderApp) {
-      this._recorderApp = new CrxRecorderApp(this._crx, recorder as Recorder);
-      this._recorderApp.on('show', () => this.emit(CrxApplication.Events.RecorderShow));
-      this._recorderApp.on('hide', () => this.emit(CrxApplication.Events.RecorderHide));
-      this._recorderApp.on('modeChanged', event => {
-        this.emit(CrxApplication.Events.ModeChanged, event);
-      });
-    }
-    return this._recorderApp;
-  }
-
-  _recorder() {
-    return this._recorderApp?._recorder;
-  }
-
   private onWindowRemoved = async () => {
     const windows = await chrome.windows.getAll();
     if (this.isIncognito() && windows.every(w => !w.incognito))
@@ -390,10 +313,7 @@ export class CrxApplication extends SdkObject {
     }
 
     // ensure we don't have any injected highlights
-    await Promise.all([
-      this._recorderApp?.uninstall(pageOrError),
-      pageOrError.hideHighlight(),
-    ]);
+    await pageOrError.hideHighlight();
     const closed = new Promise(x => pageOrError.once(Page.Events.Close, x));
     await this._transport.detach(targetId);
     await closed;
