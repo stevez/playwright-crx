@@ -171,10 +171,9 @@ export const test = crxTest.extend<{
                   await locator.click();
                   break;
                 case 'assertSnapshot':
-                  // ensure snapshot is toggled (for some reason, it may take more than one click)
-                  const assertBtn = recorderPage.getByTitle('Assert snapshot');
-                  while (await assertBtn.evaluate(e => !e.classList.contains('toggled')))
-                    await assertBtn.click();
+                  await recorderPage.getByTitle('Assert snapshot').click();
+                  // Wait for assertingSnapshot mode to propagate to the page overlay
+                  await page.locator('x-pw-glass').locator('x-pw-tool-item.snapshot.toggled').waitFor({ timeout: 5000 });
                   await locator.click();
                   break;
               }

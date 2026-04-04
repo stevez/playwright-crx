@@ -96,9 +96,8 @@ export class CrxRecorderApp extends EventEmitter {
     // CRX manages paused state independently via step/resume/setMode handlers.
     // Don't forward the recorder's debugger pause state — it would override
     // our manually managed paused state and disable the step button.
-    recorder.on(RecorderEvent.CallLogsUpdated, (callLogs: CallLog[]) => {
-      this.updateCallLogs(callLogs);
-    });
+    // CRX manages call logs independently via _updateStepCallLogs during step/resume.
+    // Don't forward the recorder's call logs — they would override our manually-built logs.
     recorder.on(RecorderEvent.UserSourcesChanged, (sources: Source[]) => {
       this.setSources([...this._recorderSources, ...sources]);
     });
@@ -308,10 +307,18 @@ export class CrxRecorderApp extends EventEmitter {
         break;
       case 'setMode':
         this._recorder.setMode(params.mode);
+        // Also update local mode and send to UI directly, in case the recorder
+        // doesn't emit ModeChanged (e.g., mode already set)
+        if (this._mode !== params.mode) {
+          this._mode = params.mode;
+          this.emit('modeChanged', { mode: params.mode });
+          this._sendMessage({ type: 'recorder', method: 'setMode', mode: params.mode });
+        }
         break;
       case 'resume':
         this.setPaused(false);
-        this._run(false).catch(() => {});
+        // eslint-disable-next-line no-console
+        this._run(false).catch((e: any) => console.log('[CRX] resume error:', e));
         break;
       case 'pause':
         this._crx.player.stop().catch(() => {});
