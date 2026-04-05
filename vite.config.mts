@@ -96,6 +96,9 @@ export default defineConfig({
       },
       load(id) {
         const normalized = id.replace(/\\/g, '/');
+        // Stub pixelmatch (CJS module not used in CRX, alias doesn't resolve on cold cache)
+        if (normalized.includes('third_party/pixelmatch'))
+          return 'export default function() { throw new Error("pixelmatch not available in CRX"); }';
         // Stub MCP test runner imports
         if (normalized.includes('/mcp/') && normalized.includes('playwright/packages/playwright/'))
           return 'export default {}; export const runBrowserBackendAtEnd = () => {}; export const createCustomMessageHandler = () => {};';
