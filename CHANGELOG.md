@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.20.0
+
+### Breaking Changes
+
+- **Upgrade to Playwright 1.58.2** — All internal APIs updated to match Playwright 1.58 architecture.
+
+### Changes
+
+- Replaced full playwright test runner import with standalone `expect` in `test.ts` — eliminates DOM/Node dependencies from service worker bundle.
+- Test extension bundle reduced from 9 MB to 6.6 MB.
+- Added zod dependency for playwright-core agent tool schemas.
+- Added `src/shims/mcpBundleImpl.ts` with real zod + MCP SDK stubs.
+- Added `browserType.executablePath()` null guard for CRX.
+- Replaced `toThrowError` with `toThrow` in tests (expect@30 compat).
+
 ## 1.19.0
 
 ### Breaking Changes
