@@ -30,6 +30,8 @@ export default defineConfig({
       // Note: javascript.ts CSP patch must stay in vendor (shim can't override internal function calls)
       // Stub pixelmatch (CJS module not used in CRX, causes ESM interop issues)
       [path.resolve(__dirname, './playwright/packages/playwright-core/src/third_party/pixelmatch')]: path.resolve(__dirname, './src/shims/pixelmatch'),
+      // Force expect to use CJS entry (ESM entry has no default export, breaks Vite interop)
+      'expect': path.resolve(__dirname, './playwright/packages/playwright/bundles/expect/node_modules/expect/build/index.js'),
 
       'playwright-core/lib': path.resolve(__dirname, './playwright/packages/playwright-core/src'),
       '@playwright/test/lib': path.resolve(__dirname, './playwright/packages/playwright/src'),
