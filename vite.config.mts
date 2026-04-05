@@ -91,7 +91,7 @@ export default defineConfig({
       load(id) {
         const normalized = id.replace(/\\/g, '/');
         if (normalized.includes('/mcp/') && normalized.includes('playwright/packages/playwright'))
-          return 'export default {}; export const runBrowserBackendAtEnd = () => {};';
+          return 'export default {}; export const runBrowserBackendAtEnd = () => {}; export const createCustomMessageHandler = () => {};';
       },
     } as Plugin<any>,
     replace({
