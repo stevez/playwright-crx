@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.19.0
+
+### Breaking Changes
+
+- **Upgrade to Playwright 1.57.0** — All internal APIs updated to match Playwright 1.57 architecture.
+
+### Changes
+
+- Removed `Accessibility` API references (removed upstream).
+- Removed `_bidiChromium`/`_bidiFirefox` browser types from dispatcher and validator (removed upstream).
+- Fixed `expect` CJS/ESM interop by forcing CJS entry via Vite alias.
+- Added `browserType.executablePath()` null guard for CRX (no downloaded browser).
+- Updated MCP stub for `createCustomMessageHandler`.
+
 ## 1.18.0
 
 ### Breaking Changes
