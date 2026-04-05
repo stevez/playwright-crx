@@ -87,12 +87,16 @@ export default defineConfig({
     'require.resolve': 'Boolean',
   },
   plugins: [
-    // Stub all MCP-related modules (MCP not used in Chrome extension context)
+    // Stub MCP-related imports (MCP SDK requires Node crypto, can't run in extensions)
     {
       name: 'stub-mcp',
+      resolveId(source) {
+        if (source.includes('mcpBundleImpl'))
+          return path.resolve(__dirname, './src/shims/mcpBundleImpl.ts');
+      },
       load(id) {
         const normalized = id.replace(/\\/g, '/');
-        if (normalized.includes('/mcp/') && normalized.includes('playwright/packages/playwright'))
+        if (normalized.includes('/mcp/') && normalized.includes('playwright/packages/playwright/'))
           return 'export default {}; export const runBrowserBackendAtEnd = () => {}; export const createCustomMessageHandler = () => {};';
       },
     } as Plugin<any>,

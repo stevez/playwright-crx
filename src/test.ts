@@ -15,4 +15,8 @@
  */
 
 export * from '.';
-export { expect, test } from '@playwright/test/lib/index';
+
+// Use standalone expect from the expect bundle instead of pulling in the
+// entire playwright test runner (which requires Node/DOM APIs like document).
+import { expect as expectLibrary } from 'expect';
+export const expect = expectLibrary;
