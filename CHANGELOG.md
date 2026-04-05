@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.18.0
+
+### Breaking Changes
+
+- **Upgrade to Playwright 1.56.1** — All internal APIs updated to match Playwright 1.56 architecture.
+
+### Changes
+
+- Re-applied CSP `unsafe-eval` guard in vendored `javascript.ts`.
+- Added Vite `stub-mcp` plugin to short-circuit MCP module loading (new in 1.56, not used in CRX).
+
 ## 1.17.1
 
 ### Breaking Changes
