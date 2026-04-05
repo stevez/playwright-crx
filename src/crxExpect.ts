@@ -14,5 +14,11 @@
  * limitations under the License.
  */
 
-export * from '.';
-export { expect } from './crxExpect';
+/**
+ * Re-export playwright's full expect with all matchers.
+ * Test runner dependencies are stubbed via Vite plugin (stub-unsupported).
+ *
+ * Unavailable matchers (require test runner):
+ * - toPass, toMatchSnapshot, toHaveScreenshot, toMatchAriaSnapshot
+ */
+export { expect } from '@playwright/test/lib/matchers/expect';
