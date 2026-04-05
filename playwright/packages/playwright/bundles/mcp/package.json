@@ -1,5 +1,0 @@
-{
-  "dependencies": {
-    "@playwright-repl/playwright-crx": "file:../../../../.."
-  }
-}
