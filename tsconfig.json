@@ -1,34 +1,44 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
-    "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "skipLibCheck": false,
-    "esModuleInterop": false,
-    "allowSyntheticDefaultImports": true,
-    "allowJs": true,
-    "strict": true,
+    "target": "ESNext",
     "module": "ESNext",
-    "moduleResolution": "Node",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "paths": {
+      /*
+        The following two serve different purposes:
+         - @foo/* is for importing types only,
+         - .../lib/* means require dependency
+      */
+      "@dashboard/*": ["./packages/dashboard/src/*"],
+      "@html-reporter/*": ["./packages/html-reporter/src/*"],
+      "@injected/*": ["./packages/injected/src/*"],
+      "@isomorphic/*": ["./packages/playwright-core/src/utils/isomorphic/*"],
+      "@protocol/*": ["./packages/protocol/src/*"],
+      "@recorder/*": ["./packages/recorder/src/*"],
+      "@testIsomorphic/*": ["./packages/playwright/src/isomorphic/*"],
+      "@trace/*": ["./packages/trace/src/*"],
+      "@web/*": ["./packages/web/src/*"],
+      "playwright-core/lib/*": ["./packages/playwright-core/src/*"],
+      "playwright/lib/*": ["./packages/playwright/src/*"],
+      "@playwright/*": ["./packages/playwright/src/*"],
+    },
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "allowJs": false,
+    "jsx": "react-jsx",
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "noEmit": false,
-    "baseUrl": ".",
+    "noEmit": true,
+    "noImplicitOverride": true,
     "useUnknownInCatchVariables": false,
-    "paths": {
-      "@html-reporter/*": ["./playwright/packages/html-reporter/src/*"],
-      "@injected/*": ["./playwright/packages/playwright-core/src/server/injected/*"],
-      "@isomorphic/*": ["./playwright/packages/playwright-core/src/utils/isomorphic/*"],
-      "@protocol/*": ["./playwright/packages/protocol/src/*"],
-      "@recorder/*": ["./playwright/packages/recorder/src/*"],
-      "@testIsomorphic/*": ["./playwright/packages/playwright/src/isomorphic/*"],
-      "@trace/*": ["./playwright/packages/trace/src/*"],
-      "@web/*": ["./playwright/packages/web/src/*"],
-      "playwright-core/lib/*": ["./playwright/packages/playwright-core/src/*"],
-      "@playwright/test/lib/*": ["./playwright/packages/playwright/src/*"],
-      "tests/*": ["./playwright/tests/*"],
-    }
+    "useDefineForClassFields": false,
+    "skipLibCheck": true,
   },
-  "include": ["src"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  "compileOnSave": true,
+  "include": ["packages"],
+  "exclude": [
+    "packages/*/lib",
+  ]
 }

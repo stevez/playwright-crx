@@ -1,5 +1,5 @@
-Playwright CRX
-Copyright (c) Rui Figueira
+Playwright
+Copyright (c) Microsoft Corporation
 
-This software contains code derived from the Playwright project (https://github.com/microsoft/playwright),
-available under the Apache 2.0 license (https://github.com/microsoft/playwright/blob/master/LICENSE).
+This software contains code derived from the Puppeteer project (https://github.com/puppeteer/puppeteer),
+available under the Apache 2.0 license (https://github.com/puppeteer/puppeteer/blob/master/LICENSE).

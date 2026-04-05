@@ -1,0 +1,11 @@
+[*]
+../../mcpBundle.ts
+../../zodBundle.ts
+../../utils
+../../utils/isomorphic
+../../utilsBundle.ts
+../../zipBundle.ts
+
+[comparators.ts]
+./image_tools
+../../third_party/pixelmatch
