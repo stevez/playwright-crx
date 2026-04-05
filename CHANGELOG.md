@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.21.0
+
+### Breaking Changes
+
+- **Upgrade to Playwright 1.59.1** — Final step of incremental upgrade from 1.53 to 1.59.1.
+
+### Changes
+
+- Re-applied CSP `unsafe-eval` guard in vendored `javascript.ts`.
+- Updated test and example package versions.
+
 ## 1.20.0
 
 ### Breaking Changes
