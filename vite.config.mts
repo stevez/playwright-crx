@@ -85,6 +85,15 @@ export default defineConfig({
     'require.resolve': 'Boolean',
   },
   plugins: [
+    // Stub all MCP-related modules (MCP not used in Chrome extension context)
+    {
+      name: 'stub-mcp',
+      load(id) {
+        const normalized = id.replace(/\\/g, '/');
+        if (normalized.includes('/mcp/') && normalized.includes('playwright/packages/playwright'))
+          return 'export default {}; export const runBrowserBackendAtEnd = () => {};';
+      },
+    } as Plugin<any>,
     replace({
       'preventAssignment': true,
       '__dirname': id => {
