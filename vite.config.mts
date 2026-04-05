@@ -87,17 +87,30 @@ export default defineConfig({
     'require.resolve': 'Boolean',
   },
   plugins: [
-    // Stub MCP-related imports (MCP SDK requires Node crypto, can't run in extensions)
+    // Stub modules not usable in Chrome extension service workers
     {
-      name: 'stub-mcp',
+      name: 'stub-unsupported',
       resolveId(source) {
         if (source.includes('mcpBundleImpl'))
           return path.resolve(__dirname, './src/shims/mcpBundleImpl.ts');
       },
       load(id) {
         const normalized = id.replace(/\\/g, '/');
+        // Stub MCP test runner imports
         if (normalized.includes('/mcp/') && normalized.includes('playwright/packages/playwright/'))
           return 'export default {}; export const runBrowserBackendAtEnd = () => {}; export const createCustomMessageHandler = () => {};';
+        // Stub test runner globals (used by matchers.ts but not needed in CRX)
+        if (normalized.includes('playwright/packages/playwright/src/common/globals'))
+          return 'export const currentTestInfo = () => undefined;';
+        // Stub test worker info (used by matchers.ts toPass)
+        if (normalized.includes('playwright/packages/playwright/src/worker/testInfo'))
+          return 'export class TestInfoImpl { static _defaultDeadlineForMatcher(t) { return { deadline: Date.now() + (t || 5000), timeoutMessage: "" }; } }';
+        // Stub snapshot matchers (require test runner for snapshot paths)
+        if (normalized.includes('playwright/packages/playwright/src/matchers/toMatchSnapshot'))
+          return 'export const toMatchSnapshot = () => { throw new Error("toMatchSnapshot not available in CRX"); }; export const toHaveScreenshot = toMatchSnapshot; export const toHaveScreenshotStepTitle = () => "";';
+        // Stub toMatchAriaSnapshot (reimplemented in crxExpect.ts via locator._expect)
+        if (normalized.includes('playwright/packages/playwright/src/matchers/toMatchAriaSnapshot'))
+          return 'export async function toMatchAriaSnapshot() { throw new Error("toMatchAriaSnapshot stub - should be overridden by crxExpect"); }';
       },
     } as Plugin<any>,
     replace({

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.21.1
+
+### Features
+
+- **Playwright expect matchers** — `expect` from `playwright-crx/test` now includes all Playwright locator/page matchers (`toBeVisible`, `toContainText`, `toHaveURL`, `toHaveTitle`, etc.). Test runner dependencies are stubbed via Vite plugin.
+- **14 new e2e tests** for expect matchers.
+
+### Limitations
+
+- `toPass`, `toMatchSnapshot`, `toHaveScreenshot`, `toMatchAriaSnapshot` are unavailable (require Playwright test runner context).
+
 ## 1.21.0
 
 ### Breaking Changes
