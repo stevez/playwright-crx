@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.21.2
+
+### Bug Fixes
+
+- **Mark CrxApplication attach/detach as internal** — `attach`, `attachAll`, `detach`, and `detachAll` methods are now marked as `internal` in protocol metainfo, preventing them from appearing as failed actions in the Playwright Trace Viewer.
+
 ## 1.21.1
 
 ### Features

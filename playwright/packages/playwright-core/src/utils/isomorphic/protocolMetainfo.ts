@@ -335,7 +335,11 @@ export const methodMetainfo = new Map<string, MethodMetainfo>([
   ['AndroidDevice.connectToWebView', { title: 'Connect to Web View', }],
   ['AndroidDevice.close', { internal: true, }],
   ['JsonPipe.send', { internal: true, }],
-  ['JsonPipe.close', { internal: true, }]
+  ['JsonPipe.close', { internal: true, }],
+  ['CrxApplication.attach', { internal: true, }],
+  ['CrxApplication.attachAll', { internal: true, }],
+  ['CrxApplication.detach', { internal: true, }],
+  ['CrxApplication.detachAll', { internal: true, }],
 ]);
 
 export function getMetainfo(metadata: { type: string, method: string }): MethodMetainfo | undefined {
