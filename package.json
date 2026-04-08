@@ -1,6 +1,6 @@
 {
   "name": "@playwright-repl/playwright-crx",
-  "version": "1.21.2",
+  "version": "1.21.3",
   "engines": {
     "node": ">=18"
   },

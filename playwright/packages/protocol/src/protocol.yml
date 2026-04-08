@@ -1426,6 +1426,7 @@ BrowserContext:
         outputFile: string?
         handleSIGINT: boolean?
         omitCallTracking: boolean?
+        hideToolbar: boolean?
 
     disableRecorder:
       internal: true
