@@ -139,7 +139,7 @@ export default defineConfig({
         test: path.resolve(__dirname, 'src/test.ts'),
       },
     },
-    sourcemap: true,
+    sourcemap: false,
     rollupOptions: {
       // @ts-ignore
       plugins: [sourcemaps()],

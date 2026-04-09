@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.21.3
+
+### Build
+
+- **Disable sourcemaps** — set `sourcemap: false` in Vite build config. Reduces npm package from 37MB to 15MB unpacked.
+
 ## 1.21.2
 
 ### Bug Fixes
