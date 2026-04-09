@@ -1,6 +1,6 @@
 {
   "name": "@playwright-repl/playwright-crx",
-  "version": "1.21.3",
+  "version": "1.21.4",
   "engines": {
     "node": ">=18"
   },
@@ -40,21 +40,31 @@
     "examples/todomvc-crx",
     "tests"
   ],
+  "type": "module",
   "exports": {
     ".": {
       "types": "./index.d.ts",
-      "import": "./lib/index.mjs",
-      "require": "./lib/index.js",
-      "default": "./lib/index.js"
+      "import": "./lib/index.js"
     },
     "./test": {
       "types": "./test.d.ts",
-      "import": "./lib/test.mjs",
-      "require": "./lib/test.js",
-      "default": "./lib/test.js"
+      "import": "./lib/test.js"
     },
     "./package.json": "./package.json"
   },
+  "files": [
+    "lib/**/*.js",
+    "index.d.ts",
+    "test.d.ts",
+    "src/types/types.d.ts",
+    "playwright/packages/playwright-core/types/types.d.ts",
+    "playwright/packages/playwright-core/types/protocol.d.ts",
+    "playwright/packages/playwright-core/types/structs.d.ts",
+    "playwright/packages/playwright/types/test.d.ts",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
   "devDependencies": {
     "@eslint/compat": "^1.2.6",
     "@eslint/eslintrc": "^3.2.0",

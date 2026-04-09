@@ -1,10 +1,13 @@
 # Changelog
 
-## 1.21.3
+## 1.21.4
 
 ### Build
 
-- **Disable sourcemaps** — set `sourcemap: false` in Vite build config. Reduces npm package from 37MB to 15MB unpacked.
+- **ESM only** — drop CJS build, ship only ESM. Reduces npm package from 37MB to 8.7MB unpacked (1.6MB compressed).
+- **Disable sourcemaps** — set `sourcemap: false` in Vite build config.
+- **Add `files` field** — explicit file list in package.json replaces `.npmignore`.
+- **Remove `rollup-plugin-sourcemaps`** — no longer needed.
 
 ## 1.21.2
 

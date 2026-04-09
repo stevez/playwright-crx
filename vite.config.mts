@@ -15,7 +15,6 @@
  */
 
 import path from 'path';
-import sourcemaps from 'rollup-plugin-sourcemaps';
 import type { Plugin } from 'vite';
 import { defineConfig } from 'vite';
 import replace from '@rollup/plugin-replace';
@@ -138,11 +137,10 @@ export default defineConfig({
         index: path.resolve(__dirname, 'src/index.ts'),
         test: path.resolve(__dirname, 'src/test.ts'),
       },
+      formats: ['es'],
     },
     sourcemap: false,
     rollupOptions: {
-      // @ts-ignore
-      plugins: [sourcemaps()],
       output: {
         exports: 'named',
       },
