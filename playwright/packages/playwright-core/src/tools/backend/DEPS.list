@@ -1,9 +1,0 @@
-[*]
-../../..
-../..
-../../zodBundle.ts
-../../server/utils/
-../../utils/
-../../utils/isomorphic/
-../../utilsBundle.ts
-../utils/

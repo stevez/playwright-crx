@@ -1,130 +1,318 @@
-# Playwright CRX
+# 🎭 Playwright
 
-> **Fork notice:** This is a fork of [nicolo-ribaudo/playwright-crx](https://github.com/nicolo-ribaudo/playwright-crx), published as [`@playwright-repl/playwright-crx`](https://www.npmjs.com/package/@playwright-repl/playwright-crx) for use with [playwright-repl](https://github.com/stevez/playwright-repl). It includes patches for tab-switching reliability (`chrome.debugger.attach` frame ID handling) and graceful detach recovery. See [CHANGELOG.md](./CHANGELOG.md) for details.
+[![npm version](https://img.shields.io/npm/v/playwright.svg)](https://www.npmjs.com/package/playwright) <!-- GEN:chromium-version-badge -->[![Chromium version](https://img.shields.io/badge/chromium-148.0.7778.96-blue.svg?logo=google-chrome)](https://www.chromium.org/Home)<!-- GEN:stop --> <!-- GEN:firefox-version-badge -->[![Firefox version](https://img.shields.io/badge/firefox-150.0.2-blue.svg?logo=firefoxbrowser)](https://www.mozilla.org/en-US/firefox/new/)<!-- GEN:stop --> <!-- GEN:webkit-version-badge -->[![WebKit version](https://img.shields.io/badge/webkit-26.4-blue.svg?logo=safari)](https://webkit.org/)<!-- GEN:stop --> [![Join Discord](https://img.shields.io/badge/join-discord-informational)](https://aka.ms/playwright/discord)
 
-This package contains the [Chrome Extensions](https://developer.chrome.com/docs/extensions/) flavor of the [Playwright](http://github.com/microsoft/playwright) library.
+## [Documentation](https://playwright.dev) | [API reference](https://playwright.dev/docs/api/class-playwright)
 
-For that, it relies on [`chrome.debugger`](https://developer.chrome.com/docs/extensions/reference/debugger/) to implement [playwright's `ConnectionTransport`](https://github.com/microsoft/playwright/blob/f8a30fb726bc35d4058a2d010b2ed5f6ca2409a3/packages/playwright-core/src/server/transport.ts#L54) interface.
+Playwright is a framework for web automation and testing. It drives Chromium, Firefox, and WebKit with a single API — in your tests, in your scripts, and as a tool for AI agents.
 
-**NOTE:** If you want to write end-to-end tests, you should use [@playwright/test](https://playwright.dev/docs/intro) instead.
+## Get Started
 
-## Recorder / Player
+Choose the path that fits your workflow:
 
-**Note:** This extension is available in [Chrome Web Store](https://chrome.google.com/webstore/detail/playwright-crx/jambeljnbnfbkcpnoiaedcabbgmnnlcd).
+| | Best for | Install |
+|---|---|---|
+| **[Playwright Test](#playwright-test)** | End-to-end testing | `npm init playwright@latest` |
+| **[Playwright CLI](#playwright-cli)** | Coding agents (Claude Code, Copilot) | `npm i -g @playwright/cli@latest` |
+| **[Playwright MCP](#playwright-mcp)** | AI agents and LLM-driven automation | `npx @playwright/mcp@latest` |
+| **[Playwright Library](#playwright-library)** | Browser automation scripts | `npm i playwright` |
+| **[VS Code Extension](#vs-code-extension)** | Test authoring and debugging in VS Code | [Install from Marketplace](https://marketplace.visualstudio.com/items?itemName=ms-playwright.playwright) |
 
-A small demo of Playwright CRX recorder and player in action:
+---
 
-![Playwright CRX Recorder / Player](./docs/assets/recorder-player.gif)
+## Playwright Test
 
-It provides playwright recorder (the same used in `playwright codegen`) bundled as a chrome extension, with no other dependencies.
-This way, with your normal chrome / chromium / edge browser, you can record playwright scripts in your prefered language.
+Playwright Test is a full-featured test runner built for end-to-end testing. It runs tests across Chromium, Firefox, and WebKit with full browser isolation, auto-waiting, and web-first assertions.
 
-In terms of chrome extension functionality, it provides:
+### Install
 
-- [action button](https://developer.chrome.com/docs/extensions/reference/action/) for attaching current tab into recorder (it opens the recorder if it's closed)
-- [context menu](https://developer.chrome.com/docs/extensions/reference/contextMenus/) for the same purpose
-- [side panel](https://developer.chrome.com/docs/extensions/reference/api/sidePanel) to display the recorder by default (it can be disabled in the options, falling back to a popup window)
-- [command shortcuts](https://developer.chrome.com/docs/extensions/reference/api/commands):
-  - `Alt + Shift + R` starts recording
-  - `Alt + Shift + C` starts inspecting
-- [options page](https://developer.chrome.com/docs/extensions/develop/ui/options-page) to configure:
-  - **Default language** (defaults to **Node Library**)
-  - **TestID Attribute Name** (defaults to `data-testid`)
-  - **Open in Side Panel** (defaults to `true`, and falls back to a popup window if set to `false`) 
-- pages must be explicitly attached to be recordable, except if they are opened from already attached pages
-- closing the recorder window will detach all pages and uninstall injected scripts (highlights and event listeners)
-- a player that will run the recorded instructions, in any supported language*
-   - it actually doesn't run Java, Python or C#, but it uses an internal JSONL format to know which instructions it needs to run and how to map them into the current selected code. This way, it can highlight the lines being executed.
+```bash
+npm init playwright@latest
+```
 
-## API
+Or add manually:
 
-It's possible to use `playwright-crx` as a library to create new chrome extensions.
+```bash
+npm i -D @playwright/test
+npx playwright install
+```
 
-Here's a simple example of a background service worker for a chrome extension using **playwright-crx**:
+### Write a test
 
-```ts
-import { crx, expect } from 'playwright-crx/test';
+```TypeScript
+import { test, expect } from '@playwright/test';
 
-// if you don't need assertions, you can reduce the bundle size by importing crx from playwright-crx
-// import { crx } from 'playwright-crx';
+test('has title', async ({ page }) => {
+  await page.goto('https://playwright.dev/');
+  await expect(page).toHaveTitle(/Playwright/);
+});
 
-chrome.action.onClicked.addListener(async ({ id: tabId }) => {
-  const crxApp = await crx.start({ slowMo: 500 });
+test('get started link', async ({ page }) => {
+  await page.goto('https://playwright.dev/');
+  await page.getByRole('link', { name: 'Get started' }).click();
+  await expect(page.getByRole('heading', { name: 'Installation' })).toBeVisible();
+});
+```
 
-  try {
-    // tries to connect to the active tab, or creates a new one
-    const page = await crxApp.attach(tabId!).catch(() => crxApp.newPage());
+### Run tests
 
-    await page.goto('https://demo.playwright.dev/todomvc/#/');
-    await page.getByPlaceholder('What needs to be done?').click();
-    await page.getByPlaceholder('What needs to be done?').fill('Hello World!');
-    await page.getByPlaceholder('What needs to be done?').press('Enter');
+```bash
+npx playwright test
+```
 
-    // assertions work too
-    await expect(page.getByTestId('todo-title')).toHaveText('Hello World!');
-  } finally {
-    // page stays open, but no longer controlled by playwright
-    await crxApp.detach(page);
-    // releases chrome.debugger
-    await crxApp.close();
+Tests run in parallel across all configured browsers, in headless mode by default. Each test gets a fresh browser context — full isolation with near-zero overhead.
+
+### Key capabilities
+
+**Auto-wait and web-first assertions.** No artificial timeouts. Playwright waits for elements to be actionable, and assertions automatically retry until conditions are met.
+
+**Locators.** Find elements with resilient locators that mirror how users see the page:
+
+```TypeScript
+page.getByRole('button', { name: 'Submit' })
+page.getByLabel('Email')
+page.getByPlaceholder('Search...')
+page.getByTestId('login-form')
+```
+
+**Test isolation.** Each test runs in its own browser context — equivalent to a fresh browser profile. Save authentication state once and reuse it across tests:
+
+```TypeScript
+// Save state after login
+await page.context().storageState({ path: 'auth.json' });
+
+// Reuse in other tests
+test.use({ storageState: 'auth.json' });
+```
+
+**Tracing.** Capture execution traces, screenshots, and videos on failure. Inspect every action, DOM snapshot, network request, and console message in the [Trace Viewer](https://playwright.dev/docs/trace-viewer):
+
+```TypeScript
+// playwright.config.ts
+export default defineConfig({
+  use: {
+    trace: 'on-first-retry',
+  },
+});
+```
+
+```bash
+npx playwright show-trace trace.zip
+```
+
+<!-- TODO: screenshot of trace viewer -->
+
+**Parallelism.** Tests run in parallel by default across all configured browsers.
+
+[Full testing documentation](https://playwright.dev/docs/intro)
+
+---
+
+## Playwright CLI
+
+[Playwright CLI](https://github.com/microsoft/playwright-cli) is a command-line interface for browser automation designed for coding agents. It's more token-efficient than MCP — commands avoid loading large tool schemas and accessibility trees into the model context.
+
+### Install
+
+```bash
+npm install -g @playwright/cli@latest
+```
+
+Optionally install skills for richer agent integration:
+
+```bash
+playwright-cli install --skills
+```
+
+### Usage
+
+Point your coding agent at a task:
+
+```
+Test the "add todo" flow on https://demo.playwright.dev/todomvc using playwright-cli.
+Take screenshots for all successful and failing scenarios.
+```
+
+Or run commands directly:
+
+```bash
+playwright-cli open https://demo.playwright.dev/todomvc/ --headed
+playwright-cli type "Buy groceries"
+playwright-cli press Enter
+playwright-cli screenshot
+```
+
+### Session monitoring
+
+Use `playwright-cli show` to open a visual dashboard with live screencast previews of all running browser sessions. Click any session to zoom in and take remote control.
+
+```bash
+playwright-cli show
+```
+
+<!-- TODO: screenshot of playwright-cli show dashboard -->
+
+[Full CLI documentation](https://playwright.dev/docs/cli-agent) | [GitHub](https://github.com/microsoft/playwright-cli)
+
+---
+
+## Playwright MCP
+
+The [Playwright MCP server](https://github.com/microsoft/playwright-mcp) gives AI agents full browser control through the [Model Context Protocol](https://modelcontextprotocol.io). Agents interact with pages using structured accessibility snapshots — no vision models or screenshots required.
+
+### Setup
+
+Add to your MCP client (VS Code, Cursor, Claude Desktop, Windsurf, etc.):
+
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"]
+    }
   }
-});
+}
 ```
 
-A more complete example can be found in `examples/todomvc-crx`.
+**One-click install for VS Code:**
 
-### Tracing
+[<img src="https://img.shields.io/badge/VS_Code-VS_Code?style=flat-square&label=Install%20MCP%20Server&color=0098FF" alt="Install in VS Code" />](https://insiders.vscode.dev/redirect?url=vscode%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522playwright%2522%252C%2522command%2522%253A%2522npx%2522%252C%2522args%2522%253A%255B%2522%2540playwright%252Fmcp%2540latest%2522%255D%257D)
 
-Playwright CRX also supports [tracing](https://playwright.dev/docs/api/class-tracing), compatible with [Playwright Trace Viewer](https://trace.playwright.dev).
-
-Here's an example on how to run it:
-
-```ts
-await page.context().tracing.start({ screenshots: true, snapshots: true });
-
-await page.goto('https://demo.playwright.dev/todomvc');
-const newTodo = page.getByPlaceholder('What needs to be done?');
-await newTodo.fill('buy some cheese');
-await newTodo.press('Enter');
-await expect(page.getByTestId('todo-title')).toHaveText('buy some cheese');
-
-// stores in memfs and then reads its data
-await page.context().tracing.stop({ path: '/tmp/trace.zip' });
-const data = crx.fs.readFileSync('/tmp/trace.zip');
-
-// opens playwright traceviewer
-const tracePage = await crxApp.newPage();
-await tracePage.goto('https://trace.playwright.dev');
-const [filechooser] = await Promise.all([
-  tracePage.waitForEvent('filechooser'),
-  tracePage.getByRole('button', { name: 'Select file(s)' }).click(),
-]);
-
-// uploads the trace data buffer (file paths from memfs are not supported)
-await filechooser.setFiles({
-  name: 'trace.zip',
-  mimeType: 'application/zip',
-  buffer: Buffer.from(data),
-});
-```
-
-You can give it a try with `playwright-crx/examples/todomvc-crx`.
-
-## Build
-
-To build `playwright-crx`:
+**For Claude Code:**
 
 ```bash
-npm ci
-npm run build
+claude mcp add playwright npx @playwright/mcp@latest
 ```
 
-## Updating Playwright
+### How it works
 
-Playwright is nested as a git subtree.
+Ask your AI assistant to interact with any web page:
 
-To update it, just run the following command (replace `v1.48.0` with the desired release tag):
+```
+Navigate to https://demo.playwright.dev/todomvc and add a few todo items.
+```
+
+The agent sees the page as a structured accessibility tree:
+
+```
+- heading "todos" [level=1]
+- textbox "What needs to be done?" [ref=e5]
+- listitem:
+  - checkbox "Toggle Todo" [ref=e10]
+  - text: "Buy groceries"
+```
+
+It uses element refs like `e5` and `e10` to click, type, and interact — deterministically and without visual ambiguity. Tools cover navigation, form filling, screenshots, network mocking, storage management, and more.
+
+[Full MCP documentation](https://playwright.dev/docs/mcp) | [GitHub](https://github.com/microsoft/playwright-mcp)
+
+---
+
+## Playwright Library
+
+Use `playwright` as a library for browser automation scripts — web scraping, PDF generation, screenshot capture, and any workflow that needs programmatic browser control without a test runner.
+
+### Install
 
 ```bash
-git subtree pull --prefix=playwright git@github.com:microsoft/playwright.git v1.48.0 --squash
+npm i playwright
 ```
+
+### Examples
+
+**Take a screenshot:**
+
+```TypeScript
+import { chromium } from 'playwright';
+
+const browser = await chromium.launch();
+const page = await browser.newPage();
+await page.goto('https://playwright.dev/');
+await page.screenshot({ path: 'screenshot.png' });
+await browser.close();
+```
+
+**Generate a PDF:**
+
+```TypeScript
+import { chromium } from 'playwright';
+
+const browser = await chromium.launch();
+const page = await browser.newPage();
+await page.goto('https://playwright.dev/');
+await page.pdf({ path: 'page.pdf', format: 'A4' });
+await browser.close();
+```
+
+**Emulate a mobile device:**
+
+```TypeScript
+import { chromium, devices } from 'playwright';
+
+const browser = await chromium.launch();
+const context = await browser.newContext(devices['iPhone 15']);
+const page = await context.newPage();
+await page.goto('https://playwright.dev/');
+await page.screenshot({ path: 'mobile.png' });
+await browser.close();
+```
+
+**Intercept network requests:**
+
+```TypeScript
+import { chromium } from 'playwright';
+
+const browser = await chromium.launch();
+const page = await browser.newPage();
+await page.route('**/*.{png,jpg,jpeg}', route => route.abort());
+await page.goto('https://playwright.dev/');
+await browser.close();
+```
+
+[Library documentation](https://playwright.dev/docs/library) | [API reference](https://playwright.dev/docs/api/class-playwright)
+
+---
+
+## VS Code Extension
+
+The [Playwright VS Code extension](https://marketplace.visualstudio.com/items?itemName=ms-playwright.playwright) brings test running, debugging, and code generation directly into your editor.
+
+<!-- TODO: hero screenshot of VS Code with Playwright sidebar -->
+
+**Run and debug tests** from the editor with a single click. Set breakpoints, inspect variables, and step through test execution with a live browser view.
+
+**Generate tests with CodeGen.** Click "Record new" to open a browser — navigate and interact with your app while Playwright writes the test code for you.
+
+**Pick locators.** Hover over any element in the browser to see the best available locator, then click to copy it to your clipboard.
+
+**Trace Viewer integration.** Enable "Show Trace Viewer" in the sidebar to get a full execution trace after each test run — DOM snapshots, network requests, console logs, and screenshots at every step.
+
+[Install the extension](https://marketplace.visualstudio.com/items?itemName=ms-playwright.playwright) | [VS Code guide](https://playwright.dev/docs/getting-started-vscode)
+
+---
+
+## Cross-Browser Support
+
+|          | Linux | macOS | Windows |
+|   :---   | :---: | :---: | :---:   |
+| Chromium<sup>1</sup> <!-- GEN:chromium-version -->148.0.7778.96<!-- GEN:stop --> | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+| WebKit <!-- GEN:webkit-version -->26.4<!-- GEN:stop --> | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+| Firefox <!-- GEN:firefox-version -->150.0.2<!-- GEN:stop --> | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+
+Headless and headed execution on all platforms. <sup>1</sup> Uses [Chrome for Testing](https://developer.chrome.com/blog/chrome-for-testing) by default.
+
+## Other Languages
+
+Playwright is also available for [Python](https://playwright.dev/python/docs/intro), [.NET](https://playwright.dev/dotnet/docs/intro), and [Java](https://playwright.dev/java/docs/intro).
+
+## Resources
+
+* [Documentation](https://playwright.dev)
+* [API reference](https://playwright.dev/docs/api/class-playwright)
+* [MCP server](https://github.com/microsoft/playwright-mcp)
+* [CLI for coding agents](https://github.com/microsoft/playwright-cli)
+* [VS Code extension](https://github.com/microsoft/playwright-vscode)
+* [Contribution guide](CONTRIBUTING.md)
+* [Changelog](https://github.com/microsoft/playwright/releases)
+* [Discord](https://aka.ms/playwright/discord)
