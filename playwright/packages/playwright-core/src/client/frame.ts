@@ -20,6 +20,7 @@ import fs from 'fs';
 import { assertionAbortedMessage } from '@isomorphic/abortSignal';
 import { assert } from '@isomorphic/assert';
 import { getByAltTextSelector, getByLabelSelector, getByPlaceholderSelector, getByRoleSelector, getByTestIdSelector, getByTextSelector, getByTitleSelector } from '@isomorphic/locatorUtils';
+import { kAnyFrameSelector } from '@isomorphic/selectorParser';
 import { urlMatches } from '@isomorphic/urlMatch';
 import { EventEmitter } from './eventEmitter';
 import { ChannelOwner } from './channelOwner';
@@ -393,8 +394,8 @@ export class Frame extends ChannelOwner<channels.FrameChannel> implements api.Fr
     return this.locator(getByRoleSelector(role, options));
   }
 
-  frameLocator(selector: string): FrameLocator {
-    return new FrameLocator(this, selector);
+  frameLocator(selector?: string): FrameLocator {
+    return new FrameLocator(this, selector === undefined ? kAnyFrameSelector : selector);
   }
 
   async focus(selector: string, options: channels.FrameFocusOptions & TimeoutOptions = {}) {
@@ -504,31 +505,33 @@ export class Frame extends ChannelOwner<channels.FrameChannel> implements api.Fr
     return (await this._channel.title({}, kNoTimeout)).value;
   }
 
-  async _expect(expression: string, options: Omit<channels.FrameExpectParams, 'expression'> & { timeout: number, signal?: AbortSignal }): Promise<ExpectResult> {
-    const { timeout, signal, ...rest } = options;
-    const params: channels.FrameExpectParams = { expression, ...rest, isNot: !!rest.isNot };
-    params.expectedValue = serializeArgument(rest.expectedValue);
-    try {
-      await this._channel.expect(params, { signal, timeout });
-      return { matches: !params.isNot };
-    } catch (e) {
-      if (e instanceof AbortError)
-        return { matches: !!params.isNot, errorMessage: 'Error: ' + assertionAbortedMessage(e.cause) };
-      if (!(e instanceof PlaywrightError))
-        throw e;
-      const details = e.details as channels.FrameExpectErrorDetails;
-      const received = details.received ? {
-        value: details.received.value !== undefined ? parseResult(details.received.value) : undefined,
-        ariaSnapshot: details.received.ariaSnapshot,
-      } : undefined;
-      return {
-        matches: !!params.isNot,
-        received,
-        log: e.log,
-        timedOut: details.timedOut,
-        errorMessage: details.customErrorMessage ? 'Error: ' + details.customErrorMessage : undefined,
-      };
-    }
+  async _expect(expression: string, options: Omit<channels.FrameExpectParams, 'expression'> & { timeout: number, signal?: AbortSignal, title?: string }): Promise<ExpectResult> {
+    const { timeout, signal, title, ...rest } = options;
+    return await this._wrapApiCall(async () => {
+      const params: channels.FrameExpectParams = { expression, ...rest, isNot: !!rest.isNot };
+      params.expectedValue = serializeArgument(rest.expectedValue);
+      try {
+        await this._channel.expect(params, { signal, timeout });
+        return { matches: !params.isNot };
+      } catch (e) {
+        if (e instanceof AbortError)
+          return { matches: !!params.isNot, errorMessage: 'Error: ' + assertionAbortedMessage(e.cause) };
+        if (!(e instanceof PlaywrightError))
+          throw e;
+        const details = e.details as channels.FrameExpectErrorDetails;
+        const received = details.received ? {
+          value: details.received.value !== undefined ? parseResult(details.received.value) : undefined,
+          ariaSnapshot: details.received.ariaSnapshot,
+        } : undefined;
+        return {
+          matches: !!params.isNot,
+          received,
+          log: e.log,
+          timedOut: details.timedOut,
+          errorMessage: details.customErrorMessage ? 'Error: ' + details.customErrorMessage : undefined,
+        };
+      }
+    }, { title });
   }
 }
 

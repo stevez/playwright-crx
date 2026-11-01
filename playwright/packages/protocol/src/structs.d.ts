@@ -110,6 +110,13 @@ export type WaitInfo = {
   error?: string,
 };
 
+export type HttpCredentials = {
+  username: string,
+  password: string,
+  origin?: string,
+  send?: 'always' | 'unauthorized',
+};
+
 export type SetNetworkCookie = {
   name: string,
   value: string,
@@ -235,16 +242,24 @@ export type IndexedDBDatabase = {
   }[],
 };
 
+export type OPFSEntry = {
+  path: string,
+  type: 'file' | 'directory',
+  base64?: string,
+};
+
 export type SetOriginStorage = {
   origin: string,
   localStorage: NameValue[],
   indexedDB?: IndexedDBDatabase[],
+  opfs?: OPFSEntry[],
 };
 
 export type OriginStorage = {
   origin: string,
   localStorage: NameValue[],
   indexedDB?: IndexedDBDatabase[],
+  opfs?: OPFSEntry[],
 };
 
 export type RecordHarOptions = {

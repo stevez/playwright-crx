@@ -718,7 +718,7 @@ An object containing additional HTTP headers to be sent with every request. Defa
 Whether to emulate network being offline. Defaults to `false`. Learn more about [network emulation](../emulation.md#offline).
 
 ## context-option-httpcredentials
-- `httpCredentials` <[Object]>
+- `httpCredentials` <[Object]|[Array]<[Object]>>
   * alias: HttpCredentials
   - `username` <[string]>
   - `password` <[string]>
@@ -727,6 +727,8 @@ Whether to emulate network being offline. Defaults to `false`. Learn more about 
 
 Credentials for [HTTP authentication](https://developer.mozilla.org/en-US/docs/Web/HTTP/Authentication).
 If no origin is specified, the username and password are sent to any servers upon unauthorized responses.
+
+Pass an array to use different credentials for different origins. The first entry that matches the request origin is used, and entries with no origin match any request.
 
 ## context-option-colorscheme
 * langs: js, java
@@ -1283,7 +1285,7 @@ Matches elements that do not contain specified text somewhere inside, possibly i
 ## locator-option-visible
 - `visible` <[boolean]>
 
-Only matches visible or invisible elements.
+Only matches visible or invisible elements. Prefer the [`method: Locator.visible`] shortcut when matching only visible elements.
 
 ## locator-options-list-v1.14
 - %%-locator-option-has-text-%%

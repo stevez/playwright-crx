@@ -53,10 +53,10 @@ test('should collect trace with resources, but no js', async ({ runCrxTestAndPar
   expect(events.some(e => e.type === 'screencast-frame')).toBeTruthy();
   const style = events.find(e => e.type === 'resource-snapshot' && e.snapshot.request.url.endsWith('style.css'));
   expect(style).toBeTruthy();
-  expect(style.snapshot.response.content._sha1).toBeTruthy();
+  expect(style.snapshot.response.content._file).toBeTruthy();
   const script = events.find(e => e.type === 'resource-snapshot' && e.snapshot.request.url.endsWith('script.js'));
   expect(script).toBeTruthy();
-  expect(script.snapshot.response.content._sha1).toBe(undefined);
+  expect(script.snapshot.response.content._file).toBe(undefined);
 });
 
 test('should not collect snapshots by default', async ({ runCrxTestAndParseTraceRaw }) => {
@@ -98,7 +98,7 @@ test('can call tracing.group/groupEnd at any time and auto-close', async ({ runC
 });
 
 test('should not include buffers in the trace', async ({ runCrxTestAndParseTraceRaw }) => {
-  const { actionObjects } = await runCrxTestAndParseTraceRaw(async ({ page, context, server }) => {
+  const { events, actionObjects } = await runCrxTestAndParseTraceRaw(async ({ page, context, server }) => {
     await context.tracing.start({ snapshots: true });
     await page.goto(server.PREFIX + '/empty.html');
     await page.screenshot();
@@ -106,8 +106,9 @@ test('should not include buffers in the trace', async ({ runCrxTestAndParseTrace
   });
 
   const screenshotEvent = actionObjects.find(a => a.method === 'screenshot')!;
-  expect(screenshotEvent.beforeSnapshot).toBeTruthy();
-  expect(screenshotEvent.afterSnapshot).toBeTruthy();
+  const phases = events.filter(e => e.type === 'frame-snapshot' && e.snapshot.callId === screenshotEvent.callId).map(e => e.snapshot.phase);
+  expect(phases).toContain('before');
+  expect(phases).toContain('after');
   expect(screenshotEvent.result).toEqual({
     'binary': '<Buffer>',
   });

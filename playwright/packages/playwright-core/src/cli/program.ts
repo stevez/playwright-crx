@@ -82,7 +82,8 @@ export function decorateProgram(program: Command) {
       .option('--only-shell', 'only install headless shell when installing chromium')
       .option('--no-shell', 'do not install chromium headless shell')
       .option('--no-progress', 'do not show download progress bars')
-      .action(async function(args: string[], options: { withDeps?: boolean, force?: boolean, dryRun?: boolean, list?: boolean, shell?: boolean, noShell?: boolean, onlyShell?: boolean, progress?: boolean }) {
+      .option('--no-remove', 'do not remove unused browsers')
+      .action(async function(args: string[], options: { withDeps?: boolean, force?: boolean, dryRun?: boolean, list?: boolean, shell?: boolean, noShell?: boolean, onlyShell?: boolean, progress?: boolean, remove?: boolean }) {
         try {
           await installBrowsers(args, options);
         } catch (e) {
@@ -275,6 +276,7 @@ function commandWithOpenOptions(command: string, description: string, options: a
       .option('--color-scheme <scheme>', 'emulate preferred color scheme, "light" or "dark"')
       .option('--device <deviceName>', 'emulate device, for example  "iPhone 11"')
       .option('--geolocation <coordinates>', 'specify geolocation coordinates, for example "37.819722,-122.478611"')
+      .option('--http-credentials <credentials>', 'specify HTTP authentication credentials as "username:password", for example --http-credentials="admin:secret"')
       .option('--ignore-https-errors', 'ignore https errors')
       .option('--load-storage <filename>', 'load context storage state from the file, previously saved with --save-storage')
       .option('--lang <language>', 'specify language / locale, for example "en-GB"')

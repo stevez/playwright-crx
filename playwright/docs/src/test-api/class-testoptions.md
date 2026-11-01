@@ -219,6 +219,21 @@ export default defineConfig({
 });
 ```
 
+## property: TestOptions.contrast = %%-context-option-contrast-%%
+* since: v1.50
+
+**Usage**
+
+```js title="playwright.config.ts"
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  use: {
+    contrast: 'more',
+  },
+});
+```
+
 ## property: TestOptions.deviceScaleFactor = %%-context-option-devicescalefactor-%%
 * since: v1.10
 
@@ -248,6 +263,21 @@ export default defineConfig({
     extraHTTPHeaders: {
       'X-My-Header': 'value',
     },
+  },
+});
+```
+
+## property: TestOptions.forcedColors = %%-context-option-forcedColors-%%
+* since: v1.50
+
+**Usage**
+
+```js title="playwright.config.ts"
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  use: {
+    forcedColors: 'active',
   },
 });
 ```
@@ -480,6 +510,21 @@ export default defineConfig({
 });
 ```
 
+## property: TestOptions.reducedMotion = %%-context-option-reducedMotion-%%
+* since: v1.50
+
+**Usage**
+
+```js title="playwright.config.ts"
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  use: {
+    reducedMotion: 'reduce',
+  },
+});
+```
+
 ## property: TestOptions.reuseContext
 * since: v1.62
 * discouraged: This option trades test isolation for speed and is intended for component tests that drive a story gallery. Leave it unset for end-to-end tests - a fresh browser context per test is one of the core guarantees of Playwright Test.
@@ -624,7 +669,10 @@ export default defineConfig({
   - `mode` <[TraceMode]<"off"|"on"|"retain-on-failure"|"on-first-retry"|"on-all-retries"|"retain-on-first-failure"|"retain-on-failure-and-retries">> Trace recording mode.
   - `attachments` ?<[boolean]> Whether to include test attachments. Defaults to true. Optional.
   - `screenshots` ?<[boolean]> Whether to capture screenshots during tracing. Screenshots are used to build a timeline preview. Defaults to true. Optional.
-  - `snapshots` ?<[boolean]> Whether to capture DOM snapshot on every action. Defaults to true. Optional.
+  - `snapshots` ?<[boolean]|[Object]> Which snapshots to capture on every action. Passing `true` is a shortcut for `{ dom: true }`. Defaults to true. Optional.
+    - `dom` ?<[boolean]> Capture DOM snapshot on every action and record network activity. Optional.
+    - `aria` ?<[boolean]> Capture aria snapshot of the page on every action. Optional.
+    - `screen` ?<[boolean]> Capture a screenshot of the page on every action. Optional.
   - `sources` ?<[boolean]> Whether to include source files for trace actions. Defaults to true. Optional.
 
 Whether to record trace for each test. Defaults to `'off'`. The initial run of a test is the "first run"; subsequent runs caused by [retries](../test-retries.md) are "retries".

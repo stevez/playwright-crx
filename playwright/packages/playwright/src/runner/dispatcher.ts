@@ -58,12 +58,24 @@ export class Dispatcher {
     }
   }
 
+  private _heldLocks(): Set<string> {
+    const heldLocks = new Set<string>();
+    for (const slot of this._workerSlots) {
+      for (const lock of slot.jobDispatcher?.job.locks || [])
+        heldLocks.add(lock);
+    }
+    return heldLocks;
+  }
+
   private _findFirstJobToRun() {
+    const heldLocks = this._heldLocks();
     // Always pick the first job that can be run while respecting the project worker limit.
     for (let index = 0; index < this._queue.length; index++) {
       const job = this._queue[index];
       // Isolated retries only run one at a time, after all other jobs have finished.
       if (this._isolatedJobs.has(job) && this._workerSlots.some(w => !!w.jobDispatcher))
+        continue;
+      if (job.locks.some(lock => heldLocks.has(lock)))
         continue;
       const projectIdWorkerLimit = this._workerLimitPerProjectId.get(job.projectId);
       if (!projectIdWorkerLimit)
@@ -75,17 +87,22 @@ export class Dispatcher {
     return -1;
   }
 
-  private _scheduleJob() {
+  private _scheduleJobs() {
+    // Finishing a job releases its locks, which may unblock multiple queued jobs.
+    while (this._scheduleJob()) {}
+  }
+
+  private _scheduleJob(): boolean {
     // NOTE: keep this method synchronous for easier reasoning.
 
-    // 0. No more running jobs after stop.
-    if (this._isStopped)
-      return;
+    // 0. No more running jobs after stop, no scheduling without a free worker.
+    if (this._isStopped || !this._workerSlots.some(w => !w.jobDispatcher))
+      return false;
 
     // 1. Find a job to run.
     const jobIndex = this._findFirstJobToRun();
     if (jobIndex === -1)
-      return;
+      return false;
     const job = this._queue[jobIndex];
 
     // 2. Find a worker with the same hash, or just some free worker.
@@ -94,7 +111,7 @@ export class Dispatcher {
       workerIndex = this._workerSlots.findIndex(w => !w.jobDispatcher);
     if (workerIndex === -1) {
       // No workers available, bail out.
-      return;
+      return false;
     }
 
     // 3. Claim both the job and the worker slot.
@@ -108,10 +125,11 @@ export class Dispatcher {
       // 5. Release the worker slot.
       this._workerSlots[workerIndex].jobDispatcher = undefined;
 
-      // 6. Check whether we are done or should schedule another job.
+      // 6. Check whether we are done or should schedule other jobs.
       this._checkFinished();
-      this._scheduleJob();
+      this._scheduleJobs();
     });
+    return true;
   }
 
   private async _runJobInWorker(index: number, jobDispatcher: JobDispatcher) {
@@ -213,8 +231,7 @@ export class Dispatcher {
     for (let i = 0; i < this._testRun.config.config.workers; i++)
       this._workerSlots.push({});
     // 2. Schedule enough jobs.
-    for (let i = 0; i < this._workerSlots.length; i++)
-      this._scheduleJob();
+    this._scheduleJobs();
     this._checkFinished();
     // 3. More jobs are scheduled when the worker becomes free.
     // 4. Wait for all jobs to finish.
@@ -382,12 +399,14 @@ class JobDispatcher {
     const parentStep = params.parentStepId ? steps.get(params.parentStepId) : undefined;
     const step: TestStep = {
       title: params.title,
+      subtitle: params.subtitle,
       titlePath: () => {
         const parentPath = parentStep?.titlePath() || [];
         return [...parentPath, params.title];
       },
       parent: parentStep,
       category: params.category,
+      params: params.params,
       startTime: new Date(params.wallTime),
       duration: -1,
       steps: [],

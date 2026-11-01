@@ -171,7 +171,7 @@ export class CrxApplication extends SdkObject {
     super(context, 'crxApplication');
     this.instrumentation.addListener({
       onPageClose: page => {
-        page.hideHighlight();
+        page.highlightController.hideHighlights().catch(() => {});
       },
     }, null);
     this._context = context;
@@ -325,7 +325,7 @@ export class CrxApplication extends SdkObject {
     }
 
     // ensure we don't have any injected highlights
-    await pageOrError.hideHighlight();
+    await pageOrError.highlightController.hideHighlights();
     const closed = new Promise(x => pageOrError.once(Page.Events.Close, x));
     await this._transport.detach(targetId);
     await closed;

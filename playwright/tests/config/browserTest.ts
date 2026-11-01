@@ -24,7 +24,7 @@ import { isBidiChannel, parseHar } from '../config/utils';
 import type { PageTestFixtures, PageWorkerFixtures } from '../page/pageTestApi';
 import type { RemoteServerOptions, PlaywrightServer } from './remoteServer';
 import type { BrowserContext, BrowserContextOptions, BrowserType, Page } from 'playwright-core';
-import type { Log } from '../../packages/trace/src/har';
+import type { Log } from '../../packages/isomorphic/trace/versions/har';
 
 const { removeFolders, hostPlatform } = utils;
 
@@ -99,8 +99,7 @@ const test = baseTest.extend<BrowserTestTestFixtures & { _contextFactory: Contex
 
   isHeadlessShell: [async ({ browserName, channel, headless }, use) => {
     const isShell = channel === 'chromium-headless-shell' || (!channel && headless);
-    const isToTShell = channel === 'chromium-tip-of-tree-headless-shell' || (channel === 'chromium-tip-of-tree' && headless);
-    await use(browserName === 'chromium' && (isShell || isToTShell));
+    await use(browserName === 'chromium' && isShell);
   }, { scope: 'worker' }],
 
   isFrozenWebkit: [async ({ browserName, isMac, macVersion }, use) => {
@@ -177,7 +176,7 @@ const test = baseTest.extend<BrowserTestTestFixtures & { _contextFactory: Contex
         server = remoteServer;
       } else {
         const runServer = new RunServer();
-        await runServer.start(childProcess, { artifactsDir: options?.artifactsDir });
+        await runServer.start(childProcess, { artifactsDir: options?.artifactsDir, unsafe: options?.unsafe, env: options?.env });
         server = runServer;
       }
       return server;

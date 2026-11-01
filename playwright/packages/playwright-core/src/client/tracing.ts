@@ -42,14 +42,17 @@ export class Tracing extends ChannelOwner<channels.TracingChannel> implements ap
     super(parent, type, guid, initializer);
   }
 
-  async start(options: { name?: string, title?: string, snapshots?: boolean, screenshots?: boolean, sources?: boolean, live?: boolean } = {}) {
+  async start(options: { name?: string, title?: string, snapshots?: boolean | { dom?: boolean, aria?: boolean, screen?: boolean }, screenshots?: boolean, sources?: boolean, live?: boolean } = {}) {
     await this._wrapApiCall(async () => {
       this._includeSources = !!options.sources;
       this._isLive = !!options.live;
+      const snapshots = typeof options.snapshots === 'object' ? options.snapshots : { dom: options.snapshots };
       await this._channel.tracingStart({
         name: options.name,
-        snapshots: options.snapshots,
-        screenshots: options.screenshots,
+        snapshotDom: snapshots.dom,
+        snapshotAria: snapshots.aria,
+        snapshotScreen: snapshots.screen,
+        screencast: options.screenshots,
         live: options.live,
       }, kNoTimeout);
       const { traceName } = await this._channel.tracingStartChunk({ name: options.name, title: options.title }, kNoTimeout);
@@ -92,8 +95,10 @@ export class Tracing extends ChannelOwner<channels.TracingChannel> implements ap
 
   async stop(options: { path?: string } = {}) {
     await this._wrapApiCall(async () => {
-      await this._doStopChunk(options.path);
+      const error = await this._doStopChunk(options.path).catch(e => e);
       await this._channel.tracingStop({}, kNoTimeout);
+      if (error)
+        throw error;
     });
   }
 
@@ -189,12 +194,25 @@ export class Tracing extends ChannelOwner<channels.TracingChannel> implements ap
 
     const additionalSources = [...this._additionalSources];
     this._additionalSources.clear();
+    const stacksId = this._stacksId;
+    this._stacksId = undefined;
 
+    try {
+      await this._saveChunk(filePath, stacksId, additionalSources);
+    } catch (error) {
+      // Release the stack session even on failure, otherwise later traces keep appending to it.
+      if (stacksId)
+        await this._connection.localUtils()?.traceDiscarded({ stacksId }).catch(() => {});
+      throw error;
+    }
+  }
+
+  private async _saveChunk(filePath: string | undefined, stacksId: string | undefined, additionalSources: string[]) {
     if (!filePath) {
       // Not interested in artifacts.
       await this._channel.tracingStopChunk({ mode: 'discard' }, kNoTimeout);
-      if (this._stacksId)
-        await this._connection.localUtils()!.traceDiscarded({ stacksId: this._stacksId });
+      if (stacksId)
+        await this._connection.localUtils()!.traceDiscarded({ stacksId });
       return;
     }
 
@@ -206,7 +224,7 @@ export class Tracing extends ChannelOwner<channels.TracingChannel> implements ap
 
     if (isLocal) {
       const result = await this._channel.tracingStopChunk({ mode: 'entries' }, kNoTimeout);
-      await localUtils.zip({ zipFile: filePath, entries: result.entries!, mode: 'write', stacksId: this._stacksId, includeSources: this._includeSources, additionalSources });
+      await localUtils.zip({ zipFile: filePath, entries: result.entries!, mode: 'write', stacksId, includeSources: this._includeSources, additionalSources });
       return;
     }
 
@@ -214,17 +232,23 @@ export class Tracing extends ChannelOwner<channels.TracingChannel> implements ap
 
     // The artifact may be missing if the browser closed while stopping tracing.
     if (!result.artifact) {
-      if (this._stacksId)
-        await localUtils.traceDiscarded({ stacksId: this._stacksId });
+      if (stacksId)
+        await localUtils.traceDiscarded({ stacksId });
       return;
     }
 
     // Save trace to the final local file.
     const artifact = Artifact.from(result.artifact);
-    await artifact.saveAs(filePath);
+    try {
+      await artifact.saveAs(filePath);
+    } catch (error) {
+      // Delete the artifact best-effort, the save error is the one to surface.
+      await artifact.delete().catch(() => {});
+      throw error;
+    }
     await artifact.delete();
 
-    await localUtils.zip({ zipFile: filePath, entries: [], mode: 'append', stacksId: this._stacksId, includeSources: this._includeSources, additionalSources });
+    await localUtils.zip({ zipFile: filePath, entries: [], mode: 'append', stacksId, includeSources: this._includeSources, additionalSources });
   }
 
   _resetStackCounter() {

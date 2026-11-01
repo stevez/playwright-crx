@@ -172,12 +172,7 @@ scheme.AndroidDeviceLaunchBrowserParams = tObject({
   permissions: tOptional(tArray(tString)),
   extraHTTPHeaders: tOptional(tArray(tType('NameValue'))),
   offline: tOptional(tBoolean),
-  httpCredentials: tOptional(tObject({
-    username: tString,
-    password: tString,
-    origin: tOptional(tString),
-    send: tOptional(tEnum(['always', 'unauthorized'])),
-  })),
+  httpCredentials: tOptional(tArray(tType('HttpCredentials'))),
   deviceScaleFactor: tOptional(tFloat),
   isMobile: tOptional(tBoolean),
   hasTouch: tOptional(tBoolean),
@@ -329,6 +324,7 @@ scheme.APIRequestContextFetchLogResult = tObject({
 });
 scheme.APIRequestContextStorageStateParams = tObject({
   indexedDB: tOptional(tBoolean),
+  opfs: tOptional(tBoolean),
 });
 scheme.APIRequestContextStorageStateResult = tObject({
   cookies: tArray(tType('NetworkCookie')),
@@ -458,12 +454,7 @@ scheme.BrowserNewContextParams = tObject({
   permissions: tOptional(tArray(tString)),
   extraHTTPHeaders: tOptional(tArray(tType('NameValue'))),
   offline: tOptional(tBoolean),
-  httpCredentials: tOptional(tObject({
-    username: tString,
-    password: tString,
-    origin: tOptional(tString),
-    send: tOptional(tEnum(['always', 'unauthorized'])),
-  })),
+  httpCredentials: tOptional(tArray(tType('HttpCredentials'))),
   deviceScaleFactor: tOptional(tFloat),
   isMobile: tOptional(tBoolean),
   hasTouch: tOptional(tBoolean),
@@ -536,12 +527,7 @@ scheme.BrowserNewContextForReuseParams = tObject({
   permissions: tOptional(tArray(tString)),
   extraHTTPHeaders: tOptional(tArray(tType('NameValue'))),
   offline: tOptional(tBoolean),
-  httpCredentials: tOptional(tObject({
-    username: tString,
-    password: tString,
-    origin: tOptional(tString),
-    send: tOptional(tEnum(['always', 'unauthorized'])),
-  })),
+  httpCredentials: tOptional(tArray(tType('HttpCredentials'))),
   deviceScaleFactor: tOptional(tFloat),
   isMobile: tOptional(tBoolean),
   hasTouch: tOptional(tBoolean),
@@ -636,12 +622,7 @@ scheme.BrowserContextInitializer = tObject({
     permissions: tOptional(tArray(tString)),
     extraHTTPHeaders: tOptional(tArray(tType('NameValue'))),
     offline: tOptional(tBoolean),
-    httpCredentials: tOptional(tObject({
-      username: tString,
-      password: tString,
-      origin: tOptional(tString),
-      send: tOptional(tEnum(['always', 'unauthorized'])),
-    })),
+    httpCredentials: tOptional(tArray(tType('HttpCredentials'))),
     deviceScaleFactor: tOptional(tFloat),
     isMobile: tOptional(tBoolean),
     hasTouch: tOptional(tBoolean),
@@ -688,6 +669,9 @@ scheme.BrowserContextConsoleEvent = tObject({
 });
 scheme.BrowserContextCloseEvent = tOptional(tObject({}));
 scheme.BrowserContextDialogEvent = tObject({
+  dialog: tChannel(['Dialog']),
+});
+scheme.BrowserContextDialogClosedEvent = tObject({
   dialog: tChannel(['Dialog']),
 });
 scheme.BrowserContextPageEvent = tObject({
@@ -808,11 +792,7 @@ scheme.BrowserContextSetGeolocationParams = tObject({
 });
 scheme.BrowserContextSetGeolocationResult = tOptional(tObject({}));
 scheme.BrowserContextSetHTTPCredentialsParams = tObject({
-  httpCredentials: tOptional(tObject({
-    username: tString,
-    password: tString,
-    origin: tOptional(tString),
-  })),
+  httpCredentials: tOptional(tArray(tType('HttpCredentials'))),
 });
 scheme.BrowserContextSetHTTPCredentialsResult = tOptional(tObject({}));
 scheme.BrowserContextSetNetworkInterceptionPatternsParams = tObject({
@@ -839,6 +819,7 @@ scheme.BrowserContextSetOfflineParams = tObject({
 scheme.BrowserContextSetOfflineResult = tOptional(tObject({}));
 scheme.BrowserContextStorageStateParams = tObject({
   indexedDB: tOptional(tBoolean),
+  opfs: tOptional(tBoolean),
   credentials: tOptional(tBoolean),
 });
 scheme.BrowserContextStorageStateResult = tObject({
@@ -894,7 +875,7 @@ scheme.BrowserContextCreateTempFilesResult = tObject({
   writableStreams: tArray(tChannel(['WritableStream'])),
 });
 scheme.BrowserContextUpdateSubscriptionParams = tObject({
-  event: tEnum(['console', 'dialog', 'request', 'response', 'requestFinished', 'requestFailed']),
+  event: tEnum(['console', 'dialog', 'dialogClosed', 'request', 'response', 'requestFinished', 'requestFailed']),
   enabled: tBoolean,
 });
 scheme.BrowserContextUpdateSubscriptionResult = tOptional(tObject({}));
@@ -1038,12 +1019,7 @@ scheme.BrowserTypeLaunchPersistentContextParams = tObject({
   permissions: tOptional(tArray(tString)),
   extraHTTPHeaders: tOptional(tArray(tType('NameValue'))),
   offline: tOptional(tBoolean),
-  httpCredentials: tOptional(tObject({
-    username: tString,
-    password: tString,
-    origin: tOptional(tString),
-    send: tOptional(tEnum(['always', 'unauthorized'])),
-  })),
+  httpCredentials: tOptional(tArray(tType('HttpCredentials'))),
   deviceScaleFactor: tOptional(tFloat),
   isMobile: tOptional(tBoolean),
   hasTouch: tOptional(tBoolean),
@@ -1083,6 +1059,7 @@ scheme.BrowserTypeConnectOverCDPParams = tObject({
   slowMo: tOptional(tFloat),
   isLocal: tOptional(tBoolean),
   noDefaults: tOptional(tBoolean),
+  isWebView: tOptional(tBoolean),
   artifactsDir: tOptional(tString),
   transport: tOptional(tBinary),
 });
@@ -1138,11 +1115,7 @@ scheme.ElectronLaunchParams = tObject({
     latitude: tFloat,
     accuracy: tOptional(tFloat),
   })),
-  httpCredentials: tOptional(tObject({
-    username: tString,
-    password: tString,
-    origin: tOptional(tString),
-  })),
+  httpCredentials: tOptional(tArray(tType('HttpCredentials'))),
   ignoreHTTPSErrors: tOptional(tBoolean),
   locale: tOptional(tString),
   offline: tOptional(tBoolean),
@@ -1271,6 +1244,15 @@ scheme.FrameAriaSnapshotParams = tObject({
 });
 scheme.FrameAriaSnapshotResult = tObject({
   snapshot: tString,
+});
+scheme.FrameAriaSnapshotJSONParams = tObject({
+  mode: tOptional(tEnum(['ai', 'default'])),
+  selector: tOptional(tString),
+  depth: tOptional(tInt),
+  boxes: tOptional(tBoolean),
+});
+scheme.FrameAriaSnapshotJSONResult = tObject({
+  snapshot: tAny,
 });
 scheme.FrameBlurParams = tObject({
   selector: tString,
@@ -2013,6 +1995,12 @@ scheme.LocalUtilsGlobToRegexParams = tObject({
 scheme.LocalUtilsGlobToRegexResult = tObject({
   regex: tString,
 });
+scheme.HttpCredentials = tObject({
+  username: tString,
+  password: tString,
+  origin: tOptional(tString),
+  send: tOptional(tEnum(['always', 'unauthorized'])),
+});
 scheme.SetNetworkCookie = tObject({
   name: tString,
   value: tString,
@@ -2619,7 +2607,7 @@ scheme.PageScreencastFrameAckResult = tOptional(tObject({}));
 scheme.PageScreencastStopParams = tOptional(tObject({}));
 scheme.PageScreencastStopResult = tOptional(tObject({}));
 scheme.PageUpdateSubscriptionParams = tObject({
-  event: tEnum(['console', 'dialog', 'fileChooser', 'request', 'response', 'requestFinished', 'requestFailed']),
+  event: tEnum(['console', 'dialog', 'dialogClosed', 'fileChooser', 'request', 'response', 'requestFinished', 'requestFailed']),
   enabled: tBoolean,
 });
 scheme.PageUpdateSubscriptionResult = tOptional(tObject({}));
@@ -2687,12 +2675,7 @@ scheme.PlaywrightNewRequestParams = tObject({
     pfx: tOptional(tBinary),
   }))),
   maxRedirects: tOptional(tInt),
-  httpCredentials: tOptional(tObject({
-    username: tString,
-    password: tString,
-    origin: tOptional(tString),
-    send: tOptional(tEnum(['always', 'unauthorized'])),
-  })),
+  httpCredentials: tOptional(tArray(tType('HttpCredentials'))),
   proxy: tOptional(tObject({
     server: tString,
     bypass: tOptional(tString),
@@ -2866,15 +2849,22 @@ scheme.IndexedDBDatabase = tObject({
     })),
   })),
 });
+scheme.OPFSEntry = tObject({
+  path: tString,
+  type: tEnum(['file', 'directory']),
+  base64: tOptional(tString),
+});
 scheme.SetOriginStorage = tObject({
   origin: tString,
   localStorage: tArray(tType('NameValue')),
   indexedDB: tOptional(tArray(tType('IndexedDBDatabase'))),
+  opfs: tOptional(tArray(tType('OPFSEntry'))),
 });
 scheme.OriginStorage = tObject({
   origin: tString,
   localStorage: tArray(tType('NameValue')),
   indexedDB: tOptional(tArray(tType('IndexedDBDatabase'))),
+  opfs: tOptional(tArray(tType('OPFSEntry'))),
 });
 scheme.RecordHarOptions = tObject({
   content: tOptional(tEnum(['embed', 'attach', 'omit'])),
@@ -2925,6 +2915,21 @@ scheme.DebuggerPausedStateChangedEvent = tObject({
     stack: tOptional(tString),
   })),
 });
+scheme.DebuggerApiCallsUpdatedEvent = tObject({
+  apiCalls: tArray(tObject({
+    id: tString,
+    title: tString,
+    location: tOptional(tObject({
+      file: tString,
+      line: tOptional(tInt),
+      column: tOptional(tInt),
+    })),
+    newLogEntries: tArray(tString),
+    actionPoint: tOptional(tType('Point')),
+    status: tEnum(['running', 'success', 'error']),
+    error: tOptional(tString),
+  })),
+});
 scheme.DebuggerRequestPauseParams = tOptional(tObject({}));
 scheme.DebuggerRequestPauseResult = tOptional(tObject({}));
 scheme.DebuggerResumeParams = tOptional(tObject({}));
@@ -2939,6 +2944,8 @@ scheme.DebuggerRunToParams = tObject({
   }),
 });
 scheme.DebuggerRunToResult = tOptional(tObject({}));
+scheme.DebuggerEnableParams = tOptional(tObject({}));
+scheme.DebuggerEnableResult = tOptional(tObject({}));
 scheme.DialogInitializer = tObject({
   page: tOptional(tChannel(['Page'])),
   type: tString,
@@ -3034,8 +3041,10 @@ scheme.NameValue = tObject({
 scheme.TracingInitializer = tOptional(tObject({}));
 scheme.TracingTracingStartParams = tObject({
   name: tOptional(tString),
-  snapshots: tOptional(tBoolean),
-  screenshots: tOptional(tBoolean),
+  snapshotDom: tOptional(tBoolean),
+  snapshotAria: tOptional(tBoolean),
+  snapshotScreen: tOptional(tBoolean),
+  screencast: tOptional(tBoolean),
   live: tOptional(tBoolean),
 });
 scheme.TracingTracingStartResult = tOptional(tObject({}));

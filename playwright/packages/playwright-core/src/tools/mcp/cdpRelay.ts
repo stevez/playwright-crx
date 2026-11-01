@@ -22,20 +22,22 @@
  * - /extension/guid - Extension connection
  *
  * The protocol version advertised to the extension can be overridden with the
- * PLAYWRIGHT_EXTENSION_PROTOCOL env variable (used in tests).
+ * PWTEST_EXTENSION_PROTOCOL env variable, and the connection timeout with
+ * PWTEST_EXTENSION_CONNECT_TIMEOUT (both used in tests).
  */
 
 import { spawn } from 'child_process';
-import http from 'http';
 import os from 'os';
 
 import debug from 'debug';
-import ws, { WebSocketServer as wsServer } from 'ws';
+import ws from 'ws';
 import { ManualPromise } from '@isomorphic/manualPromise';
+import { monotonicTime } from '@isomorphic/time';
+import { raceAgainstDeadline } from '@isomorphic/timeoutRunner';
+import { WSServer } from '@utils/wsServer';
 import { registry } from '../../server/registry/index';
 
-import { findPlaywrightExtensionProfile, playwrightExtensionId } from '../utils/extension';
-import { addressToString } from '../utils/mcp/http';
+import { playwrightExtensionId } from '../utils/extension';
 import { logUnhandledError } from './log';
 import { ExtensionProtocolV2 } from './cdpRelayV2';
 import * as protocol from './protocol';
@@ -43,10 +45,12 @@ import * as protocol from './protocol';
 import type websocket from 'ws';
 import type { ExtensionCommandV2, ExtensionEventsV2 } from './protocol';
 import type { CDPMessage } from './browserModel';
-import type { WebSocket, WebSocketServer } from 'ws';
+import type { WebSocket } from 'ws';
 
 
 const debugLogger = debug('pw:mcp:relay');
+
+const extensionConnectionTimeout = +(process.env.PWTEST_EXTENSION_CONNECT_TIMEOUT ?? 30_000);
 
 type CDPCommand = {
   id: number;
@@ -58,25 +62,28 @@ type CDPCommand = {
 type CDPResponse = CDPMessage;
 
 export class CDPRelayServer {
-  private _wsHost: string;
+  private _wsServer: WSServer;
+  private _wsHost!: string;
   private _browserChannel: string;
   private _executablePath?: string;
-  private _userDataDir?: string;
+  private _customUserDataDir?: string;
+  private _profileDirectory?: string;
   private _cdpPath: string;
   private _extensionPath: string;
-  private _wss: WebSocketServer;
   private _cdpConnection: WebSocket | null = null;
   private _extensionConnection: ExtensionConnection | null = null;
   private _protocolVersion: number;
+  private _token?: string;
   private _handler: ExtensionProtocolV2;
   private _extensionConnectionPromise = new ManualPromise<void>();
 
-  constructor(server: http.Server, browserChannel: string, executablePath?: string, userDataDir?: string) {
-    this._wsHost = addressToString(server.address(), { protocol: 'ws' });
+  constructor(browserChannel: string, executablePath?: string, customUserDataDir?: string, profileDirectory?: string) {
     this._browserChannel = browserChannel;
     this._executablePath = executablePath;
-    this._userDataDir = userDataDir;
-    this._protocolVersion = parseInt(process.env.PLAYWRIGHT_EXTENSION_PROTOCOL ?? protocol.VERSION.toString(), 10);
+    this._customUserDataDir = customUserDataDir;
+    this._profileDirectory = profileDirectory;
+    this._protocolVersion = parseInt(process.env.PWTEST_EXTENSION_PROTOCOL ?? protocol.VERSION.toString(), 10);
+    this._token = process.env.PLAYWRIGHT_MCP_EXTENSION_TOKEN;
 
     const sendCommand = (method: string, params: any): Promise<any> => {
       if (!this._extensionConnection)
@@ -90,8 +97,27 @@ export class CDPRelayServer {
     this._extensionPath = `/extension/${uuid}`;
 
     void this._extensionConnectionPromise.catch(logUnhandledError);
-    this._wss = new wsServer({ server });
-    this._wss.on('connection', this._onConnection.bind(this));
+    this._wsServer = new WSServer({
+      onRequest: (request, response) => {
+        response.statusCode = 404;
+        response.end();
+      },
+      onHeaders: () => {},
+      onUpgrade: () => undefined,
+      isAllowedPathname: pathname => pathname === this._cdpPath || pathname === this._extensionPath,
+      onConnection: (request, url, ws) => {
+        debugLogger(`New connection to ${url.pathname}`);
+        if (url.pathname === this._cdpPath)
+          this._handlePlaywrightConnection(ws);
+        else
+          this._handleExtensionConnection(ws);
+        return undefined;
+      },
+    });
+  }
+
+  async start(): Promise<void> {
+    this._wsHost = await this._wsServer.listen(0, undefined, '');
   }
 
   cdpEndpoint() {
@@ -106,8 +132,16 @@ export class CDPRelayServer {
     debugLogger('Establishing extension connection');
     await this._openConnectPageInBrowser(clientName);
     debugLogger('Waiting for incoming extension connection');
-    await this._extensionConnectionPromise;
-    await this._handler.ready();
+    // Without a token the user has to approve the connection in the browser, which can take arbitrarily long.
+    const deadline = this._token ? monotonicTime() + extensionConnectionTimeout : 0;
+    const { timedOut } = await raceAgainstDeadline(async () => {
+      await this._extensionConnectionPromise;
+      await this._handler.ready();
+    }, deadline);
+    if (timedOut) {
+      const profile = this._profileDirectory ? ` "${this._profileDirectory}"` : '';
+      throw new Error(`Playwright extension did not connect within ${extensionConnectionTimeout / 1000}s after opening the connect page. Make sure the extension is installed in the Chrome profile${profile} and PLAYWRIGHT_MCP_EXTENSION_TOKEN matches its token.`);
+    }
     debugLogger('Extension connection established');
   }
 
@@ -122,9 +156,8 @@ export class CDPRelayServer {
     };
     url.searchParams.set('client', JSON.stringify(client));
     url.searchParams.set('protocolVersion', this._protocolVersion.toString());
-    const token = process.env.PLAYWRIGHT_MCP_EXTENSION_TOKEN;
-    if (token)
-      url.searchParams.set('token', token);
+    if (this._token)
+      url.searchParams.set('token', this._token);
     const href = url.toString();
 
     const channel = registry.isChromiumAlias(this._browserChannel) ? 'chromium' : this._browserChannel;
@@ -139,13 +172,11 @@ export class CDPRelayServer {
     }
 
     const args: string[] = [];
-    const testUserDataDir = process.env.PWTEST_EXTENSION_USER_DATA_DIR;
-    if (testUserDataDir)
-      args.push(`--user-data-dir=${testUserDataDir}`);
-    const userDataDir = testUserDataDir ?? this._userDataDir;
-    const profileDirectory = userDataDir ? await findPlaywrightExtensionProfile(userDataDir) : undefined;
-    if (profileDirectory)
-      args.push(`--profile-directory=${profileDirectory}`);
+    // The default profile dir is not passed explicitly, the browser resolves it on its own.
+    if (this._customUserDataDir)
+      args.push(`--user-data-dir=${this._customUserDataDir}`);
+    if (this._profileDirectory)
+      args.push(`--profile-directory=${this._profileDirectory}`);
     if (os.platform() === 'linux' && channel === 'chromium')
       args.push('--no-sandbox');
     args.push(href);
@@ -159,25 +190,12 @@ export class CDPRelayServer {
 
   stop(): void {
     this._closeConnections('Server stopped');
-    this._wss.close();
+    void this._wsServer.close().catch(logUnhandledError);
   }
 
   private _closeConnections(reason: string) {
     this._closeCDPConnection(reason);
     this._closeExtensionConnection(reason);
-  }
-
-  private _onConnection(ws: WebSocket, request: http.IncomingMessage): void {
-    const url = new URL(`http://localhost${request.url}`);
-    debugLogger(`New connection to ${url.pathname}`);
-    if (url.pathname === this._cdpPath) {
-      this._handlePlaywrightConnection(ws);
-    } else if (url.pathname === this._extensionPath) {
-      this._handleExtensionConnection(ws);
-    } else {
-      debugLogger(`Invalid path: ${url.pathname}`);
-      ws.close(4004, 'Invalid path');
-    }
   }
 
   private _handlePlaywrightConnection(ws: WebSocket): void {
@@ -353,10 +371,11 @@ class ExtensionConnection {
     }
   }
 
-  private _onClose(event: websocket.CloseEvent) {
-    debugLogger(`<ws closed> code=${event.code} reason=${event.reason}`);
+  private _onClose(code: number, reason: Buffer) {
+    const message = reason.toString();
+    debugLogger(`<ws closed> code=${code} reason=${message}`);
     this._dispose();
-    this.onclose?.(event.reason);
+    this.onclose?.(message);
   }
 
   private _onError(event: websocket.ErrorEvent) {

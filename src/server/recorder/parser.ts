@@ -34,7 +34,7 @@ type RouteFromHAROptions = {
   updateMode?: 'minimal' | 'full'
 };
 
-type RouteFromHARAction = { name: 'routeFromHAR', signals: [], har: string } & RouteFromHAROptions;
+type RouteFromHARAction = { name: 'routeFromHAR', har: string } & RouteFromHAROptions;
 type ExtendedActionInContextWithLocation = ActionInContextWithLocation | { action: RouteFromHARAction, location?: Location };
 
 type AssertFnAction =
@@ -280,14 +280,14 @@ export function parse(code: string, file: string = 'playwright-test') {
       if (!expectFnActions[actionFnName as AssertFnAction])
         parserError(`Invalid assertion ${actionFnName}`, expr.argument.callee.loc);
       const [name, params] = expectFnActions[actionFnName as AssertFnAction](...args);
-      action = { name, selector, signals: [], ...cleanParams(params) } as Action;
+      action = { name, selector, ...cleanParams(params) } as Action;
       if (expectActionNegated)
         (action as AssertCheckedAction).checked = false;
     } else {
       if (!fnActions[actionFnName as Exclude<ActionFnName, AssertFnAction>])
         parserError(`Invalid action ${actionFnName}`, expr.argument.callee.loc);
       const [name, params] = fnActions[actionFnName as Exclude<ActionFnName, AssertFnAction>](...args);
-      action = { name, selector, signals: [], ...cleanParams(params) } as Action;
+      action = { name, selector, ...cleanParams(params) } as Action;
     }
 
     if (pageAlias)
@@ -296,6 +296,7 @@ export function parse(code: string, file: string = 'playwright-test') {
     return {
       action,
       pageGuid: pageAlias ?? 'page',
+      signals: [],
       startTime: 0,
       location: { file, ...indexToLineColumn(code, expr.start) },
     };
@@ -403,7 +404,8 @@ export function parse(code: string, file: string = 'playwright-test') {
 
       // it has page fixture, let's push a openPage action
       actions.push({
-        action: { name: 'openPage', signals: [], url: '' },
+        action: { name: 'openPage', url: '' },
+        signals: [],
         pageGuid: 'page',
         location: { file, ...indexToLineColumn(code, fn.start) },
         startTime: 0

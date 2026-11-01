@@ -28,11 +28,12 @@ import type { SdkObject } from '../instrumentation';
 import type { InitScript, Page } from '../page';
 import type { ConnectionTransport } from '../transport';
 import type * as types from '../types';
+import type { HttpCredentials } from '@protocol/structs';
 import type { Protocol } from './protocol';
 import type { PageProxyMessageReceivedPayload } from './wkConnection';
 import type * as channels from '../channels';
 
-const BROWSER_VERSION = '26.5';
+const BROWSER_VERSION = '26.6';
 const DEFAULT_USER_AGENT = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/${BROWSER_VERSION} Safari/605.1.15`;
 
 export class WKBrowser extends Browser {
@@ -324,7 +325,7 @@ export class WKBrowserContext extends BrowserContext {
       await (page.delegate as WKPage).updateOffline();
   }
 
-  async doSetHTTPCredentials(httpCredentials?: types.Credentials): Promise<void> {
+  async doSetHTTPCredentials(httpCredentials?: HttpCredentials[]): Promise<void> {
     this._options.httpCredentials = httpCredentials;
     for (const page of this.pages())
       await (page.delegate as WKPage).updateHttpCredentials();
