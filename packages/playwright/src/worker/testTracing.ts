@@ -29,16 +29,16 @@ import { filteredStackTrace } from '@utils/stackTrace';
 import type { TestStepCategory, TestInfoImpl } from './testInfo';
 import type { PlaywrightWorkerOptions, TestInfo, TestInfoError, TraceMode } from '../../types/test';
 import type { StackFrame } from '@utils/stackTrace';
-import type * as trace from '@trace/trace';
+import type * as trace from '@isomorphic/trace/trace';
 import type EventEmitter from 'events';
 
 export type Attachment = TestInfo['attachments'][0];
 export const testTraceEntryName = 'test.trace';
-const version: trace.VERSION = 8;
+const version: trace.VERSION = 9;
 let traceOrdinal = 0;
 
 type TraceFixtureValue =  PlaywrightWorkerOptions['trace'] | undefined;
-type TraceOptions = { screenshots: boolean, snapshots: boolean, sources: boolean, attachments: boolean, live: boolean, mode: TraceMode };
+type TraceOptions = { screenshots: boolean, snapshots: boolean | { dom?: boolean, aria?: boolean, screen?: boolean }, sources: boolean, attachments: boolean, live: boolean, mode: TraceMode };
 
 export class TestTracing {
   private _testInfo: TestInfoImpl;
@@ -172,13 +172,12 @@ export class TestTracing {
 
   async stopIfNeeded() {
     this._contextCreatedEvent.testTimeout = this._testInfo.timeout;
+    this._contextCreatedEvent.annotations = this._testInfo.annotations.map(({ type, description }) => ({ type, description }));
 
     if (!this._options)
       return;
 
-    const error = await this._liveTraceFile?.fs.syncAndGetError();
-    if (error)
-      throw error;
+    await this._liveTraceFile?.fs.sync();
 
     if (this._shouldAbandonTrace()) {
       for (const file of this._temporaryTraceFiles)
@@ -205,7 +204,7 @@ export class TestTracing {
       }
       for (const sourceFile of sourceFiles) {
         await fs.promises.readFile(sourceFile, 'utf8').then(source => {
-          zipFile.addBuffer(Buffer.from(source), 'resources/src@' + calculateSha1(sourceFile) + '.txt');
+          zipFile.addBuffer(Buffer.from(source), 'src/' + calculateSha1(sourceFile) + path.extname(sourceFile));
         }).catch(() => {});
       }
     }
@@ -224,13 +223,13 @@ export class TestTracing {
           continue;
 
         const sha1 = calculateSha1(content);
-        attachment.sha1 = sha1;
+        attachment.file = 'attachments/' + sha1;
         delete attachment.path;
         delete attachment.base64;
         if (sha1s.has(sha1))
           continue;
         sha1s.add(sha1);
-        zipFile.addBuffer(content, 'resources/' + sha1);
+        zipFile.addBuffer(content, attachment.file);
       }
     }
 
@@ -274,7 +273,7 @@ export class TestTracing {
     });
   }
 
-  appendBeforeActionForStep(options: { stepId: string, parentId?: string, title: string, category: TestStepCategory, params?: Record<string, any>, stack: StackFrame[], group?: string }) {
+  appendBeforeActionForStep(options: { stepId: string, parentId?: string, title: string, subtitle?: string, category: TestStepCategory, params?: Record<string, any>, stack: StackFrame[], group?: string }) {
     this._appendTraceEvent({
       type: 'before',
       callId: options.stepId,
@@ -284,13 +283,14 @@ export class TestTracing {
       class: 'Test',
       method: options.category,
       title: options.title,
+      subtitle: options.subtitle,
       params: Object.fromEntries(Object.entries(options.params || {}).map(([name, value]) => [name, generatePreview(value)])),
       stack: options.stack,
       group: options.group,
     });
   }
 
-  appendAfterActionForStep(callId: string, error?: trace.SerializedError['error'], attachments: Attachment[] = [], annotations?: trace.AfterActionTraceEventAnnotation[]) {
+  appendAfterActionForStep(callId: string, error?: trace.SerializedError['error'], attachments: Attachment[] = [], annotations?: trace.TraceEventAnnotation[]) {
     this._appendTraceEvent({
       type: 'after',
       callId,

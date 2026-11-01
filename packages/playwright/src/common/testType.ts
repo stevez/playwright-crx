@@ -112,6 +112,7 @@ export class TestTypeImpl {
     test._requireFile = suite._requireFile;
     test.annotations.push(...validatedDetails.annotations);
     test._tags.push(...validatedDetails.tags);
+    test._locks.push(...validatedDetails.locks);
     suite._addTest(test);
 
     if (type === 'only' || type === 'fail.only')
@@ -152,6 +153,7 @@ export class TestTypeImpl {
     child.location = location;
     child._staticAnnotations.push(...validatedDetails.annotations);
     child._tags.push(...validatedDetails.tags);
+    child._locks.push(...validatedDetails.locks);
     suite._addSuite(child);
 
     if (type === 'only' || type === 'serial.only' || type === 'parallel.only')
@@ -272,12 +274,12 @@ export class TestTypeImpl {
     suite._use.push({ fixtures, location });
   }
 
-  async _step<T>(expectation: 'pass'|'skip', title: string, body: (step: TestStepInfo) => T | Promise<T>, options: {box?: boolean, location?: Location, timeout?: number } = {}): Promise<T> {
+  async _step<T>(expectation: 'pass'|'skip', title: string, body: (step: TestStepInfo) => T | Promise<T>, options: {box?: boolean, location?: Location, timeout?: number, params?: Record<string, any>, subtitle?: string } = {}): Promise<T> {
     const testInfo = currentTestInfo();
     if (!testInfo)
       throw new Error(`test.step() can only be called from a test`);
     await testInfo._onUserStepBegin?.(title);
-    const step = testInfo._addStep({ category: 'test.step', title, location: options.location, box: options.box });
+    const step = testInfo._addStep({ category: 'test.step', title, subtitle: options.subtitle, location: options.location, box: options.box, params: options.params });
     return await currentZone().with('stepZone', step).run(async () => {
       try {
         let result: Awaited<ReturnType<typeof raceAgainstDeadline<T>>> | undefined = undefined;

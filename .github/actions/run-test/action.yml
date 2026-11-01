@@ -39,7 +39,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-node@v6
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
       with:
         node-version: ${{ inputs.node-version }}
     - run: |
@@ -81,7 +81,7 @@ runs:
       env:
         PW_TAG: "@${{ inputs.bot-name }}"
     - name: Azure Login
-      uses: azure/login@v2
+      uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
       if: ${{ !cancelled() && env.PLAYWRIGHT_SETUP_COMPLETE == 'true' && github.event_name == 'push' && github.repository == 'microsoft/playwright' }}
       with:
         client-id: ${{ inputs.flakiness-client-id }}

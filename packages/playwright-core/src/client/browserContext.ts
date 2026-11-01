@@ -49,6 +49,7 @@ import { mkdirIfNeeded } from './fileUtils';
 
 import type { EvaluateOptions } from './jsHandle';
 import type { BrowserContextOptions, Headers, SetStorageState, StorageState, WaitForEventOptions } from './types';
+import type { HttpCredentials } from '@protocol/structs';
 import type * as structs from '../../types/structs';
 import type * as api from '../../types/types';
 import type { URLMatch } from '@isomorphic/urlMatch';
@@ -56,9 +57,9 @@ import type * as channels from './channels';
 import type * as actions from '@isomorphic/codegen/actions';
 
 interface RecorderEventSink {
-  actionAdded?(page: Page, actionInContext: actions.ActionInContext, code: string): void;
-  actionUpdated?(page: Page, actionInContext: actions.ActionInContext, code: string): void;
-  signalAdded?(page: Page, signal: actions.SignalInContext): void;
+  actionAdded?(page: Page, action: actions.Action, code: string): void;
+  actionUpdated?(page: Page, action: actions.Action, code: string): void;
+  signalAdded?(page: Page, signal: actions.Signal, code: string): void;
 }
 
 export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel> implements api.BrowserContext {
@@ -156,23 +157,31 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
           dialog.dismiss({}, kNoTimeout).catch(() => {});
       }
     });
+    this._channel.on('dialogClosed', ({ dialog }) => {
+      const dialogObject = Dialog.from(dialog);
+      this.emit(Events.BrowserContext.DialogClosed, dialogObject);
+      const page = dialogObject.page();
+      if (page)
+        page.emit(Events.Page.DialogClosed, dialogObject);
+    });
     this._channel.on('request', ({ request, page }) => this._onRequest(network.Request.from(request), Page.fromNullable(page)));
     this._channel.on('requestFailed', ({ request, failureText, responseEndTiming, page }) => this._onRequestFailed(network.Request.from(request), responseEndTiming, failureText, Page.fromNullable(page)));
     this._channel.on('requestFinished', params => this._onRequestFinished(params));
     this._channel.on('response', ({ response, page }) => this._onResponse(network.Response.from(response), Page.fromNullable(page)));
     this._channel.on('recorderEvent', ({ event, data, page, code }) => {
       if (event === 'actionAdded')
-        this._onRecorderEventSink?.actionAdded?.(Page.from(page), data as actions.ActionInContext, code);
+        this._onRecorderEventSink?.actionAdded?.(Page.from(page), data as actions.Action, code);
       else if (event === 'actionUpdated')
-        this._onRecorderEventSink?.actionUpdated?.(Page.from(page), data as actions.ActionInContext, code);
+        this._onRecorderEventSink?.actionUpdated?.(Page.from(page), data as actions.Action, code);
       else if (event === 'signalAdded')
-        this._onRecorderEventSink?.signalAdded?.(Page.from(page), data as actions.SignalInContext);
+        this._onRecorderEventSink?.signalAdded?.(Page.from(page), data as actions.Signal, code);
     });
     this._closedPromise = new Promise(f => this.once(Events.BrowserContext.Close, f));
 
     this._setEventToSubscriptionMapping(new Map<string, channels.BrowserContextUpdateSubscriptionParams['event']>([
       [Events.BrowserContext.Console, 'console'],
       [Events.BrowserContext.Dialog, 'dialog'],
+      [Events.BrowserContext.DialogClosed, 'dialogClosed'],
       [Events.BrowserContext.Request, 'request'],
       [Events.BrowserContext.Response, 'response'],
       [Events.BrowserContext.RequestFinished, 'requestFinished'],
@@ -356,8 +365,8 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
     await this._channel.setOffline({ offline }, kNoTimeout);
   }
 
-  async setHTTPCredentials(httpCredentials: { username: string, password: string } | null): Promise<void> {
-    await this._channel.setHTTPCredentials({ httpCredentials: httpCredentials || undefined }, kNoTimeout);
+  async setHTTPCredentials(httpCredentials: HttpCredentials | HttpCredentials[] | null): Promise<void> {
+    await this._channel.setHTTPCredentials({ httpCredentials: toHttpCredentialsProtocol(httpCredentials || undefined) }, kNoTimeout);
   }
 
   async addInitScript(script: Function | string | { path?: string, content?: string }, arg?: any, options?: EvaluateOptions) {
@@ -470,8 +479,8 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
     });
   }
 
-  async storageState(options: { path?: string, indexedDB?: boolean, credentials?: boolean } = {}): Promise<StorageState> {
-    const state = await this._channel.storageState({ indexedDB: options.indexedDB, credentials: options.credentials }, kNoTimeout);
+  async storageState(options: { path?: string, indexedDB?: boolean, opfs?: boolean, credentials?: boolean } = {}): Promise<StorageState> {
+    const state = await this._channel.storageState({ indexedDB: options.indexedDB, opfs: options.opfs, credentials: options.credentials }, kNoTimeout);
     if (options.path) {
       await mkdirIfNeeded(options.path);
       await fs.promises.writeFile(options.path, JSON.stringify(state, undefined, 2), 'utf8');
@@ -507,6 +516,7 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
     this._browser?._browserType._playwright.selectors._contextsForSelectors.delete(this);
     this._disposeHarRouters();
     this.tracing._resetStackCounter();
+    this.request.tracing._resetStackCounter();
     this.emit(Events.BrowserContext.Close, this);
   }
 
@@ -521,9 +531,11 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
     this._closingStatus = 'closing';
     await this.request.dispose(options);
     await this._instrumentation.runBeforeCloseBrowserContext(this);
-    await this.tracing._exportAllHars();
+    const harError = await this.tracing._exportAllHars().catch(e => e);
     await this._channel.close(options, kNoTimeout);
     await this._closedPromise;
+    if (harError)
+      throw harError;
   }
 
   async _enableRecorder(params: channels.BrowserContextEnableRecorderParams, eventSink?: RecorderEventSink) {
@@ -533,8 +545,11 @@ export class BrowserContext extends ChannelOwner<channels.BrowserContextChannel>
   }
 
   async _disableRecorder() {
-    this._onRecorderEventSink = undefined;
-    await this._channel.disableRecorder({}, kNoTimeout);
+    try {
+      await this._channel.disableRecorder({}, kNoTimeout);
+    } finally {
+      this._onRecorderEventSink = undefined;
+    }
   }
 
   async _exposeConsoleApi() {
@@ -570,10 +585,18 @@ export async function prepareBrowserContextParams(options: BrowserContextOptions
     contrast: options.contrast === null ? 'no-override' : options.contrast,
     acceptDownloads: toAcceptDownloadsProtocol(options.acceptDownloads),
     clientCertificates: await toClientCertificatesProtocol(options.clientCertificates),
+    httpCredentials: toHttpCredentialsProtocol(options.httpCredentials),
   };
   if (contextParams.recordVideo && contextParams.recordVideo.dir)
     contextParams.recordVideo.dir = path.resolve(contextParams.recordVideo.dir);
   return contextParams;
+}
+
+export function toHttpCredentialsProtocol(credentials?: HttpCredentials | HttpCredentials[]): HttpCredentials[] | undefined {
+  if (!credentials)
+    return undefined;
+  const list = Array.isArray(credentials) ? credentials : [credentials];
+  return list.length ? list : undefined;
 }
 
 function toAcceptDownloadsProtocol(acceptDownloads?: boolean) {

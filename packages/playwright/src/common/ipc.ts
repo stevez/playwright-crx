@@ -36,6 +36,7 @@ export type ConfigCLIOverrides = {
   repeatEach?: number;
   retries?: number;
   reporter?: ReporterDescription[];
+  additionalReporters?: ReporterDescription[];
   shard?: { current: number, total: number };
   timeout?: number;
   tsconfig?: string;
@@ -125,7 +126,9 @@ export type StepBeginPayload = {
   stepId: string;
   parentStepId: string | undefined;
   title: string;
+  subtitle?: string;
   category: string;
+  params?: Record<string, any>;
   wallTime: number;  // milliseconds since unix epoch
   location?: { file: string, line: number, column: number };
 };

@@ -35,9 +35,7 @@ import { createTitleMatcher, forceRegExp, removeDirAndLogToConsole } from '../ut
 
 import type { TestGroup } from '../runner/testGroups';
 import type { EnvByProjectId } from './dispatcher';
-import type { TestRunnerPluginRegistration } from '../plugins';
 import type { Task } from './taskRunner';
-import type { ReporterDescription } from '../../types/test';
 import type { FullResult, TestError } from '../../types/testReporter';
 import type { Matcher, TestCaseFilter } from '../util';
 import type { InternalReporter } from '../reporters/internalReporter';
@@ -72,7 +70,6 @@ export type TestRunOptions = {
   pauseAtEnd?: boolean;
   onTestPaused?: (params: TestPausedParams) => void;
   preserveOutputDir?: boolean;
-  additionalReporters?: ReporterDescription[];
   shardWeights?: number[];
 };
 
@@ -166,7 +163,6 @@ export function createRunTestsTasks(config: FullConfigInternal) {
   return [
     createPhasesTask(),
     createReportBeginTask(),
-    ...config.plugins.map(plugin => createPluginBeginTask(plugin)),
     createRunTestsTask(),
   ];
 }
@@ -176,8 +172,6 @@ export function createClearCacheTask(config: FullConfigInternal): Task<TestRun> 
     title: 'clear cache',
     setup: async () => {
       await removeDirAndLogToConsole(cc.cacheDir);
-      for (const plugin of config.plugins)
-        await plugin.instance?.clearCache?.();
     },
   };
 }
@@ -206,18 +200,6 @@ export function createPluginSetupTasks(config: FullConfigInternal): Task<TestRun
       await plugin.instance?.teardown?.();
     },
   }));
-}
-
-function createPluginBeginTask(plugin: TestRunnerPluginRegistration): Task<TestRun> {
-  return {
-    title: 'plugin begin',
-    setup: async testRun => {
-      await plugin.instance?.begin?.(testRun.rootSuite!);
-    },
-    teardown: async () => {
-      await plugin.instance?.end?.();
-    },
-  };
 }
 
 function createGlobalSetupTask(file: string, config: FullConfigInternal): Task<TestRun> {
@@ -302,7 +284,7 @@ export function createListFilesTask(): Task<TestRun> {
   };
 }
 
-export function createLoadTask(mode: 'out-of-process' | 'in-process', options: { filterOnly: boolean, failOnLoadErrors: boolean, doNotRunDepsOutsideProjectFilter?: boolean, populateDependencies?: boolean }): Task<TestRun> {
+export function createLoadTask(mode: 'out-of-process' | 'in-process', options: { filterOnly: boolean, failOnLoadErrors: boolean, doNotRunDepsOutsideProjectFilter?: boolean }): Task<TestRun> {
   return {
     title: 'load tests',
     setup: async (testRun, errors, softErrors) => {
@@ -343,11 +325,6 @@ export function createLoadTask(mode: 'out-of-process' | 'in-process', options: {
 
       await collectProjectsAndTestFiles(testRun, !!options.doNotRunDepsOutsideProjectFilter);
       await loadFileSuites(testRun, mode, options.failOnLoadErrors ? errors : softErrors);
-
-      if (testRun.options.onlyChanged || options.populateDependencies) {
-        for (const plugin of testRun.config.plugins)
-          await plugin.instance?.populateDependencies?.();
-      }
 
       if (testRun.options.onlyChanged) {
         const changedFiles = await detectChangedTestFiles(testRun.options.onlyChanged, testRun.config.configDir);

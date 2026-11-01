@@ -1,7 +1,7 @@
 {
   "name": "playwright-internal",
   "private": true,
-  "version": "1.62.1",
+  "version": "1.63.0",
   "description": "A high-level API to automate web browsers",
   "repository": {
     "type": "git",
@@ -28,7 +28,6 @@
     "test-html-reporter": "playwright test --config=packages/html-reporter",
     "test-web": "playwright test --config=packages/web",
     "ttest": "node ./tests/playwright-test/stable-test-runner/node_modules/@playwright/test/cli test --config=tests/playwright-test/playwright.config.ts",
-    "ct": "playwright test tests/components/test-all.spec.js --reporter=list",
     "test": "playwright test --config=tests/library/playwright.config.ts",
     "test-mcp": "playwright test --config=tests/mcp/playwright.config.ts",
     "ctest-mcp": "playwright test --config=tests/mcp/playwright.config.ts --project=chrome",
@@ -116,7 +115,7 @@
     "@vitejs/plugin-basic-ssl": "2.3.0",
     "@vitejs/plugin-react": "6.0.3",
     "@zip.js/zip.js": "2.7.73",
-    "chokidar": "3.6.0",
+    "chokidar": "4.0.3",
     "chromium-bidi": "12.1.0",
     "colors": "1.4.0",
     "commander": "15.0.0",

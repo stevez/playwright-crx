@@ -49,6 +49,22 @@ import type * as channels from '../channels';
 
 export type WindowBounds = { top?: number, left?: number, width?: number, height?: number };
 
+// Browsers disallow these WebUI hosts in off-the-record profiles and redirect them to the original
+// profile, which crashes when the profile was created over CDP. Edge allows most of them in InPrivate.
+// See https://github.com/microsoft/playwright/issues/41935.
+const kCrashingWebUIHosts = {
+  chromium: new Set(['apps', 'extensions', 'help', 'history', 'password-manager', 'settings']),
+  edge: new Set(['history']),
+};
+
+// Chromium canonicalizes WebUI urls as standard ones, so "VIEW-SOURCE:Chrome:Settings" ends up
+// being "chrome://settings/".
+function webUIHost(url: string): string {
+  const match = /^(?:view-source:)?(?:chrome|edge):\/*([^/?#]+)/i.exec(url);
+  const authority = match ? `http://${match[1]}` : '';
+  return URL.canParse(authority) ? new URL(authority).hostname : '';
+}
+
 export class CRPage implements PageDelegate {
   readonly utilityWorldName: string;
   readonly _mainFrameSession: FrameSession;
@@ -152,7 +168,16 @@ export class CRPage implements PageDelegate {
   }
 
   async navigateFrame(frame: frames.Frame, url: string, referrer: string | undefined): Promise<frames.GotoResult> {
+    this._assertNavigationDoesNotCrashBrowser(url);
     return this._sessionForFrame(frame)._navigate(frame, url, referrer);
+  }
+
+  private _assertNavigationDoesNotCrashBrowser(url: string) {
+    if (this._browserContext.isPersistentContext())
+      return;
+    const isEdge = this._browserContext._browser.userAgent().includes('Edg/');
+    if ((isEdge ? kCrashingWebUIHosts.edge : kCrashingWebUIHosts.chromium).has(webUIHost(url)))
+      throw new Error(`Cannot navigate to "${url}": this page is not available in an isolated browser context, and opening it crashes the browser. Use browserType.launchPersistentContext() instead.`);
   }
 
   async updateExtraHTTPHeaders(): Promise<void> {
@@ -417,6 +442,7 @@ class FrameSession {
       eventsHelper.addEventListener(this._client, 'Page.frameNavigated', event => this._onFrameNavigated(event.frame, false)),
       eventsHelper.addEventListener(this._client, 'Page.frameRequestedNavigation', event => this._onFrameRequestedNavigation(event)),
       eventsHelper.addEventListener(this._client, 'Page.javascriptDialogOpening', event => this._onDialog(event)),
+      eventsHelper.addEventListener(this._client, 'Page.javascriptDialogClosed', () => this._onDialogClosed()),
       eventsHelper.addEventListener(this._client, 'Page.navigatedWithinDocument', event => this._onFrameNavigatedWithinDocument(event.frameId, event.url)),
       eventsHelper.addEventListener(this._client, 'Runtime.bindingCalled', event => this._onBindingCalled(event)),
       eventsHelper.addEventListener(this._client, 'Runtime.consoleAPICalled', event => this._onConsoleAPI(event)),
@@ -438,6 +464,7 @@ class FrameSession {
   }
 
   async _initialize(hasUIWindow: boolean) {
+    const browserOptions = this._crPage._browserContext._browser.options;
     if (!this._page.isStorageStatePage && hasUIWindow &&
       !this._crPage._browserContext._browser.isClank() &&
       !this._crPage._browserContext._options.noDefaultViewport) {
@@ -513,7 +540,7 @@ class FrameSession {
       this._client.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }),
     ];
     if (!this._page.isStorageStatePage) {
-      const skipDefaultOverrides = this._crPage._browserContext._browser.options.noDefaults &&
+      const skipDefaultOverrides = browserOptions.noDefaults &&
           this._crPage._browserContext === this._crPage._browserContext._browser._defaultContext;
       if (this._crPage._browserContext.needsPlaywrightBinding())
         promises.push(this.exposePlaywrightBinding());
@@ -536,7 +563,7 @@ class FrameSession {
         promises.push(emulateLocale(this._client, options.locale));
       if (options.timezoneId)
         promises.push(emulateTimezone(this._client, options.timezoneId));
-      if (!this._crPage._browserContext._browser.options.headful)
+      if (!browserOptions.headful)
         promises.push(this._setDefaultFontFamilies(this._client));
       promises.push(this._updateGeolocation(true));
       if (!skipDefaultOverrides)
@@ -548,12 +575,27 @@ class FrameSession {
     promises.push(this._client.send('Runtime.runIfWaitingForDebugger'));
     promises.push(this._firstNonInitialNavigationCommittedPromise);
     await Promise.all(promises);
+
+    if (browserOptions.isWebView) {
+      // Android WebView's devtools endpoint sometimes acknowledges Runtime.enable
+      // without replaying the pre-existing execution contexts. Cycle
+      // Runtime.disable/enable until the default context is reported.
+      for (let attempt = 0; attempt < 10; ++attempt) {
+        if ([...this._contextIdToContext.values()].some(context => context.world === 'main'))
+          break;
+        await this._client._sendMayFail('Runtime.disable');
+        await this._client._sendMayFail('Runtime.enable');
+        await new Promise(f => setTimeout(f, 250));
+      }
+    }
   }
 
   dispose() {
     this._firstNonInitialNavigationCommittedReject(new TargetClosedError(this._page.closeReason()));
     for (const childSession of this._childSessions)
       childSession.dispose();
+    for (const sessionId of this._workerSessions.keys())
+      this._removeWorkerSession(sessionId);
     if (this._parentSession)
       this._parentSession._childSessions.delete(this);
     eventsHelper.removeEventListeners(this._eventListeners);
@@ -754,16 +796,21 @@ class FrameSession {
     session.on('Runtime.exceptionThrown', exception => this._page.addPageError(exceptionToError(exception.exceptionDetails), stackTraceToLocation(exception.exceptionDetails.stackTrace)));
   }
 
+  private _removeWorkerSession(sessionId: string): boolean {
+    const workerSession = this._workerSessions.get(sessionId);
+    if (!workerSession)
+      return false;
+    this._workerSessions.delete(sessionId);
+    this._crPage._networkManager.removeSession(workerSession);
+    workerSession.dispose();
+    this._page.removeWorker(sessionId);
+    return true;
+  }
+
   _onDetachedFromTarget(event: Protocol.Target.detachedFromTargetPayload) {
     // This might be a worker...
-    const workerSession = this._workerSessions.get(event.sessionId);
-    if (workerSession) {
-      this._workerSessions.delete(event.sessionId);
-      this._crPage._networkManager.removeSession(workerSession);
-      workerSession.dispose();
-      this._page.removeWorker(event.sessionId);
+    if (this._removeWorkerSession(event.sessionId))
       return;
-    }
 
     // ... or an oopif.
     const childFrameSession = this._crPage._sessions.get(event.targetId!);
@@ -840,6 +887,10 @@ class FrameSession {
           await this._client.send('Page.handleJavaScriptDialog', { accept, promptText });
         },
         event.defaultPrompt));
+  }
+
+  _onDialogClosed() {
+    this._page.browserContext.dialogManager.dialogWasClosedInBrowser(this._page);
   }
 
   _handleException(exceptionDetails: Protocol.Runtime.ExceptionDetails) {

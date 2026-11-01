@@ -80,6 +80,8 @@ export class WKPage implements PageDelegate {
   // until the popup page proxy arrives.
   private _nextWindowOpenPopupFeatures?: string[];
   private _screencastGeneration: number = 0;
+  // FIXME: remove this once WebKit is on wall clock.
+  private _screencastClockOffset = 0;
 
   constructor(browserContext: WKBrowserContext, pageProxySession: WKSession, opener: WKPage | null) {
     this._pageProxySession = pageProxySession;
@@ -390,6 +392,7 @@ export class WKPage implements PageDelegate {
       eventsHelper.addEventListener(this._session, 'Console.messageAdded', event => this._onConsoleMessage(event)),
       eventsHelper.addEventListener(this._session, 'Console.messageRepeatCountUpdated', event => this._onConsoleRepeatCountUpdated(event)),
       eventsHelper.addEventListener(this._pageProxySession, 'Dialog.javascriptDialogOpening', event => this._onDialog(event)),
+      eventsHelper.addEventListener(this._pageProxySession, 'Dialog.javascriptDialogClosed', () => this._onDialogClosed()),
       eventsHelper.addEventListener(this._session, 'Page.fileChooserOpened', event => this._onFileChooserOpened(event)),
       eventsHelper.addEventListener(this._session, 'Network.requestWillBeSent', e => this._onRequestWillBeSent(this._session, e)),
       eventsHelper.addEventListener(this._session, 'Network.requestIntercepted', e => this._onRequestIntercepted(this._session, e)),
@@ -625,6 +628,10 @@ export class WKPage implements PageDelegate {
         event.defaultPrompt));
   }
 
+  _onDialogClosed() {
+    this._page.browserContext.dialogManager.dialogWasClosedInBrowser(this._page);
+  }
+
   private async _onFileChooserOpened(event: {frameId: Protocol.Network.FrameId, element: Protocol.Runtime.RemoteObject}) {
     let handle;
     try {
@@ -752,8 +759,8 @@ export class WKPage implements PageDelegate {
   }
 
   async updateHttpCredentials() {
-    const credentials = this._browserContext._options.httpCredentials || { username: '', password: '', origin: '' };
-    await this._pageProxySession.send('Emulation.setAuthCredentials', { username: credentials.username, password: credentials.password, origin: credentials.origin });
+    const credentials = (this._browserContext._options.httpCredentials || []).map(c => ({ username: c.username, password: c.password, origin: c.origin }));
+    await this._pageProxySession.send('Emulation.setAuthCredentials', { credentials });
   }
 
   async updateFileChooserInterception() {
@@ -951,15 +958,12 @@ export class WKPage implements PageDelegate {
   private _onScreencastFrame(event: Protocol.Screencast.screencastFramePayload) {
     const generation = this._screencastGeneration;
     const buffer = Buffer.from(event.data, 'base64');
+    // event.timestamp is monotonic seconds, anchor it to the wall clock at the first frame.
+    if (!this._screencastClockOffset)
+      this._screencastClockOffset = Date.now() - event.timestamp * 1000;
     void this._page.screencast.onScreencastFrame({
       buffer,
-      frameSwapWallTime: event.timestamp
-        // timestamp is in seconds, we need to convert to milliseconds.
-        ? event.timestamp * 1000
-        // Fallback for Ubuntu 20.04 where WebKit is frozen on an older
-        // version that did not send timestamp.
-        // TODO: remove this fallback when Ubuntu 20.04 is EOL.
-        : Date.now(),
+      frameSwapWallTime: event.timestamp * 1000 + this._screencastClockOffset,
       viewportWidth: event.deviceWidth,
       viewportHeight: event.deviceHeight,
     }).then(() => {

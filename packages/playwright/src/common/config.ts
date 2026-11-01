@@ -21,7 +21,7 @@ import path from 'path';
 import { packageJSON } from '../package';
 import { getPackageJsonPath, mergeObjects, takeFirst } from '../util';
 
-import type { Config, Fixtures, Metadata, Project, ReporterDescription } from '../../types/test';
+import type { Config, Fixtures, Metadata, PlaywrightWorkerOptions, Project, ReporterDescription } from '../../types/test';
 import type { TestRunnerPluginRegistration } from '../plugins';
 import type { ConfigCLIOverrides } from './ipc';
 import type { Location } from '../../types/testReporter';
@@ -100,7 +100,7 @@ export class FullConfigInternal {
       preserveOutput: takeFirst(userConfig.preserveOutput, 'always'),
       projects: [],
       quiet: takeFirst(configCLIOverrides.quiet, userConfig.quiet, false),
-      reporter: takeFirst(configCLIOverrides.reporter, resolveReporters(userConfig.reporter, configDir), [[defaultReporter]]),
+      reporter: [...takeFirst(configCLIOverrides.reporter, resolveReporters(userConfig.reporter, configDir), [[defaultReporter]]), ...(configCLIOverrides.additionalReporters ?? [])],
       reportSlowTests: takeFirst(userConfig.reportSlowTests, { max: 5, threshold: 300_000 /* 5 minutes */ }),
       shard: takeFirst(configCLIOverrides.shard, userConfig.shard, null),
       tags: globalTags,
@@ -171,6 +171,12 @@ export class FullProjectInternal {
     const testDir = takeFirst(pathResolve(configDir, projectConfig.testDir), pathResolve(configDir, config.testDir), fullConfig.configDir);
     this.snapshotPathTemplate = takeFirst(projectConfig.snapshotPathTemplate, config.snapshotPathTemplate);
 
+    const use = mergeObjects(config.use, projectConfig.use, configCLIOverrides.use);
+    // `--trace <mode>` only forces the tracing mode, preserving other trace options from the config.
+    const configTrace = takeFirst((projectConfig.use as Partial<PlaywrightWorkerOptions> | undefined)?.trace, (config.use as Partial<PlaywrightWorkerOptions> | undefined)?.trace);
+    if (typeof configCLIOverrides.use?.trace === 'string' && typeof configTrace === 'object' && configTrace)
+      use.trace = { ...configTrace, mode: configCLIOverrides.use.trace };
+
     this.project = {
       grep: takeFirst(projectConfig.grep, config.grep, defaultGrep),
       grepInvert: takeFirst(projectConfig.grepInvert, config.grepInvert, null),
@@ -186,7 +192,7 @@ export class FullProjectInternal {
       testIgnore: takeFirst(projectConfig.testIgnore, config.testIgnore, []),
       testMatch: takeFirst(projectConfig.testMatch, config.testMatch, '**/*.@(spec|test).?(c|m)[jt]s?(x)'),
       timeout: takeFirst(configCLIOverrides.debug === 'inspector' ? 0 : undefined, configCLIOverrides.timeout, projectConfig.timeout, config.timeout, defaultTimeout),
-      use: mergeObjects(config.use, projectConfig.use, configCLIOverrides.use),
+      use,
       dependencies: projectConfig.dependencies || [],
       teardown: projectConfig.teardown,
       ignoreSnapshots: takeFirst(configCLIOverrides.ignoreSnapshots,  projectConfig.ignoreSnapshots, config.ignoreSnapshots, false),
@@ -283,7 +289,7 @@ export function toReporters(reporters: BuiltInReporter | ReporterDescription[] |
   return reporters;
 }
 
-export const builtInReporters = ['list', 'line', 'dot', 'json', 'junit', 'null', 'github', 'html', 'blob'] as const;
+export const builtInReporters = ['list', 'line', 'dot', 'json', 'junit', 'null', 'github', 'html', 'blob', 'perfetto'] as const;
 export type BuiltInReporter = typeof builtInReporters[number];
 
 export type ContextReuseMode = 'none' | 'when-possible';

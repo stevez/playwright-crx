@@ -34,7 +34,6 @@ import { DisposableDispatcher } from './disposableDispatcher';
 import { TracingDispatcher } from './tracingDispatcher';
 import { WebSocketRouteDispatcher } from './webSocketRouteDispatcher';
 import { WritableStreamDispatcher } from './writableStreamDispatcher';
-import { Recorder } from '../recorder';
 import { RecorderApp } from '../recorder/recorderApp';
 import { ElementHandleDispatcher } from './elementHandlerDispatcher';
 import { JSHandleDispatcher } from './jsHandleDispatcher';
@@ -57,6 +56,7 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
   _webSocketInterceptionPatterns: channels.BrowserContextSetWebSocketInterceptionPatternsParams['patterns'] = [];
   private _disposables: Disposable[] = [];
   private _dialogHandler: (dialog: Dialog) => boolean;
+  private _dialogClosedListener: (dialog: Dialog) => void;
   private _clockPaused = false;
   private _requestInterceptor: RouteHandler;
   private _interceptionUrlMatchers: URLMatch[] = [];
@@ -138,6 +138,13 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
       return true;
     };
     context.dialogManager.addDialogHandler(this._dialogHandler);
+    this._dialogClosedListener = dialog => {
+      if (!this._shouldDispatchEvent(dialog.page(), 'dialogClosed'))
+        return;
+      const dialogDispatcher = this.connection.existingDispatcher<DialogDispatcher>(dialog) || new DialogDispatcher(this, dialog);
+      this._dispatchEvent('dialogClosed', { dialog: dialogDispatcher });
+    };
+    context.dialogManager.addDialogClosedListener(this._dialogClosedListener);
 
     if (context._browser.options.name === 'chromium' && this._object._browser instanceof CRBrowser) {
       for (const serviceWorker of (context as CRBrowserContext).serviceWorkers())
@@ -336,7 +343,7 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
   }
 
   async storageState(params: channels.BrowserContextStorageStateParams, progress: Progress): Promise<channels.BrowserContextStorageStateResult> {
-    return await this._context.storageState(progress, params.indexedDB, params.credentials);
+    return await this._context.storageState(progress, params);
   }
 
   async setStorageState(params: channels.BrowserContextSetStorageStateParams, progress: Progress): Promise<void> {
@@ -348,13 +355,11 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
   }
 
   async enableRecorder(params: channels.BrowserContextEnableRecorderParams, progress: Progress): Promise<void> {
-    await progress.race(RecorderApp.show(this._context, params));
+    await progress.race(RecorderApp.enable(this._context, params));
   }
 
   async disableRecorder(params: channels.BrowserContextDisableRecorderParams, progress: Progress): Promise<void> {
-    const recorder = await progress.race(Recorder.existingForContext(this._context));
-    if (recorder)
-      await progress.race(recorder.setMode('none'));
+    await progress.race(RecorderApp.disable(this._context));
   }
 
   async exposeConsoleApi(params: channels.BrowserContextExposeConsoleApiParams, progress: Progress): Promise<void> {
@@ -444,6 +449,7 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
 
     // Cleanup properly and leave the page in a good state. Other clients may still connect and use it.
     this._context.dialogManager.removeDialogHandler(this._dialogHandler);
+    this._context.dialogManager.removeDialogClosedListener(this._dialogClosedListener);
     this._interceptionUrlMatchers = [];
     this._context.removeRequestInterceptor(this._requestInterceptor).catch(() => {});
     disposeAll(this._disposables).catch(() => {});

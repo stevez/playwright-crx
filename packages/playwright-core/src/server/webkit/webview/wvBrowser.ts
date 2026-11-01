@@ -21,7 +21,7 @@ import path from 'path';
 import ws from 'ws';
 import { debugLogger, RecentLogsCollector } from '@utils/debugLogger';
 import { removeFolders } from '@utils/fileUtils';
-import { httpHappyEyeballsAgent, httpsHappyEyeballsAgent } from '@utils/happyEyeballs';
+import { happyEyeballsOptions } from '@utils/network';
 import { headersArrayToObject } from '@isomorphic/headers';
 import { Browser } from '../../browser';
 import { helper } from '../../helper';
@@ -39,6 +39,7 @@ import type { InitScript, Page } from '../../page';
 import type { Protocol } from './protocol';
 import type { ProtocolRequest, ProtocolResponse } from '../../transport';
 import type * as types from '../../types';
+import type { HttpCredentials } from '@protocol/structs';
 import type * as channels from '../../channels';
 import type { Progress } from '../../progress';
 import type { ConnectOverCDPTransport } from '../../../../types/types.d.ts';
@@ -95,7 +96,7 @@ class DeferredWebSocketTransport implements ConnectOverCDPTransport {
       maxPayload: 256 * 1024 * 1024,
       headers: this._headers,
       followRedirects: true,
-      agent: (/^(https|wss):\/\//.test(url)) ? httpsHappyEyeballsAgent : httpHappyEyeballsAgent,
+      ...happyEyeballsOptions,
       perMessageDeflate,
       allowSynchronousEvents: false,
     });
@@ -411,6 +412,6 @@ export class WVBrowserContext extends BrowserContext {
   override async clearCache(): Promise<void> { throw new Error('Method not implemented.'); }
   override async doClose(reason: string | undefined): Promise<void | 'close-browser'> { throw new Error('Method not implemented.'); }
   override async cancelDownload(uuid: string) { throw new Error('Method not implemented.'); }
-  protected override async doSetHTTPCredentials(httpCredentials?: types.Credentials): Promise<void> { throw new Error('Method not implemented.'); }
+  protected override async doSetHTTPCredentials(httpCredentials?: HttpCredentials[]): Promise<void> { throw new Error('Method not implemented.'); }
   protected override async doUpdateOffline(): Promise<void> { throw new Error('Method not implemented.'); }
 }
