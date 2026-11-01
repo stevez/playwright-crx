@@ -341,7 +341,11 @@ export const methodMetainfo = new Map<string, MethodMetainfo>([
   ['Worker.disconnect', { title: 'Disconnect from worker', potentiallyClosesScope: true, }],
   ['Worker.evaluateExpression', { title: 'Evaluate', }],
   ['Worker.evaluateExpressionHandle', { title: 'Evaluate', }],
-  ['Worker.updateSubscription', { internal: true, }]
+  ['Worker.updateSubscription', { internal: true, }],
+  ['CrxApplication.attach', { internal: true, }],
+  ['CrxApplication.attachAll', { internal: true, }],
+  ['CrxApplication.detach', { internal: true, }],
+  ['CrxApplication.detachAll', { internal: true, }]
 ]);
 
 export function getMetainfo(metadata: { type: string, method: string }): MethodMetainfo | undefined {
