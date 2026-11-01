@@ -22,8 +22,8 @@ import sourcemaps from 'rollup-plugin-sourcemaps';
 export default defineConfig({
   resolve: {
     alias: {
-      'playwright-crx/test': path.resolve(__dirname, '../../lib/test.mjs'),
-      'playwright-crx': path.resolve(__dirname, '../../lib/index.mjs'),
+      'playwright-crx/test': path.resolve(__dirname, '../../lib/test.js'),
+      'playwright-crx': path.resolve(__dirname, '../../lib/index.js'),
     },
   },
   build: {

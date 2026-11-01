@@ -15,15 +15,16 @@
  */
 
 import type * as channels from '@protocol/channels';
-import { RecentLogsCollector } from 'playwright-core/lib/server/utils/debugLogger';
+import { RecentLogsCollector } from '@utils/debugLogger';
 import type { BrowserOptions, BrowserProcess } from 'playwright-core/lib/server/browser';
 import { CRBrowser, CRBrowserContext } from 'playwright-core/lib/server/chromium/crBrowser';
 import type { CRPage } from 'playwright-core/lib/server/chromium/crPage';
 import { helper } from 'playwright-core/lib/server/helper';
 import { SdkObject } from 'playwright-core/lib/server/instrumentation';
 import { Page } from 'playwright-core/lib/server/page';
+import { nullProgress } from 'playwright-core/lib/server/progress';
 import type { Playwright } from 'playwright-core/lib/server/playwright';
-import { assert } from 'playwright-core/lib/utils';
+import { assert } from '@isomorphic/assert';
 import type * as crxchannels from '../protocol/channels';
 import { CrxTransport } from './transport/crxTransport';
 import { BrowserContext } from 'playwright-core/lib/server/browserContext';
@@ -73,7 +74,7 @@ export class Crx extends SdkObject {
       };
       const browserOptions: BrowserOptions = {
         name: 'chromium',
-        isChromium: true,
+        browserType: 'chromium',
         headful: true,
         persistent: newContextOptions,
         browserProcess,
@@ -138,7 +139,7 @@ export class Crx extends SdkObject {
       // ensure we create and initialize the new context before the Target.attachedToTarget event is emitted
       assert(browserContextId);
       context = new CRBrowserContext(browser, browserContextId, options ?? {});
-      await context._initialize();
+      await context.initialize();
       browser._contexts.set(browserContextId, context);
     });
     context.on(BrowserContext.Events.Close, () => {
@@ -288,7 +289,7 @@ export class CrxApplication extends SdkObject {
       await Promise.all(this._crPages().map(crPage => options?.closePages ? crPage.closePage(false) : this._doDetach(crPage._targetId)));
     }
 
-    await this._context.close({});
+    await this._context.close(nullProgress, {});
   }
 
   async parseForTest(originCode: string) {

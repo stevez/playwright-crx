@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import fs from 'fs';
 import path from 'path';
 import type { Plugin } from 'vite';
 import { defineConfig } from 'vite';
@@ -29,18 +30,20 @@ export default defineConfig({
       // Note: javascript.ts CSP patch must stay in vendor (shim can't override internal function calls)
       // Stub pixelmatch (CJS module not used in CRX, causes ESM interop issues)
       [path.resolve(__dirname, './playwright/packages/playwright-core/src/third_party/pixelmatch')]: path.resolve(__dirname, './src/shims/pixelmatch'),
-      // Force expect to use CJS entry (ESM entry has no default export, breaks Vite interop)
-      'expect': path.resolve(__dirname, './playwright/packages/playwright/bundles/expect/node_modules/expect/build/index.js'),
 
       'playwright-core/lib': path.resolve(__dirname, './playwright/packages/playwright-core/src'),
       '@playwright/test/lib': path.resolve(__dirname, './playwright/packages/playwright/src'),
       'playwright-core': path.resolve(__dirname, './src/index'),
 
-      // for bundles, we use relative paths because different utilsBundleImpl exists in both playwright-core and playwright
-      './utilsBundleImpl': '../bundles/utils/src/utilsBundleImpl',
-      './zipBundleImpl': '../bundles/zip/src/zipBundleImpl',
-      './babelBundleImpl': '../../bundles/babel/src/babelBundleImpl',
-      './expectBundleImpl': '../../bundles/expect/src/expectBundleImpl',
+      // playwright 1.60+ splits shared code into packages/* and imports it through these aliases
+      '@isomorphic': path.resolve(__dirname, './playwright/packages/isomorphic'),
+      '@utils': path.resolve(__dirname, './playwright/packages/utils'),
+      '@injected': path.resolve(__dirname, './playwright/packages/injected/src'),
+      '@protocol': path.resolve(__dirname, './playwright/packages/protocol/src'),
+      '@recorder': path.resolve(__dirname, './playwright/packages/recorder/src'),
+      '@testIsomorphic': path.resolve(__dirname, './playwright/packages/playwright/src/isomorphic'),
+      '@trace': path.resolve(__dirname, './playwright/packages/trace/src'),
+      '@web': path.resolve(__dirname, './playwright/packages/web/src'),
 
       // shims
       '_url': path.resolve(__dirname, './node_modules/url'),
@@ -89,12 +92,26 @@ export default defineConfig({
     // Stub modules not usable in Chrome extension service workers
     {
       name: 'stub-unsupported',
+      enforce: 'pre',
       resolveId(source) {
-        if (source.includes('mcpBundleImpl'))
+        // playwright 1.60+ imports the MCP SDK directly instead of through mcpBundleImpl
+        if (source.includes('mcpBundleImpl') || source.startsWith('@modelcontextprotocol/sdk'))
           return path.resolve(__dirname, './src/shims/mcpBundleImpl.ts');
       },
       load(id) {
         const normalized = id.replace(/\\/g, '/');
+        // Stub package.ts (playwright 1.60+): it require()s package.json from disk at load time,
+        // which throws in a service worker. Only packageJSON.version is read, so inline it.
+        if (/playwright\/packages\/(playwright-core|playwright)\/src\/package\.ts$/.test(normalized)) {
+          const { version } = JSON.parse(fs.readFileSync(path.join(path.dirname(id), '..', 'package.json'), 'utf8'));
+          return `export const packageRoot = ''; export const packageJSON = { version: ${JSON.stringify(version)} }; export const binPath = 'bin'; export function libPath(...parts) { return ['lib', ...parts].join('/'); }`;
+        }
+        // Stub browser.bind() servers (pipe / WebSocket, unusable in an extension). Importing the real ones
+        // from server/browser.ts pulls in all of server/ and makes CRBrowser/BidiBrowser load before Browser.
+        if (/playwright-core\/src\/remote\/playwright(PipeServer|WebSocketServer)\.ts$/.test(normalized)) {
+          const name = normalized.includes('PipeServer') ? 'PlaywrightPipeServer' : 'PlaywrightWebSocketServer';
+          return `export class ${name} { constructor() { throw new Error("browser.bind() is not available in CRX"); } }`;
+        }
         // Stub pixelmatch (CJS module not used in CRX, alias doesn't resolve on cold cache)
         if (normalized.includes('third_party/pixelmatch'))
           return 'export default function() { throw new Error("pixelmatch not available in CRX"); }';
@@ -114,6 +131,13 @@ export default defineConfig({
         if (normalized.includes('playwright/packages/playwright/src/matchers/toMatchAriaSnapshot'))
           return 'export async function toMatchAriaSnapshot() { throw new Error("toMatchAriaSnapshot stub - should be overridden by crxExpect"); }';
       },
+      transform(code, id) {
+        const normalized = id.replace(/\\/g, '/');
+        // playwright 1.60+ loads browsers.json through a dynamic path, which the bundler can't follow
+        // and which throws at service worker startup; restore the static require from 1.59.
+        if (normalized.endsWith('playwright-core/src/server/registry/index.ts'))
+          return code.replace(`require(path.join(packageRoot, 'browsers.json'))`, `require('../../../browsers.json')`);
+      },
     } as Plugin<any>,
     replace({
       'preventAssignment': true,
@@ -123,6 +147,8 @@ export default defineConfig({
           'src',
           'playwright/packages/playwright-core/src',
           'playwright/packages/playwright/src',
+          'playwright/packages/utils',
+          'playwright/packages/isomorphic',
         ].some(p => relativePath.startsWith(p)) ? JSON.stringify(relativePath) : '__dirname';
       },
     }) as Plugin<any>,
@@ -158,9 +184,9 @@ export default defineConfig({
       ],
       include: [
         path.resolve(__dirname, './playwright/packages/playwright/src/**/*'),
-        path.resolve(__dirname, './playwright/packages/playwright/bundles/*/src/**/*'),
         path.resolve(__dirname, './playwright/packages/playwright-core/src/**/*'),
-        path.resolve(__dirname, './playwright/packages/playwright-core/bundles/*/src/**/*'),
+        path.resolve(__dirname, './playwright/packages/utils/**/*'),
+        path.resolve(__dirname, './playwright/packages/isomorphic/**/*'),
         /node_modules/,
       ],
     }

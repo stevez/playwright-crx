@@ -27,7 +27,7 @@ import { CrxPlaywrightDispatcher } from './server/dispatchers/crxPlaywrightDispa
 import { PageBinding } from 'playwright-core/lib/server/page';
 
 import { wrapClientApis } from './client/crxZone';
-import { nodePlatform } from 'playwright-core/lib/utils';
+import { nodePlatform } from '@utils/index';
 
 export { debug as _debug } from 'debug';
 export { setUnderTest as _setUnderTest, isUnderTest as _isUnderTest } from './shims/debug';
@@ -37,7 +37,9 @@ PageBinding.kBindingName = '__crx__binding__';
 
 const playwright = new CrxPlaywright();
 
-const clientConnection = new CrxConnection(nodePlatform);
+// playwright 1.60+: nodePlatform is a factory taking the playwright-core directory, used to hide
+// internal frames from stack traces. Everything is bundled here, so pass a prefix that matches no frame.
+const clientConnection = new CrxConnection(nodePlatform('playwright-core'));
 const dispatcherConnection = new DispatcherConnection(true /* local */);
 
 // Dispatch synchronously at first.
