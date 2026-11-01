@@ -65,6 +65,7 @@ export default defineConfig({
       'http': path.resolve(__dirname, './node_modules/stream-http'),
       'http2': path.resolve(__dirname, './node_modules/stream-http'),
       'https': path.resolve(__dirname, './node_modules/https-browserify'),
+      'inspector': path.resolve(__dirname, './src/shims/inspector'),
       'module': path.resolve(__dirname, './src/shims/module'),
       'net': path.resolve(__dirname, './src/shims/net'),
       'os': path.resolve(__dirname, './node_modules/os-browserify/browser'),
@@ -97,6 +98,12 @@ export default defineConfig({
         // playwright 1.60+ imports the MCP SDK directly instead of through mcpBundleImpl
         if (source.includes('mcpBundleImpl') || source.startsWith('@modelcontextprotocol/sdk'))
           return path.resolve(__dirname, './src/shims/mcpBundleImpl.ts');
+        // playwright 1.62+ upgraded these to versions that import Node-only APIs (node:util, powershell-utils).
+        // open launches a desktop browser and commander parses CLI args; neither runs in an extension.
+        // proxy-agent-negotiate (Kerberos proxy auth, new in https-proxy-agent 9) lazily import()s kerberos,
+        // and that dynamic import() keeps the service worker from restarting.
+        if (source === 'open' || source === 'commander' || source === 'proxy-agent-negotiate')
+          return `\0crx-stub:${source}`;
       },
       load(id) {
         const normalized = id.replace(/\\/g, '/');
@@ -112,6 +119,12 @@ export default defineConfig({
           const name = normalized.includes('PipeServer') ? 'PlaywrightPipeServer' : 'PlaywrightWebSocketServer';
           return `export class ${name} { constructor() { throw new Error("browser.bind() is not available in CRX"); } }`;
         }
+        if (id === '\0crx-stub:open')
+          return 'export default async function open() { throw new Error("open() is not available in CRX"); }';
+        if (id === '\0crx-stub:proxy-agent-negotiate')
+          return 'export function createNegotiateAuth() { throw new Error("Negotiate proxy auth is not available in CRX"); }';
+        if (id === '\0crx-stub:commander')
+          return 'export class Command { constructor() { throw new Error("commander is not available in CRX"); } } export const program = {}; export class Option {}';
         // Stub pixelmatch (CJS module not used in CRX, alias doesn't resolve on cold cache)
         if (normalized.includes('third_party/pixelmatch'))
           return 'export default function() { throw new Error("pixelmatch not available in CRX"); }';

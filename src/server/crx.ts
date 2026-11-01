@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type * as channels from '@protocol/channels';
+import type * as channels from 'playwright-core/lib/server/channels';
 import { RecentLogsCollector } from '@utils/debugLogger';
 import type { BrowserOptions, BrowserProcess } from 'playwright-core/lib/server/browser';
 import { CRBrowser, CRBrowserContext } from 'playwright-core/lib/server/chromium/crBrowser';
@@ -29,12 +29,12 @@ import type * as crxchannels from '../protocol/channels';
 import { CrxTransport } from './transport/crxTransport';
 import { BrowserContext } from 'playwright-core/lib/server/browserContext';
 import { createTab } from './utils';
-import { deviceDescriptors } from 'playwright-core/lib/server/deviceDescriptors';
+import { deviceDescriptors } from '@isomorphic/deviceDescriptors';
 import type { DeviceDescriptor } from 'playwright-core/lib/server/types';
 import { parse } from './recorder/parser';
-import { generateCode } from 'playwright-core/lib/server/codegen/language';
-import { languageSet } from 'playwright-core/lib/server/codegen/languages';
-import type { LanguageGeneratorOptions } from 'playwright-core/lib/server/codegen/types';
+import { generateCode } from '@isomorphic/codegen/language';
+import { languageSet } from '@isomorphic/codegen/languages';
+import type { LanguageGeneratorOptions } from '@isomorphic/codegen/types';
 
 const kTabIdSymbol = Symbol('kTabIdSymbol');
 

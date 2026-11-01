@@ -136,7 +136,7 @@ it('should include websocket handshake headers and status', async ({ contextFact
   expect(responseHeaderNames).toContain('sec-websocket-accept');
 });
 
-async function testWebSocketMessages(contextFactory, server, testInfo, content) {
+async function testWebSocketMessages(contextFactory, server, testInfo, content, channel?) {
   const incomingText =   ['x'.repeat(125),             'x'.repeat(126),             'x'.repeat(2 ** 16)];
   const incomingBinary = [(new Array(125)).fill(0x01), (new Array(126)).fill(0x01), (new Array(2 ** 16)).fill(0x01)];
   const outgoingText =   ['y'.repeat(125),             'y'.repeat(126),             'y'.repeat(2 ** 16)];
@@ -170,10 +170,10 @@ async function testWebSocketMessages(contextFactory, server, testInfo, content) 
         return;
       for (const text of outgoingText) {
         ws.send(text);
-        await new Promise(resolve => setTimeout(resolve, delayMs));
+        await new Promise(resolve => window.builtins.setTimeout(resolve, delayMs));
       }
       for (const binary of outgoingBinary) {
-        await new Promise(resolve => setTimeout(resolve, delayMs));
+        await new Promise(resolve => window.builtins.setTimeout(resolve, delayMs));
         ws.send(new Uint8Array(binary));
       }
       ws.close();
@@ -215,24 +215,28 @@ async function testWebSocketMessages(contextFactory, server, testInfo, content) 
     ...outgoingText.map(m => ({ type: 'send', opcode: 1, data: m })),
     ...outgoingBinary.map(m => ({ type: 'send', opcode: 2, data: m })),
   ]);
-  for (const m of messages) {
-    expect(m.time).toBeGreaterThanOrEqual(beforeMs - 1);
-    expect(m.time).toBeLessThanOrEqual(afterMs + 1);
+  // The WSL VM clock drifts relative to the Windows host clock, so the browser-reported
+  // message times cannot be compared against the host wall clock.
+  if (channel !== 'webkit-wsl') {
+    for (const m of messages) {
+      expect(m.time).toBeGreaterThanOrEqual(beforeMs - 1);
+      expect(m.time).toBeLessThanOrEqual(afterMs + 1);
+    }
   }
   expect(messages[0].time).toBeLessThanOrEqual(messages[1].time);
   expect(wsEntry.time).toBeGreaterThanOrEqual(messages[messages.length - 1].time - messages[0].time);
   expect(wsEntry.time).toBeGreaterThanOrEqual(delayMs * (incomingCount + outgoingCount));
 }
 
-it('should embed websocket messages', async ({ contextFactory, server }, testInfo) => {
-  await testWebSocketMessages(contextFactory, server, testInfo, 'embed');
+it('should embed websocket messages', async ({ contextFactory, server, channel }, testInfo) => {
+  await testWebSocketMessages(contextFactory, server, testInfo, 'embed', channel);
 });
 
-it('should attach websocket messages', async ({ contextFactory, server }, testInfo) => {
-  await testWebSocketMessages(contextFactory, server, testInfo, 'attach');
+it('should attach websocket messages', async ({ contextFactory, server, channel }, testInfo) => {
+  await testWebSocketMessages(contextFactory, server, testInfo, 'attach', channel);
 });
 
-it('should attach websocket messages for a still open websocket after stopping', async ({ contextFactory, server }, testInfo) => {
+it('should attach websocket messages for a still open websocket after stopping', async ({ contextFactory, server, channel }, testInfo) => {
   const incomingText = 'incoming';
   const incomingBinary = [0x01, 0x02, 0x03, 0x04];
   const outgoingText = 'outgoing';
@@ -248,24 +252,24 @@ it('should attach websocket messages for a still open websocket after stopping',
 
   const beforeMs = Date.now();
   const wsUrl = `ws://${server.HOST}/ws`;
-  const [ws] = await Promise.all([
-    page.waitForEvent('websocket'),
-    page.evaluate(({ url, outgoingText, outgoingBinary }) => {
-      const ws = new WebSocket(url);
-      (window as any).ws = ws;
-      let count = 0;
-      ws.addEventListener('open', () => ws.send(outgoingText));
-      ws.addEventListener('message', () => {
-        if (++count < 2)
-          ws.send(new Uint8Array(outgoingBinary));
-      });
-    }, { url: wsUrl, outgoingText, outgoingBinary }),
-  ]);
+  const wsPromise = page.waitForEvent('websocket');
+  const evaluatePromise = page.evaluate(({ url, outgoingText, outgoingBinary }) => {
+    const ws = new WebSocket(url);
+    (window as any).ws = ws;
+    let count = 0;
+    ws.addEventListener('open', () => ws.send(outgoingText));
+    ws.addEventListener('message', () => {
+      if (++count < 2)
+        ws.send(new Uint8Array(outgoingBinary));
+    });
+  }, { url: wsUrl, outgoingText, outgoingBinary });
+  const ws = await wsPromise;
   // Wait for all frames so the HAR tracer has observed them before the context is closed.
   await ws.waitForEvent('framesent');
   await ws.waitForEvent('framereceived');
   await ws.waitForEvent('framesent');
   await ws.waitForEvent('framereceived');
+  await evaluatePromise;
   const afterMs = Date.now();
 
   // Do not close the WebSocket on the page side. Closing the context should still flush messages.
@@ -289,9 +293,13 @@ it('should attach websocket messages for a still open websocket after stopping',
     { type: 'send',    opcode: 2, data: outgoingBinary },
     { type: 'receive', opcode: 2, data: incomingBinary },
   ]);
-  for (const m of messages) {
-    expect(m.time).toBeGreaterThanOrEqual(beforeMs - 1);
-    expect(m.time).toBeLessThanOrEqual(afterMs + 1);
+  // The WSL VM clock drifts relative to the Windows host clock, so the browser-reported
+  // message times cannot be compared against the host wall clock.
+  if (channel !== 'webkit-wsl') {
+    for (const m of messages) {
+      expect(m.time).toBeGreaterThanOrEqual(beforeMs - 1);
+      expect(m.time).toBeLessThanOrEqual(afterMs + 1);
+    }
   }
   expect(messages[0].time).toBeLessThanOrEqual(messages[1].time);
   expect(wsEntry.time).toBeGreaterThanOrEqual(messages[messages.length - 1].time - messages[0].time);
@@ -301,7 +309,8 @@ it('should omit websocket messages', async ({ contextFactory, server }, testInfo
   await testWebSocketMessages(contextFactory, server, testInfo, 'omit');
 });
 
-it('should record websocket connection failure', async ({ contextFactory, server }, testInfo) => {
+it('should record websocket connection failure', async ({ contextFactory, server, channel }, testInfo) => {
+  it.skip(channel === 'webkit-wsl', 'Connection to an unbound localhost port from WSL is not refused in mirrored networking mode');
   // Reserve a port and immediately release it so the WebSocket connect attempt is refused.
   const portReservation = net.createServer();
   await new Promise<void>(resolve => portReservation.listen(0, '127.0.0.1', () => resolve()));
@@ -467,7 +476,9 @@ it('should still allow routeWebSocket to modify messages when capturing HAR', as
   ]);
 });
 
-it('should respect PLAYWRIGHT_HAR_NO_WEBSOCKET_FRAMES', async ({ contextFactory, server }, testInfo) => {
+it('should respect PLAYWRIGHT_HAR_NO_WEBSOCKET_FRAMES', async ({ contextFactory, server, mode }, testInfo) => {
+  it.skip(mode !== 'default', 'no env vars in non-default mode');
+
   process.env.PLAYWRIGHT_HAR_NO_WEBSOCKET_FRAMES = '1';
   server.onceWebSocketConnection(ws => {
     ws.on('message', () => ws.close());

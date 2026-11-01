@@ -48,11 +48,11 @@ import type { APIRequestContext } from '../../fetch';
 import type { HarTracerDelegate } from '../../har/harTracer';
 import type { CallMetadata, InstrumentationListener } from '../../instrumentation';
 import type { PageError } from '../../page';
-import type { RecordHarOptions, StackFrame, TracingTracingStopChunkParams } from '@protocol/channels';
+import type { RecordHarOptions, StackFrame, TracingTracingStopChunkParams } from '../../channels';
 import type * as har from '@trace/har';
 import type { FrameSnapshot } from '@trace/snapshot';
 import type * as trace from '@trace/trace';
-import type { Progress } from '@protocol/progress';
+import type { Progress } from '../../progress';
 import type * as types from '../../types';
 import type { Screencast, ScreencastClient } from '../../screencast';
 
@@ -738,7 +738,7 @@ function createBeforeActionTraceEvent(metadata: CallMetadata, parentId?: string)
     title: metadata.title,
     class: metadata.type,
     method: metadata.method,
-    params: metadata.params,
+    params: metadata.timeout ? { ...metadata.params, timeout: metadata.timeout } : metadata.params,
     stepId: metadata.stepId,
     pageId: metadata.pageId,
   };

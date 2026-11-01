@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-import type { Action, ActionInContext, AssertAction, AssertCheckedAction } from '@recorder/actions';
+import type { Action, ActionInContext, AssertAction, AssertCheckedAction } from '@isomorphic/codegen/actions';
 import * as acorn from 'acorn';
 import type { AwaitExpression, Expression, ExpressionStatement } from 'acorn';
 import * as walk from 'acorn-walk';
-import { fromKeyboardModifiers } from 'playwright-core/lib/server/codegen/language';
+import { fromKeyboardModifiers } from '@isomorphic/codegen/language';
 import type { BrowserContextOptions, SmartKeyboardModifier } from 'playwright-core/lib/server/types';
 import { locatorOrSelectorAsSelector } from '@isomorphic/locatorParser';
-import type { CallMetadata } from '@protocol/callMetadata';
+import type { CallMetadata } from 'playwright-core/lib/server/instrumentation';
 
 export type Location = CallMetadata['location'];
 export type ActionInContextWithLocation = ActionInContext & { location?: Location };
@@ -295,7 +295,7 @@ export function parse(code: string, file: string = 'playwright-test') {
 
     return {
       action,
-      frame: { pageAlias: pageAlias ?? 'page', framePath: [] },
+      pageGuid: pageAlias ?? 'page',
       startTime: 0,
       location: { file, ...indexToLineColumn(code, expr.start) },
     };
@@ -404,7 +404,7 @@ export function parse(code: string, file: string = 'playwright-test') {
       // it has page fixture, let's push a openPage action
       actions.push({
         action: { name: 'openPage', signals: [], url: '' },
-        frame: { pageAlias: 'page', framePath: [] },
+        pageGuid: 'page',
         location: { file, ...indexToLineColumn(code, fn.start) },
         startTime: 0
       });
