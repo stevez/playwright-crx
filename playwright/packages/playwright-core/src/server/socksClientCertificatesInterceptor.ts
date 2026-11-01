@@ -108,7 +108,8 @@ class SocksProxyConnection {
     this.uid = uid;
     this.host = host;
     this.port = port;
-    this._serverCloseEventListener = () => {
+    this._serverCloseEventListener = async () => {
+      await this._brorwserDecrypted?.catch(() => {});
       this._browserEncrypted.destroy();
     };
     this._browserEncrypted = new stream.Duplex({
@@ -313,10 +314,10 @@ export class ClientCertificatesProxy {
   }
 
   _getProxyAgent(host: string, port: number) {
-    const proxyFromOptions = createProxyAgent(this._proxy);
-    if (proxyFromOptions)
-      return proxyFromOptions;
-    const proxyFromEnv = getProxyForUrl(`https://${host}:${port}`);
+    const url = new URL(`https://${net.isIPv6(host) ? `[${host}]` : host}:${port}`);
+    if (this._proxy)
+      return createProxyAgent(this._proxy, url);
+    const proxyFromEnv = getProxyForUrl(url.href);
     if (proxyFromEnv)
       return createProxyAgent({ server: proxyFromEnv });
   }

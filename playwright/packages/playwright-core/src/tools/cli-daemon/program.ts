@@ -29,6 +29,7 @@ import * as configUtils from '../mcp/config';
 import { createClientInfo } from '../cli-client/registry';
 import { installSkills } from '../utils/installSkills';
 import { registry as browserRegistry } from '../../server/registry/index';
+import { processExit } from '../../bootstrap';
 import type { Command } from 'commander';
 
 export function decorateProgram(program: Command) {
@@ -43,6 +44,7 @@ export function decorateProgram(program: Command) {
       .option('--config <path>', 'path to the config file; by default uses .playwright/cli.config.json in the project directory and ~/.playwright/cli.config.json as global config')
       .option('--cdp <url>', 'connect to an existing browser via CDP endpoint URL')
       .option('--endpoint <endpoint>', 'attach to a running Playwright browser endpoint')
+      .option('--idle-timeout <timeout>', 'shut the session down after this many milliseconds without a command, defaults to one hour for headless browsers', configUtils.numberParser)
       .option('--init-workspace', 'initialize workspace')
       .option('--init-skills <value>', 'install skills for the given agent type ("claude" or "agents")')
       .option('--init-skills-global <value>', 'install skills for the given agent type ("claude" or "agents") into the home directory')
@@ -62,14 +64,12 @@ export function decorateProgram(program: Command) {
         };
 
         try {
-          const { browser, browserInfo, canBind, ownership } = await createBrowserWithInfo(mcpConfig, mcpClientInfo, options);
-          if (canBind)
-            await browser.bind(sessionName, { workspaceDir: clientInfo.workspaceDir });
+          const { browser, browserInfo, ownership, idleTimer } = await createBrowserWithInfo(mcpConfig, mcpClientInfo, options, { title: sessionName, workspaceDir: clientInfo.workspaceDir });
           const browserContext = mcpConfig.browser.isolated ? await browser.newContext(mcpConfig.browser.contextOptions) : browser.contexts()[0];
           if (!browserContext)
             throw new Error('Error: unable to connect to a browser that does not have any contexts');
           const persistent = options.persistent || options.profile || mcpConfig.browser.userDataDir ? true : undefined;
-          const socketPath = await startCliDaemonServer(sessionName, browserContext, browserInfo, mcpConfig, clientInfo, mcpClientInfo, { persistent, exitOnClose: true, ownership });
+          const socketPath = await startCliDaemonServer(sessionName, browserContext, browserInfo, mcpConfig, clientInfo, mcpClientInfo, { persistent, exitOnClose: true, ownership, idleTimer });
           console.log(`Daemon listening on ${socketPath}\n`);
         } catch (error) {
           console.log(error);
@@ -103,8 +103,8 @@ export async function initWorkspace(initSkills: string | undefined, initSkillsGl
       await installSkills(['playwright-cli'], target, { global: globalSkills });
     } catch (error) {
       console.error('❌', error instanceof Error ? error.message : error);
-      // eslint-disable-next-line no-restricted-properties
-      process.exit(1);
+      // eslint-disable-next-line no-restricted-syntax
+      processExit(1);
     }
   }
 

@@ -299,6 +299,9 @@ When all steps combined have not finished during the specified [`option: timeout
 
 Gets the full HTML contents of the frame, including the doctype.
 
+### option: Frame.content.includeShadow = %%-content-option-include-shadow-%%
+* since: v1.64
+
 ## async method: Frame.dblclick
 * since: v1.8
 * discouraged: Use locator-based [`method: Locator.dblclick`] instead. Read more about [locators](../locators.md).
@@ -2415,3 +2418,9 @@ await frame.WaitForURLAsync("**/target.html");
 
 ### option: Frame.waitForURL.waitUntil = %%-navigation-wait-until-%%
 * since: v1.11
+
+## property: Frame.webmcp
+* since: v1.64
+- type: <[WebMCP]>
+
+Tools that the frame registers through the experimental [WebMCP](https://webmachinelearning.github.io/webmcp/) browser API. See [WebMCP] for details.

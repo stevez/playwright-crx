@@ -26,10 +26,12 @@ import { LogFile } from './logFile';
 import { ModalState } from './tool';
 import { handleDialog } from './dialogs';
 import { uploadFile } from './files';
+import { listWebMCPTools } from './webmcp';
 
 import type { AriaSnapshotJSON } from '@isomorphic/ariaSnapshot';
 import type { Disposable } from '@isomorphic/disposable';
 import type { Context, ContextConfig } from './context';
+import type { WebMCPListing } from './webmcp';
 import type * as playwright from '../../..';
 
 const TabEvents = {
@@ -80,6 +82,8 @@ export type TabHeader = {
   crashed: boolean;
   mainDocumentStatus?: { status: number, statusText: string };
   console: { total: number, warnings: number, errors: number };
+  webmcpToolCount?: number;
+  isolatedContext?: string;
 };
 
 type TabSnapshot = {
@@ -93,6 +97,7 @@ type TabSnapshot = {
 export class Tab extends EventEmitter<TabEventsInterface> {
   readonly context: Context;
   readonly page: playwright.Page;
+  readonly isolatedContext: string | undefined;
   private _lastHeader: TabHeader = { title: 'about:blank', url: 'about:blank', current: false, crashed: false, console: { total: 0, warnings: 0, errors: 0 } };
   private _downloads: Download[] = [];
   private _requests: playwright.Request[] = [];
@@ -102,16 +107,18 @@ export class Tab extends EventEmitter<TabEventsInterface> {
   private _modalStates: ModalState[] = [];
   private _initializedPromise: Promise<void>;
   private _recentEventEntries: EventEntry[] = [];
+  private _webmcpTools: WebMCPListing | undefined;
   private _consoleLog: LogFile;
   private _disposables: Disposable[];
   readonly actionTimeoutOptions: { timeout?: number; };
   readonly navigationTimeoutOptions: { timeout?: number; };
   readonly expectTimeoutOptions: { timeout?: number; };
 
-  constructor(context: Context, page: playwright.Page, onPageClose: (tab: Tab) => void) {
+  constructor(context: Context, page: playwright.Page, isolatedContext: string | undefined, onPageClose: (tab: Tab) => void) {
     super();
     this.context = context;
     this.page = page;
+    this.isolatedContext = isolatedContext;
     this._onPageClose = onPageClose;
     const p = page;
     this._disposables = [
@@ -133,7 +140,7 @@ export class Tab extends EventEmitter<TabEventsInterface> {
       eventsHelper.addEventListener(p, 'dialog', dialog => this._dialogShown(dialog)),
       eventsHelper.addEventListener(p, 'dialogclosed', dialog => this._dialogClosed(dialog)),
       eventsHelper.addEventListener(p, 'download', download => {
-        void this._downloadStarted(download);
+        this._downloadStarted(download).catch(e => debug('pw:tools:error')(e));
       }),
     ];
     // eslint-disable-next-line no-restricted-syntax
@@ -232,6 +239,7 @@ export class Tab extends EventEmitter<TabEventsInterface> {
   }
 
   private _clearCollectedArtifacts() {
+    this._webmcpTools = undefined;
     this._downloads.length = 0;
     this._requests.length = 0;
     this._mainDocumentStatus = undefined;
@@ -304,6 +312,8 @@ export class Tab extends EventEmitter<TabEventsInterface> {
       crashed: this.crashed,
       mainDocumentStatus: this._mainDocumentStatus,
       console: consoleCounts,
+      webmcpToolCount: this._webmcpTools?.tools.length,
+      isolatedContext: this.isolatedContext,
     };
 
     if (!tabHeaderEquals(this._lastHeader, newHeader)) {
@@ -342,8 +352,11 @@ export class Tab extends EventEmitter<TabEventsInterface> {
     this._clearCollectedArtifacts();
 
     const { promise: downloadEvent, abort: abortDownloadEvent } = eventWaiter<playwright.Download>(this.page, 'download', 3000);
+    let modalStates: ModalState[];
     try {
-      await this.page.goto(url, { waitUntil: 'domcontentloaded', ...this.navigationTimeoutOptions });
+      modalStates = await this._raceAgainstModalStates(async () => {
+        await this.page.goto(url, { waitUntil: 'domcontentloaded', ...this.navigationTimeoutOptions });
+      });
       abortDownloadEvent();
     } catch (_e: unknown) {
       const e = _e as Error;
@@ -358,9 +371,18 @@ export class Tab extends EventEmitter<TabEventsInterface> {
       await new Promise(resolve => setTimeout(resolve, 500));
       return;
     }
+    if (modalStates.length)
+      return;
 
     // Cap load event to 5 seconds, the page is operational at this point.
     await this.waitForLoadState('load', { timeout: 5000 });
+  }
+
+  async reload() {
+    await this._initializedPromise;
+    await this._raceAgainstModalStates(async () => {
+      await this.page.reload(this.navigationTimeoutOptions);
+    });
   }
 
   async consoleMessageCount(): Promise<{ total: number, errors: number, warnings: number }> {
@@ -413,8 +435,10 @@ export class Tab extends EventEmitter<TabEventsInterface> {
     this._requests.length = 0;
   }
 
-  async captureSnapshot(root: playwright.Locator | undefined, depth: number | undefined, boxes: boolean | undefined, relativeTo: string | undefined, ariaFormat: 'none' | 'text' | 'json' = 'text'): Promise<TabSnapshot> {
+  async captureSnapshot(root: playwright.Locator | undefined, depth: number | undefined, boxes: boolean | undefined, relativeTo: string | undefined, ariaFormat: 'none' | 'text' | 'json' = 'text', updateWebMCP: boolean = false): Promise<TabSnapshot> {
     await this._initializedPromise;
+    // Kick the WebMCP refresh off next to the aria snapshot so its latency hides behind the tree walk.
+    const webmcpPromise = updateWebMCP ? this.updateWebMCPTools() : undefined;
     let tabSnapshot: TabSnapshot | undefined;
     let modalStates: ModalState[] = [];
     if (ariaFormat !== 'none') {
@@ -456,11 +480,32 @@ export class Tab extends EventEmitter<TabEventsInterface> {
       this._recentEventEntries = [];
     }
 
-    return tabSnapshot ?? {
+    const result = tabSnapshot ?? {
       ariaSnapshot: '',
       modalStates,
       events: [],
     };
+    if (webmcpPromise)
+      await this._raceAgainstModalStates(() => webmcpPromise);
+    return result;
+  }
+
+  webmcpTools(): WebMCPListing | undefined {
+    return this._webmcpTools;
+  }
+
+  async updateWebMCPTools(): Promise<void> {
+    if (this.context.config.webmcp === false)
+      return;
+    if (this._javaScriptBlocked())
+      return;
+    const listing = await listWebMCPTools(this);
+    // A dialog that opened while probing produces the same empty listing as a page
+    // with no tools, so keep what we had rather than clobbering the cache with it.
+    if (this._javaScriptBlocked())
+      return;
+    this._webmcpTools = listing;
+    this.context.maybeNotifyWebMCPToolsChanged();
   }
 
   private _javaScriptBlocked(): boolean {
@@ -475,13 +520,11 @@ export class Tab extends EventEmitter<TabEventsInterface> {
     const listener = (modalState: ModalState) => promise.resolve([modalState]);
     this.once(TabEvents.modalState, listener);
 
-    return await Promise.race([
-      action().then(() => {
-        this.off(TabEvents.modalState, listener);
-        return [];
-      }),
-      promise,
-    ]);
+    try {
+      return await Promise.race([action().then(() => []), promise]);
+    } finally {
+      this.off(TabEvents.modalState, listener);
+    }
   }
 
   async waitForCompletion(callback: () => Promise<void>) {
@@ -506,7 +549,7 @@ export class Tab extends EventEmitter<TabEventsInterface> {
         return { locator: this.page.locator(selector), resolved: asLocator('javascript', selector), selector };
       } else {
         try {
-          let locator = this.page.locator(`aria-ref=${param.target}`);
+          let locator = this.page.getByRef(param.target);
           if (param.element)
             locator = locator.describe(param.element);
           const resolved = await locator.normalize();
@@ -632,5 +675,7 @@ function tabHeaderEquals(a: TabHeader, b: TabHeader): boolean {
       a.mainDocumentStatus?.statusText === b.mainDocumentStatus?.statusText &&
       a.console.errors === b.console.errors &&
       a.console.warnings === b.console.warnings &&
-      a.console.total === b.console.total;
+      a.console.total === b.console.total &&
+      a.webmcpToolCount === b.webmcpToolCount &&
+      a.isolatedContext === b.isolatedContext;
 }

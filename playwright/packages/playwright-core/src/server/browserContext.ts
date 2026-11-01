@@ -62,7 +62,6 @@ const BrowserContextEvent = {
   RequestFulfilled: 'requestfulfilled',
   RequestContinued: 'requestcontinued',
   BeforeClose: 'beforeclose',
-  RecorderEvent: 'recorderevent',
   PageClosed: 'pageclosed',
   InternalFrameNavigatedToNewDocument: 'internalframenavigatedtonewdocument',
   FrameAttached: 'frameattached',
@@ -82,7 +81,6 @@ export type BrowserContextEventMap = {
   [BrowserContextEvent.RequestFulfilled]: [request: network.Request];
   [BrowserContextEvent.RequestContinued]: [request: network.Request];
   [BrowserContextEvent.BeforeClose]: [];
-  [BrowserContextEvent.RecorderEvent]: [event: { event: 'actionAdded' | 'actionUpdated' | 'signalAdded', data: any, page: Page, code: string }];
   [BrowserContextEvent.PageClosed]: [page: Page];
   [BrowserContextEvent.InternalFrameNavigatedToNewDocument]: [frame: frames.Frame];
   [BrowserContextEvent.FrameAttached]: [frame: frames.Frame];
@@ -159,21 +157,21 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
       this._debugger.setPauseAt();
       this._debugger.on(Debugger.Events.PausedStateChanged, () => {
         if (this._debugger.isPaused())
-          RecorderApp.enable(this, {}).catch(() => {});
+          RecorderApp.show(this, {}).catch(() => {});
       });
     }
 
     // When PWDEBUG=1, show inspector for each context.
     if (debugMode() === 'inspector') {
       this._debugger.setPauseAt({ next: true });
-      await RecorderApp.enable(this, { pauseOnNextStatement: true });
+      await RecorderApp.show(this, { pauseOnNextStatement: true });
     }
 
     if (debugMode() === 'console')
       await this._exposeConsoleApi();
 
     if (this._options.serviceWorkers === 'block')
-      await this.addInitScript(nullProgress, `\nif (navigator.serviceWorker) navigator.serviceWorker.register = async () => { console.warn('Service Worker registration blocked by Playwright'); };\n`);
+      await this.addInitScript(nullProgress, `\nif (self.ServiceWorkerContainer) ServiceWorkerContainer.prototype.register = async () => { console.warn('Service Worker registration blocked by Playwright'); };\n`);
 
     if (this._options.permissions)
       await this.grantPermissions(this._options.permissions);
@@ -312,36 +310,21 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
     return await this.doGetCookies(urls as string[]);
   }
 
-  async clearCookies(options: {name?: string | RegExp, domain?: string | RegExp, path?: string | RegExp}): Promise<void> {
-    const hasFilter = options.name !== undefined || options.domain !== undefined || options.path !== undefined;
-    if (!hasFilter) {
+  async clearCookies(options: network.ClearCookiesOptions): Promise<void> {
+    if (!network.hasClearCookiesFilter(options)) {
       await this.doClearCookies();
       return;
     }
 
-    const matches = (cookie: channels.NetworkCookie, prop: 'name' | 'domain' | 'path', value: string | RegExp | undefined) => {
-      if (!value)
-        return true;
-      if (value instanceof RegExp) {
-        value.lastIndex = 0;
-        return value.test(cookie[prop]);
-      }
-      return cookie[prop] === value;
-    };
-
     const currentCookies = await this._cookies();
-    const cookiesToExpire = currentCookies.filter(cookie => {
-      return matches(cookie, 'name', options.name)
-        && matches(cookie, 'domain', options.domain)
-        && matches(cookie, 'path', options.path);
-    });
+    const cookiesToExpire = currentCookies.filter(cookie => network.cookieMatchesClearFilter(cookie, options));
 
     if (!cookiesToExpire.length)
       return;
 
+    // Keep the original value: browsers reject or ignore cookies with both empty name and value.
     await this.addCookies(cookiesToExpire.map(cookie => ({
       ...cookie,
-      value: '',
       expires: 0,
     })));
   }
@@ -616,6 +599,10 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
     this._origins.add(origin);
   }
 
+  visitedOrigins(): ReadonlySet<string> {
+    return this._origins;
+  }
+
   async storageState(progress: Progress, { indexedDB = false, opfs = false, credentials = false }: { indexedDB?: boolean, opfs?: boolean, credentials?: boolean } = {}): Promise<channels.BrowserContextStorageStateResult> {
     const result: channels.BrowserContextStorageStateResult = {
       cookies: await this.cookies(progress),
@@ -650,23 +637,29 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
 
     // If there are still origins to save, create a blank page to iterate over origins.
     if (originsToSave.size)  {
-      const page = await this.newPage(progress, true /* forStorageState */);
-      try {
-        await page.addRequestInterceptor(progress, route => {
-          route.fulfill({ body: '<html></html>' }).catch(() => {});
-        }, 'prepend');
-        for (const origin of originsToSave) {
-          const frame = page.mainFrame();
-          await frame.gotoImpl(progress, origin, {});
-          const storage: SerializedStorage = await frame.evaluateExpression(progress, collectScript, { world: 'utility' });
-          if (hasStorage(storage))
-            result.origins.push({ origin, ...storage });
-        }
-      } finally {
-        await page.close(progress);
-      }
+      await this.visitOrigins(progress, originsToSave, async (frame, origin) => {
+        const storage: SerializedStorage = await frame.evaluateExpression(progress, collectScript, { world: 'utility' });
+        if (hasStorage(storage))
+          result.origins.push({ origin, ...storage });
+      });
     }
     return result;
+  }
+
+  async visitOrigins(progress: Progress, origins: Set<string>, callback: (frame: frames.Frame, origin: string) => Promise<void>) {
+    const page = await this.newPage(progress, true /* forStorageState */);
+    try {
+      await page.addRequestInterceptor(progress, route => {
+        route.fulfill({ body: '<html></html>' }).catch(() => {});
+      }, 'prepend');
+      for (const origin of origins) {
+        const frame = page.mainFrame();
+        await frame.gotoImpl(progress, origin, {});
+        await progress.race(callback(frame, origin));
+      }
+    } finally {
+      await page.close(progress);
+    }
   }
 
   isCreatingStorageStatePage(): boolean {
@@ -775,6 +768,8 @@ export function validateBrowserContextOptions(options: types.BrowserContextOptio
     options.viewport = { width: 1280, height: 720 };
   if (options.proxy)
     options.proxy = normalizeProxySettings(options.proxy);
+  if (options.recordVideo?.fps !== undefined && options.recordVideo.fps <= 0)
+    throw new Error(`"recordVideo.fps" must be a positive number, got ${options.recordVideo.fps}`);
   verifyGeolocation(options.geolocation);
 }
 

@@ -688,6 +688,59 @@ test('should update webp snapshot with the update-snapshots flag', async ({ runI
   expect([...image.data.subarray(0, 4)]).toEqual([255, 255, 255, 255]);
 });
 
+test('should use configured webp type', async ({ runInlineTest }, testInfo) => {
+  const result = await runInlineTest({
+    ...playwrightConfig({
+      snapshotPathTemplate: '__screenshots__/{testFilePath}/{arg}{ext}',
+      expect: {
+        toHaveScreenshot: {
+          type: 'webp',
+        },
+      },
+    }),
+    '__screenshots__/a.spec.js/is-a-test-1.webp': createWebpImage(IMG_WIDTH, IMG_HEIGHT, 255, 255, 255),
+    '__screenshots__/a.spec.js/snapshot.png': whiteImage,
+    'a.spec.js': `
+      const { test, expect } = require('@playwright/test');
+      test('is a test', async ({ page }) => {
+        expect(test.info().snapshotPath({ kind: 'screenshot' })).toMatch(/is-a-test-1\\.webp$/);
+        // Anonymous and explicit .png name both match existing snapshots.
+        await expect(page).toHaveScreenshot();
+        await expect(page).toHaveScreenshot('snapshot.png');
+        // Anonymous locator snapshot is written as webp.
+        await expect(page.locator('body')).toHaveScreenshot();
+      });
+    `
+  });
+  expect(result.exitCode).toBe(1);
+  for (const name of ['is-a-test-1.webp', 'snapshot.png'])
+    expect(result.output).not.toContain(`A snapshot doesn't exist at ${testInfo.outputPath('__screenshots__', 'a.spec.js', name)}`);
+  const snapshotOutputPath = testInfo.outputPath('__screenshots__', 'a.spec.js', 'is-a-test-2.webp');
+  expect(result.output).toContain(`A snapshot doesn't exist at ${snapshotOutputPath}, writing actual`);
+  expect(utils.decodeWebp(fs.readFileSync(snapshotOutputPath)).width).toBeGreaterThan(0);
+  expect(fs.existsSync(testInfo.outputPath('test-results', 'a-is-a-test', 'is-a-test-2-actual.webp'))).toBe(true);
+});
+
+test('should fail on unsupported configured type', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    ...playwrightConfig({
+      expect: {
+        toHaveScreenshot: {
+          type: 'jpeg',
+        },
+      },
+    }),
+    'a.spec.js': `
+      const { test, expect } = require('@playwright/test');
+      test('is a test', async ({ page }) => {
+        await expect(page).toHaveScreenshot();
+      });
+    `
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.output).toContain(`config.expect.toHaveScreenshot.type must be one of "png" or "webp"`);
+});
+
 test('should fail when given buffer', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     ...playwrightConfig({}),
@@ -1020,6 +1073,66 @@ test('should silently write missing expectations locally with the update-snapsho
   expect(result.output).toContain(`A snapshot doesn't exist at ${snapshotOutputPath}, writing actual`);
   const data = fs.readFileSync(snapshotOutputPath);
   expect(comparePNGs(data, whiteImage)).toBe(null);
+});
+
+test('should pass when writing missing expectations with the update-snapshots=missing flag', async ({ runInlineTest }, testInfo) => {
+  const result = await runInlineTest({
+    ...playwrightConfig({
+      snapshotPathTemplate: '__screenshots__/{testFilePath}/{arg}{ext}',
+    }),
+    'a.spec.js': `
+      const { test, expect } = require('@playwright/test');
+      test('is a test', async ({ page }) => {
+        await expect(page).toHaveScreenshot('snapshot.png');
+      });
+    `
+  }, { 'update-snapshots': 'missing' });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.passed).toBe(1);
+  const snapshotOutputPath = testInfo.outputPath('__screenshots__/a.spec.js/snapshot.png');
+  expect(result.output).toContain(`A snapshot doesn't exist at ${snapshotOutputPath}, writing actual`);
+  expect(comparePNGs(fs.readFileSync(snapshotOutputPath), whiteImage)).toBe(null);
+});
+
+test('should fail when writing missing expectations with the update-snapshots=default flag', async ({ runInlineTest }, testInfo) => {
+  const result = await runInlineTest({
+    ...playwrightConfig({
+      snapshotPathTemplate: '__screenshots__/{testFilePath}/{arg}{ext}',
+    }),
+    'a.spec.js': `
+      const { test, expect } = require('@playwright/test');
+      test('is a test', async ({ page }) => {
+        await expect(page).toHaveScreenshot('snapshot.png');
+      });
+    `
+  }, { 'update-snapshots': 'default' });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.failed).toBe(1);
+  const snapshotOutputPath = testInfo.outputPath('__screenshots__/a.spec.js/snapshot.png');
+  expect(result.output).toContain(`A snapshot doesn't exist at ${snapshotOutputPath}, writing actual`);
+  expect(comparePNGs(fs.readFileSync(snapshotOutputPath), whiteImage)).toBe(null);
+});
+
+test('should still fail on a mismatching screenshot with the update-snapshots=missing flag', async ({ runInlineTest }, testInfo) => {
+  const result = await runInlineTest({
+    ...playwrightConfig({
+      snapshotPathTemplate: '__screenshots__/{testFilePath}/{arg}{ext}',
+    }),
+    '__screenshots__/a.spec.js/snapshot.png': redImage,
+    'a.spec.js': `
+      const { test, expect } = require('@playwright/test');
+      test('is a test', async ({ page }) => {
+        await expect(page).toHaveScreenshot('snapshot.png', { timeout: 2000 });
+      });
+    `
+  }, { 'update-snapshots': 'missing' });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.failed).toBe(1);
+  const snapshotOutputPath = testInfo.outputPath('__screenshots__/a.spec.js/snapshot.png');
+  expect(comparePNGs(fs.readFileSync(snapshotOutputPath), redImage)).toBe(null);
 });
 
 test('should not write missing expectations locally with the update-snapshots flag for negated matcher', async ({ runInlineTest }, testInfo) => {

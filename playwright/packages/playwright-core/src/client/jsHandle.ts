@@ -111,7 +111,8 @@ export function serializeArgument(arg: any, registerCallback?: (callback: Functi
   return { value, handles };
 }
 
-export type EvaluateOptions = { exposeFunctions?: boolean };
+export type ExposeFunctionsOptions = { exposeFunctions?: boolean };
+export type EvaluateOptions = ExposeFunctionsOptions;
 
 export async function serializeArgumentWithCallbacks(owner: ChannelOwner<any>, page: Page | undefined, arg: any): Promise<channels.SerializedArgument> {
   return await owner._wrapApiCall(async () => {

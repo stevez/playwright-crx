@@ -96,8 +96,6 @@ export type CallMetadata = {
   // Client is making an internal call that should not show up in
   // the inspector or trace.
   internal?: boolean;
-  // Test runner step id.
-  stepId?: string;
   location?: { file: string, line?: number, column?: number };
   log: string[];
   error?: SerializedError;
@@ -113,7 +111,8 @@ export interface Instrumentation {
   onCallLog(sdkObject: SdkObject, metadata: CallMetadata, logName: string, message: string): void;
   onAfterCall(progress: Progress, sdkObject: SdkObject): Promise<void>;
   onPageOpen(page: Page): void;
-  onPageClose(page: Page): void;
+  onPageWillClose(page: Page): Promise<void>;
+  onPageDidClose(page: Page): void;
   onBrowserOpen(browser: Browser): void;
   onBrowserClose(browser: Browser): void;
   onDialog(dialog: Dialog): void;
@@ -126,7 +125,8 @@ export interface InstrumentationListener {
   onCallLog?(sdkObject: SdkObject, metadata: CallMetadata, logName: string, message: string): void;
   onAfterCall?(progress: Progress, sdkObject: SdkObject): Promise<void>;
   onPageOpen?(page: Page): void;
-  onPageClose?(page: Page): void;
+  onPageWillClose?(page: Page): Promise<void>;
+  onPageDidClose?(page: Page): void;
   onBrowserOpen?(browser: Browser): void;
   onBrowserClose?(browser: Browser): void;
   onDialog?(dialog: Dialog): void;

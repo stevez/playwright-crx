@@ -15,7 +15,7 @@
  */
 
 import fs from 'fs';
-import dns from 'dns';
+import http from 'http';
 
 import { ChildProcess, spawn } from 'child_process';
 import { chromium } from 'playwright';
@@ -64,19 +64,6 @@ const test = baseTest.extend<{ serverEndpoint: (options?: { args?: string[], noP
     cp?.kill('SIGTERM');
   },
 });
-
-async function resolveToIp(address: string) {
-  const resolvedIp = await new Promise<{ address: string, family: number }>((resolve, reject) => {
-    dns.lookup('localhost', (err, address, family) => {
-      if (err)
-        return reject(err);
-      resolve({ address, family }); // ::1 6  OR  127.0.0.1 4
-    });
-  });
-  if (resolvedIp.family === 6)
-    return `[${resolvedIp.address}]`;
-  return resolvedIp.address;
-}
 
 test('http transport', async ({ serverEndpoint }) => {
   const { url } = await serverEndpoint();
@@ -136,6 +123,7 @@ test('http transport browser lifecycle (isolated)', async ({ serverEndpoint, ser
     'create http session': 2,
     'delete http session': 2,
     'create browser \(isolated\)': 2,
+    'connect to shared browser': 2,
     'create context': 2,
     'close browser': 2,
   });
@@ -156,6 +144,7 @@ test('http transport browser sigint', async ({ serverEndpoint, server }) => {
 
   await expect.poll(() => formatLog(stderr())).toEqual({
     'create browser (isolated)': 1,
+    'connect to shared browser': 1,
     'create context': 1,
     'create http session': 1,
     'gracefully closing 1': 1,
@@ -202,6 +191,7 @@ test('http transport browser lifecycle (isolated, multiclient)', { annotation: {
     'delete http session': 3,
     'create context': 3,
     'create browser (isolated)': 1,
+    'connect to shared browser': 3,
     'close context': 2,
     'close browser': 1,
   });
@@ -232,6 +222,7 @@ test('http transport browser lifecycle (isolated, concurrent clients)', { annota
     'delete http session': 3,
     'create context': 3,
     'create browser (isolated)': 1,
+    'connect to shared browser': 3,
     'close context': 2,
     'close browser': 1,
   });
@@ -292,6 +283,7 @@ test('http transport isolated multiclient relaunches a crashed shared browser', 
     'create http session': 2,
     'delete http session': 2,
     'create browser (isolated)': 2,
+    'connect to shared browser': 4,
     'create context': 4,
     'close browser': 2,
     'close context': 2,
@@ -329,6 +321,7 @@ test('http transport isolated closes the browser despite an earlier failed backe
     'create http session': 1,
     'delete http session': 1,
     'create browser (isolated)': 1,
+    'connect to shared browser': 2,
     'create context': 1,
     'close browser': 1,
   });
@@ -431,6 +424,8 @@ test('http transport shared context', async ({ serverEndpoint, server }) => {
 
   await expect.poll(() => formatLog(stderr())).toEqual({
     'create browser (persistent)': 1,
+    'connect to shared browser': 2,
+    'disconnect from shared browser': 1,
     'create http session': 2,
     'delete http session': 2,
     'create context': 2,
@@ -489,10 +484,94 @@ test('http transport shared context refuses browser_close', { annotation: { type
 
   await expect.poll(() => formatLog(stderr())).toEqual({
     'create browser (persistent)': 1,
+    'connect to shared browser': 2,
+    'disconnect from shared browser': 1,
     'create http session': 2,
     'delete http session': 2,
     'create context': 2,
     'close browser': 1,
+  });
+});
+
+async function connectClient(url: URL, name: string) {
+  const transport = new StreamableHTTPClientTransport(new URL('/mcp', url));
+  const client = new Client({ name, version: '1.0.0' });
+  await client.connect(transport);
+  const close = async () => {
+    await transport.terminateSession();
+    await client.close();
+  };
+  return { client, close };
+}
+
+async function keepBusy(client: Client, ms: number) {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    await client.callTool({ name: 'browser_snapshot', arguments: {} });
+    await new Promise(f => setTimeout(f, 100));
+  }
+}
+
+test('http transport shared context: one idle timer across clients', async ({ serverEndpoint, server }) => {
+  const { url, stderr } = await serverEndpoint({ args: ['--shared-browser-context', '--idle-timeout=1500'] });
+  const client1 = await connectClient(url, 'test1');
+  await client1.client.callTool({
+    name: 'browser_navigate',
+    arguments: { url: server.HELLO_WORLD },
+  });
+
+  const client2 = await connectClient(url, 'test2');
+  await keepBusy(client2.client, 3000);
+  expect(formatLog(stderr())).toEqual({
+    'create browser (persistent)': 1,
+    'connect to shared browser': 2,
+    'create http session': 2,
+    'create context': 2,
+  });
+  const response = await client1.client.callTool({
+    name: 'browser_snapshot',
+    arguments: {},
+  });
+  expect(response).toHaveResponse({
+    inlineSnapshot: expect.stringContaining(`Hello, world!`),
+  });
+
+  await expect.poll(() => formatLog(stderr())).toEqual({
+    'create browser (persistent)': 1,
+    'connect to shared browser': 2,
+    'disconnect from shared browser': 1,
+    'create http session': 2,
+    'create context': 2,
+    'close browser': 1,
+  });
+
+  for (const { client } of [client1, client2]) {
+    expect(await client.callTool({
+      name: 'browser_navigate',
+      arguments: { url: server.HELLO_WORLD },
+    })).toHaveResponse({
+      snapshot: expect.stringContaining(`Hello, world!`),
+    });
+  }
+  expect(formatLog(stderr())).toEqual({
+    'create browser (persistent)': 2,
+    'connect to shared browser': 4,
+    'disconnect from shared browser': 1,
+    'create http session': 2,
+    'create context': 4,
+    'close browser': 1,
+  });
+
+  await client1.close();
+  await client2.close();
+  await expect.poll(() => formatLog(stderr())).toEqual({
+    'create browser (persistent)': 2,
+    'connect to shared browser': 4,
+    'disconnect from shared browser': 2,
+    'create http session': 2,
+    'delete http session': 2,
+    'create context': 4,
+    'close browser': 2,
   });
 });
 
@@ -613,12 +692,23 @@ test('should not run heartbeat when timeout is non-positive', async ({ serverEnd
   await client.close();
 });
 
+async function requestWithHost(url: URL, host: string | undefined): Promise<{ status: number, text: string }> {
+  return await new Promise((resolve, reject) => {
+    const req = http.request(url, { method: 'GET', setHost: false, headers: host ? { host } : {} }, res => {
+      let text = '';
+      res.on('data', chunk => text += chunk);
+      res.on('end', () => resolve({ status: res.statusCode!, text }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 test('should not allow rebinding to localhost', async ({ serverEndpoint }) => {
   const { url } = await serverEndpoint();
-  const ip = await resolveToIp('localhost');
-  const response = await fetch(url.href.replace('localhost', ip));
+  const response = await requestWithHost(url, `evil.com:${url.port}`);
   expect.soft(response.status).toBe(403);
-  expect.soft(await response.text()).toContain('Access is only allowed at localhost');
+  expect.soft(response.text).toContain('Access is only allowed at localhost');
 });
 
 test('should respect allowed hosts (negative)', async ({ serverEndpoint }) => {
@@ -638,6 +728,27 @@ test('should respect allowed hosts (positive)', async ({ serverEndpoint, findFre
     ]
   });
   const response = await fetch('http://localhost:' + port);
+  // 400 is expected for the mcp fetch.
+  expect(response.status).toBe(400);
+});
+
+test('should allow only loopback hosts by default when bound to all interfaces', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/42952' } }, async ({ serverEndpoint }) => {
+  const { url } = await serverEndpoint({ args: ['--host=0.0.0.0'] });
+  expect(url.hostname).toBe('localhost');
+  // 400 is expected for the mcp fetch.
+  expect((await fetch(`http://localhost:${url.port}`)).status).toBe(400);
+  expect((await fetch(`http://127.0.0.1:${url.port}`)).status).toBe(400);
+  expect((await requestWithHost(url, undefined)).status).toBe(400);
+  const response = await requestWithHost(url, `some-container:${url.port}`);
+  expect(response.status).toBe(403);
+  expect(response.text).toContain('Access is only allowed at localhost');
+});
+
+test('should allow the bound host by default', async ({ serverEndpoint }) => {
+  test.skip(process.platform !== 'linux', 'Only Linux routes all of 127.0.0.0/8 to loopback');
+  const { url } = await serverEndpoint({ args: ['--host=127.0.0.2'] });
+  expect(url.hostname).toBe('127.0.0.2');
+  const response = await fetch(url.href);
   // 400 is expected for the mcp fetch.
   expect(response.status).toBe(400);
 });

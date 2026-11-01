@@ -2036,6 +2036,50 @@ var banana = page.GetByRole(AriaRole.Listitem).Last;
 Returns a new locator that uses best practices for referencing the matched element, prioritizing test ids,
 aria roles, and other user-facing attributes over CSS selectors. This is useful for converting implementation-detail selectors into more resilient, human-readable locators.
 
+**Usage**
+
+An agent can pick an element by its ref from an [`method: Page.ariaSnapshot`] taken in the `"ai"` mode. Refs only
+work for the latest snapshot. Normalize the ref locator and convert it to a string to get resilient locator code
+in your language, the same way `codegen` does.
+
+Consider the following aria snapshot.
+
+```yaml
+- button "Submit" [ref=e2]
+```
+
+You can turn the ref into locator code:
+
+```js
+const normalized = await page.getByRef('e2').normalize();
+console.log(normalized.toString());
+// getByRole('button', { name: 'Submit' })
+```
+
+```python async
+normalized = await page.get_by_ref("e2").normalize()
+print(str(normalized))
+# get_by_role("button", name="Submit")
+```
+
+```python sync
+normalized = page.get_by_ref("e2").normalize()
+print(str(normalized))
+# get_by_role("button", name="Submit")
+```
+
+```java
+Locator normalized = page.getByRef("e2").normalize();
+System.out.println(normalized.toString());
+// getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("Submit"))
+```
+
+```csharp
+var normalized = await page.GetByRef("e2").NormalizeAsync();
+Console.WriteLine(normalized.ToString());
+// GetByRole(AriaRole.Button, new() { Name = "Submit" })
+```
+
 ## method: Locator.nth
 * since: v1.14
 - returns: <[Locator]>
@@ -3044,3 +3088,44 @@ Optional argument to pass to [`param: expression`].
 
 ### option: Locator.waitForFunction.signal = %%-input-signal-%%
 * since: v1.62
+
+## method: Locator.within
+* since: v1.64
+- returns: <[Locator]>
+
+Returns a locator that matches this locator's elements inside each element matched by [`param: locator`].
+
+Note that relative locators, such as [`method: Locator.nth`] or [`method: Locator.first`], are resolved separately inside each matched parent. In the example below, `page.getByRole('cell').nth(2)` picks the third cell of every row, not the third cell in the whole table.
+
+**Usage**
+
+```js
+const thirdColumn = page.getByRole('cell').nth(2).within(page.getByRole('row'));
+await expect(thirdColumn).toHaveText(['Apple', 'Banana', 'Cherry']);
+```
+
+```python async
+third_column = page.get_by_role("cell").nth(2).within(page.get_by_role("row"))
+await expect(third_column).to_have_text(["Apple", "Banana", "Cherry"])
+```
+
+```python sync
+third_column = page.get_by_role("cell").nth(2).within(page.get_by_role("row"))
+expect(third_column).to_have_text(["Apple", "Banana", "Cherry"])
+```
+
+```java
+Locator thirdColumn = page.getByRole(AriaRole.CELL).nth(2).within(page.getByRole(AriaRole.ROW));
+assertThat(thirdColumn).hasText(new String[] {"Apple", "Banana", "Cherry"});
+```
+
+```csharp
+var thirdColumn = page.GetByRole(AriaRole.Cell).Nth(2).Within(page.GetByRole(AriaRole.Row));
+await Expect(thirdColumn).ToHaveTextAsync(new[] { "Apple", "Banana", "Cherry" });
+```
+
+### param: Locator.within.locator
+* since: v1.64
+- `locator` <[Locator]>
+
+Locator matching the parent elements to search within.

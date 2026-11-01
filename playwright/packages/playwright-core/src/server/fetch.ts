@@ -30,6 +30,7 @@ import { getUserAgent } from './userAgent';
 import { BrowserContext, findMatchingHttpCredentials, verifyClientCertificates } from './browserContext';
 import { Cookie, CookieStore, domainMatches, parseRawCookie } from './cookieStore';
 import { MultipartFormData } from './formData';
+import { cookieMatchesClearFilter, filterCookies, rewriteCookies } from './network';
 import { TargetClosedError } from './errors';
 import { SdkObject } from './instrumentation';
 import { isAbortError } from './progress';
@@ -40,6 +41,7 @@ import type net from 'net';
 
 import type { Playwright } from './playwright';
 import type { Progress } from './progress';
+import type { ClearCookiesOptions } from './network';
 import type * as types from './types';
 import type { HeadersArray, ProxySettings } from './types';
 import type { HttpCredentials } from '@protocol/structs';
@@ -87,7 +89,7 @@ export type APIRequestFinishedEvent = {
   securityDetails?: har.SecurityDetails;
 };
 
-type SendRequestOptions = https.RequestOptions & {
+type SendRequestOptions = Omit<https.RequestOptions, 'agent'> & {
   maxRedirects: number,
   headers: HeadersObject,
   __testHookLookup?: (hostname: string) => LookupAddress[]
@@ -153,8 +155,9 @@ export abstract class APIRequestContext extends SdkObject {
   abstract dispose(options: { reason?: string }): Promise<void>;
 
   abstract _defaultOptions(): FetchRequestOptions;
-  abstract addCookies(cookies: channels.NetworkCookie[]): Promise<void>;
-  abstract cookies(progress: Progress, url: URL): Promise<channels.NetworkCookie[]>;
+  abstract addCookies(cookies: channels.SetNetworkCookie[]): Promise<void>;
+  abstract cookies(progress: Progress, urls: string[]): Promise<channels.NetworkCookie[]>;
+  abstract clearCookies(options: ClearCookiesOptions): Promise<void>;
 
   protected _disposeImpl() {
     this._disposed = true;
@@ -221,22 +224,13 @@ export abstract class APIRequestContext extends SdkObject {
       setBasicAuthorizationHeader(headers, credentials);
 
     const method = params.method?.toUpperCase() || 'GET';
-    const proxy = defaults.proxy;
-    let agent;
-    // We skip 'per-context' in order to not break existing users. 'per-context' was previously used to
-    // workaround an upstream Chromium bug. Can be removed in the future.
-    if (proxy?.server !== 'per-context')
-      agent = createProxyAgent(proxy, requestUrl);
-
     let maxRedirects = params.maxRedirects ?? (defaults.maxRedirects ?? 20);
     maxRedirects = maxRedirects === 0 ? -1 : maxRedirects;
 
     const options: SendRequestOptions = {
       method,
       headers,
-      agent,
       maxRedirects,
-      ...getMatchingTLSOptionsForOrigin(this._defaultOptions().clientCertificates, requestUrl.origin),
       __testHookLookup: (params as any).__testHookLookup,
     };
     // rejectUnauthorized = undefined is treated as true in Node.js 12.
@@ -293,7 +287,7 @@ export abstract class APIRequestContext extends SdkObject {
   private async _updateRequestCookieHeader(progress: Progress, url: URL, headers: HeadersObject) {
     if (getHeader(headers, 'cookie') !== undefined)
       return;
-    const contextCookies = await this.cookies(progress, url);
+    const contextCookies = await this.cookies(progress, [url.toString()]);
     // Browser context returns cookies with domain matching both .example.com and
     // example.com. Those without leading dot are only sent when domain is strictly
     // matching example.com, but not for sub.example.com.
@@ -362,11 +356,15 @@ export abstract class APIRequestContext extends SdkObject {
     const resultPromise = new Promise<SendRequestResult>((fulfill, reject) => {
       const requestConstructor: ((url: URL, options: http.RequestOptions, callback?: (res: http.IncomingMessage) => void) => http.ClientRequest)
         = (url.protocol === 'https:' ? https : http).request;
-      // Without an explicit proxy agent, use this context's own agent, which has
-      // keep-alive enabled and connects with Happy Eyeballs (autoSelectFamily).
-      // Resolved per request so that a cross-protocol redirect picks the right agent.
-      const requestOptions = { ...options, ...happyEyeballsOptions };
-      requestOptions.agent = options.agent ?? this._ensureAgent(url.protocol);
+      // Proxy bypass rules and client certificates are resolved per hop, so that
+      // a redirect target picks its own agent and TLS options. Without a proxy agent,
+      // use this context's own agent (keep-alive, Happy Eyeballs).
+      const requestOptions: https.RequestOptions = {
+        ...options,
+        ...happyEyeballsOptions,
+        ...getMatchingTLSOptionsForOrigin(this._defaultOptions().clientCertificates, url.origin),
+        agent: createProxyAgent(this._defaultOptions().proxy, url) ?? this._ensureAgent(url.protocol),
+      };
       if (options.__testHookLookup)
         requestOptions.lookup = lookupWithTestHook(options.__testHookLookup);
 
@@ -484,7 +482,6 @@ export abstract class APIRequestContext extends SdkObject {
           const redirectOptions: SendRequestOptions = {
             method,
             headers,
-            agent: options.agent,
             maxRedirects: options.maxRedirects - 1,
             __testHookLookup: options.__testHookLookup,
           };
@@ -511,11 +508,6 @@ export abstract class APIRequestContext extends SdkObject {
             // Drop credentials scoped to the original origin on cross-origin redirects.
             if (locationURL.origin !== url.origin)
               removeHeader(headers, 'authorization');
-
-            // Client certificates are origin-scoped — pick them based on the redirect
-            // target, not the original URL.
-            Object.assign(redirectOptions,
-                getMatchingTLSOptionsForOrigin(this._defaultOptions().clientCertificates, locationURL.origin));
 
             notifyRequestFinished();
             fulfill(this._sendRequest(progress, log, locationURL, redirectOptions, postData));
@@ -739,12 +731,16 @@ export class BrowserContextAPIRequestContext extends APIRequestContext {
     };
   }
 
-  async addCookies(cookies: channels.NetworkCookie[]): Promise<void> {
+  async addCookies(cookies: channels.SetNetworkCookie[]): Promise<void> {
     await this._context.addCookies(cookies);
   }
 
-  async cookies(progress: Progress, url: URL): Promise<channels.NetworkCookie[]> {
-    return await this._context.cookies(progress, url.toString());
+  async cookies(progress: Progress, urls: string[]): Promise<channels.NetworkCookie[]> {
+    return await this._context.cookies(progress, urls);
+  }
+
+  async clearCookies(options: ClearCookiesOptions): Promise<void> {
+    await this._context.clearCookies(options);
   }
 
   override async storageState(progress: Progress, params: { indexedDB?: boolean, opfs?: boolean }): Promise<channels.APIRequestContextStorageStateResult> {
@@ -795,12 +791,24 @@ export class GlobalAPIRequestContext extends APIRequestContext {
     return this._options;
   }
 
-  async addCookies(cookies: channels.NetworkCookie[]): Promise<void> {
-    this._cookieStore.addCookies(cookies);
+  async addCookies(cookies: channels.SetNetworkCookie[]): Promise<void> {
+    this._cookieStore.addCookies(rewriteCookies(cookies).map(c => ({
+      expires: -1,
+      httpOnly: false,
+      secure: false,
+      sameSite: 'Lax',
+      ...c,
+      domain: c.domain!,
+      path: c.path!,
+    })));
   }
 
-  async cookies(progress: Progress, url: URL): Promise<channels.NetworkCookie[]> {
-    return this._cookieStore.cookies(url);
+  async cookies(progress: Progress, urls: string[]): Promise<channels.NetworkCookie[]> {
+    return filterCookies(this._cookieStore.allCookies(), urls);
+  }
+
+  async clearCookies(options: ClearCookiesOptions): Promise<void> {
+    this._cookieStore.removeCookies(cookie => cookieMatchesClearFilter(cookie, options));
   }
 
   override async storageState(progress: Progress, { indexedDB = false, opfs = false }: { indexedDB?: boolean, opfs?: boolean }): Promise<channels.APIRequestContextStorageStateResult> {

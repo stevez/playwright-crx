@@ -344,6 +344,31 @@ export class InjectedScript {
     return renderAriaSnapshotAsYaml(json);
   }
 
+  documentContent(includeShadow: boolean): string {
+    let content = '';
+    if (this.document.doctype)
+      content = new XMLSerializer().serializeToString(this.document.doctype);
+    const root = this.document.documentElement;
+    if (!root)
+      return content;
+    if (!includeShadow)
+      return content + root.outerHTML;
+    const shadowRoots: ShadowRoot[] = [];
+    const collectShadowRoots = (node: Document | ShadowRoot) => {
+      for (const element of node.querySelectorAll('*')) {
+        if (element.shadowRoot) {
+          shadowRoots.push(element.shadowRoot);
+          collectShadowRoots(element.shadowRoot);
+        }
+      }
+    };
+    collectShadowRoots(this.document);
+    // getHTML() serializes children only, wrap them with the root element tags.
+    const emptyRoot = (root.cloneNode(false) as Element).outerHTML;
+    const endTagIndex = emptyRoot.lastIndexOf('</');
+    return content + emptyRoot.slice(0, endTagIndex) + root.getHTML({ shadowRoots }) + emptyRoot.slice(endTagIndex);
+  }
+
   getAllElementsMatchingExpectAriaTemplate(document: Document, template: AriaTemplateNode): Element[] {
     return getAllElementsMatchingExpectAriaTemplate(document.documentElement, template);
   }
@@ -665,7 +690,7 @@ export class InjectedScript {
     return element;
   }
 
-  async checkElementStates(node: Node, states: ElementState[]): Promise<'error:notconnected' | { missingState: ElementState } | undefined> {
+  async checkElementStates(node: Node, states: ElementState[], frameVisible: boolean): Promise<'error:notconnected' | { missingState: ElementState } | undefined> {
     if (states.includes('stable')) {
       const stableResult = await this._checkElementIsStable(node);
       if (stableResult === false)
@@ -675,7 +700,7 @@ export class InjectedScript {
     }
     for (const state of states) {
       if (state !== 'stable') {
-        const result = this.elementState(node, state);
+        const result = this.elementState(node, state, frameVisible);
         if (result.received === 'error:notconnected')
           return 'error:notconnected';
         if (!result.matches)
@@ -753,7 +778,9 @@ export class InjectedScript {
     return { queryAll };
   }
 
-  elementState(node: Node, state: ElementStateWithoutStable): ElementStateQueryResult {
+  elementState(node: Node, state: ElementStateWithoutStable, frameVisible: boolean): ElementStateQueryResult;
+  elementState(node: Node, state: Exclude<ElementStateWithoutStable, 'visible' | 'hidden'>): ElementStateQueryResult;
+  elementState(node: Node, state: ElementStateWithoutStable, frameVisible?: boolean): ElementStateQueryResult {
     const element = this.retarget(node, ['visible', 'hidden'].includes(state) ? 'none' : 'follow-label');
     if (!element || !element.isConnected) {
       if (state === 'hidden')
@@ -762,7 +789,7 @@ export class InjectedScript {
     }
 
     if (state === 'visible' || state === 'hidden') {
-      const visible = isElementVisible(element);
+      const visible = !!frameVisible && isElementVisible(element);
       return {
         matches: state === 'visible' ? visible : !visible,
         received: visible ? 'visible' : 'hidden'
@@ -1027,15 +1054,19 @@ export class InjectedScript {
           elements.unshift(singleElement);
         }
       }
-      if (elements[0] && elements[0].shadowRoot === root && elements[1] === singleElement) {
-        // Workaround webkit but where first two elements are swapped:
-        // <host>
-        //   #shadow root
-        //     <target>
-        // elementsFromPoint produces [<host>, <target>], while it should be [<target>, <host>]
-        // In this case, just ignore <host>.
+      // Workaround webkit bug: elementsFromPoint() puts the outermost shadow host first (seen with <input>).
+      //
+      //   DOM                  root.elementsFromPoint() in WebKit
+      //   <outer-host>
+      //     #shadow-root       [<outer-host>, <inner-host>, ...]
+      //       <inner-host>      ^^^^^^^^^^^^ bogus
+      //         #shadow-root   [<outer-host>, <input>, <inner-host>, ...]
+      //           <input>       ^^^^^^^^^^^^ bogus
+      //
+      // elementFromPoint() is correct. Drop elements[0] when elements[1] matches it and elements[0]
+      // is the host of this or any enclosing root. Using `roots` makes it work for closed shadow roots.
+      if (elements[0] && elements[1] === singleElement && roots.slice(index).some(r => (r as ShadowRoot).host === elements[0]))
         elements.shift();
-      }
       const innerElement = elements[0] as Element | undefined;
       if (!innerElement)
         break;
@@ -1337,10 +1368,10 @@ export class InjectedScript {
   }
 
   private _ensureHighlight() {
-    if (!this._highlight) {
+    if (!this._highlight)
       this._highlight = new Highlight(this);
-      this._highlight.install();
-    }
+
+    this._highlight.install();
     return this._highlight;
   }
 
@@ -1351,32 +1382,38 @@ export class InjectedScript {
     highlight.setElementHighlights(highlights);
   }
 
-  setScreencastAnnotation(annotation: { point?: Point, box?: Rect, actionTitle?: string, duration?: number, position?: string, fontSize?: number, cursor?: 'none' | 'pointer' } | null) {
+  setScreencastAnnotation(annotation: { point?: Point, box?: Rect, actionTitle?: string, duration?: number, position?: string, cursor?: 'none' | 'pointer', style?: { point?: string, highlight?: string, title?: string }, lastCursorPoint?: Point } | null) {
     const highlight = this._ensureHighlight();
+    highlight.hideScreencastDecorations();
+    // The cursor outlives the annotation, it stays at the last action point.
     if (!annotation) {
-      highlight.updateHighlight([]);
-      highlight.hideActionPoint();
       highlight.hideActionTitle();
-      highlight.hideActionCursor();
       return;
     }
     const fadeDuration = annotation.duration ?? 500;
 
-    if (annotation.box) {
-      highlight.updateHighlight([{
-        box: annotation.box,
-        color: 'rgba(0, 128, 255, 0.15)',
-        borderColor: 'rgba(0, 128, 255, 0.6)',
-        fadeDuration,
-      }]);
-    }
+    if (annotation.box && annotation.style?.highlight)
+      highlight.showScreencastHighlight(annotation.box, annotation.style.highlight, fadeDuration);
     if (annotation.point) {
-      if (annotation.cursor !== 'none')
+      if (annotation.cursor !== 'none') {
+        // After navigation, animate from where the cursor was in the previous document.
+        if (annotation.lastCursorPoint)
+          highlight.restoreActionCursor(annotation.lastCursorPoint.x, annotation.lastCursorPoint.y);
         highlight.moveActionCursor(annotation.point.x, annotation.point.y, fadeDuration);
-      highlight.showActionPoint(annotation.point.x, annotation.point.y, fadeDuration);
+      }
+      if (annotation.style?.point)
+        highlight.showScreencastPoint(annotation.point.x, annotation.point.y, annotation.style.point, fadeDuration);
     }
     if (annotation.actionTitle)
-      highlight.showActionTitle(annotation.actionTitle, fadeDuration, annotation.position, annotation.fontSize);
+      highlight.showActionTitle(annotation.actionTitle, fadeDuration, annotation.position, annotation.style?.title);
+  }
+
+  restoreScreencastCursor(point: Point) {
+    this._ensureHighlight().restoreActionCursor(point.x, point.y);
+  }
+
+  hideScreencastCursor() {
+    this._highlight?.hideActionCursor();
   }
 
   addUserOverlay(id: string, html: string) {
@@ -1458,20 +1495,20 @@ export class InjectedScript {
     this.onGlobalListenersRemoved.add(addHitTargetInterceptorListeners);
   }
 
-  async expect(element: Element, options: FrameExpectParams, elements: Element[]): Promise<{ matches: boolean, received?: ExpectReceived }> {
+  async expect(element: Element, options: FrameExpectParams, elements: Element[], frameVisible: boolean): Promise<{ matches: boolean, received?: ExpectReceived }> {
     const isArray = options.expression === 'to.have.count' || options.expression.endsWith('.array');
-    const core = isArray ? this.expectArray(elements, options) : await this.expectSingleElement(element, options);
-    const ariaSnapshot = core.matches !== options.isNot ? undefined : this._ariaSnapshotForExpect(element, options);
+    const core = isArray ? this.expectArray(elements, options) : await this.expectSingleElement(element, options, frameVisible);
+    const ariaSnapshot = core.matches !== options.isNot ? undefined : this._ariaSnapshotForExpect(element, options, frameVisible);
     if (core.received === undefined && ariaSnapshot === undefined)
       return { matches: core.matches };
     return { matches: core.matches, received: { value: core.received, ariaSnapshot } };
   }
 
-  private _ariaSnapshotForExpect(element: Element, options: FrameExpectParams): string | undefined {
+  private _ariaSnapshotForExpect(element: Element, options: FrameExpectParams, frameVisible: boolean): string | undefined {
     const expression = options.expression;
     if (expression === 'to.have.count' || expression.endsWith('.array') || expression === 'to.match.aria')
       return undefined;
-    if (isElementVisible(element) && expression !== 'to.have.title' && expression !== 'to.have.url') {
+    if (frameVisible && isElementVisible(element) && expression !== 'to.have.title' && expression !== 'to.have.url') {
       // Element-scoped snapshot. Containment matchers want the full subtree;
       // property matchers only need the element's own line.
       const isContainment = expression === 'to.have.text';
@@ -1482,7 +1519,7 @@ export class InjectedScript {
     return this.ariaSnapshotForExpectFailure(this.document.body, { mode: 'default' });
   }
 
-  private async expectSingleElement(element: Element, options: FrameExpectParams): Promise<{ matches: boolean, received?: any }> {
+  private async expectSingleElement(element: Element, options: FrameExpectParams, frameVisible: boolean): Promise<{ matches: boolean, received?: any }> {
     const expression = options.expression;
 
     {
@@ -1539,9 +1576,9 @@ export class InjectedScript {
           received: focused ? 'focused' : 'inactive',
         };
       } else if (expression === 'to.be.hidden') {
-        result = this.elementState(element, 'hidden');
+        result = this.elementState(element, 'hidden', frameVisible);
       } else if (expression === 'to.be.visible') {
-        result = this.elementState(element, 'visible');
+        result = this.elementState(element, 'visible', frameVisible);
       } else if (expression === 'to.be.attached') {
         result = {
           matches: true,
@@ -1717,8 +1754,12 @@ function oneLine(s: string): string {
 
 function createAttributeMatcher(part: AttributeSelectorPart): (s: string) => boolean {
   const { value, caseSensitive } = part;
-  if (value instanceof RegExp)
-    return s => !!s.match(value);
+  if (value instanceof RegExp) {
+    return s => {
+      value.lastIndex = 0;
+      return !!s.match(value);
+    };
+  }
   if (caseSensitive)
     return s => s === value;
   const lowerCaseValue = value.toLowerCase();
@@ -1744,7 +1785,11 @@ function createTextMatcher(selector: string, internal: boolean): { matcher: Text
   if (selector[0] === '/' && selector.lastIndexOf('/') > 0) {
     const lastSlash = selector.lastIndexOf('/');
     const re = new RegExp(selector.substring(1, lastSlash), selector.substring(lastSlash + 1));
-    return { matcher: (elementText: ElementText) => re.test(elementText.full), kind: 'regex' };
+    const matcher = (elementText: ElementText) => {
+      re.lastIndex = 0;
+      return re.test(elementText.full);
+    };
+    return { matcher, kind: 'regex' };
   }
   const unquote = internal ? JSON.parse.bind(JSON) : cssUnquote;
   let strict = false;
@@ -1806,8 +1851,10 @@ class ExpectedTextMatcher {
       return text === this._string;
     if (this._substring !== undefined)
       return text.includes(this._substring);
-    if (this._regex)
+    if (this._regex) {
+      this._regex.lastIndex = 0;
       return !!this._regex.test(text);
+    }
     return false;
   }
 

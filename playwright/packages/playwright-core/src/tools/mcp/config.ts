@@ -20,6 +20,7 @@ import os from 'os';
 
 import dotenv from 'dotenv';
 import { isSystemDirectory } from '@utils/fileUtils';
+import { proxySettingsFromString } from '@utils/network';
 import { playwright } from '../../inprocess';
 import { configFromIniFile } from './configIni';
 
@@ -50,6 +51,7 @@ export type CLIOptions = {
   endpoint?: string;
   extension?: boolean;
   executablePath?: string;
+  filePaths?: 'relative' | 'absolute';
   grantPermissions?: string[];
   headless?: boolean;
   host?: string;
@@ -57,7 +59,8 @@ export type CLIOptions = {
   initScript?: string[];
   initPage?: string[];
   isolated?: boolean;
-  imageResponses?: 'allow' | 'omit';
+  idleTimeout?: number;
+  imageResponses?: 'allow' | 'omit' | 'only';
   mobile?: boolean;
   sandbox?: boolean;
   outputDir?: string;
@@ -78,6 +81,7 @@ export type CLIOptions = {
   timeoutNavigation?: number;
   timeoutSettle?: number;
   userAgent?: string;
+  webmcp?: boolean;
   userDataDir?: string;
   viewportSize?: ViewportSize;
 };
@@ -171,6 +175,7 @@ export async function resolveCLIConfigForCLI(daemonProfilesDir: string, sessionN
     mobile: options.mobile,
     extension: options.extension,
     userDataDir: options.profile,
+    idleTimeout: options.idleTimeout,
     snapshotMode: 'full',
   });
 
@@ -324,7 +329,7 @@ function configFromCLIOptions(cliOptions: CLIOptions): Config & { configFile?: s
   const contextOptions: playwrightTypes.BrowserContextOptions = device ? playwright.devices[device] : {};
 
   if (cliOptions.proxyServer) {
-    const proxy: playwrightTypes.LaunchOptions['proxy'] = { server: cliOptions.proxyServer };
+    const proxy: playwrightTypes.LaunchOptions['proxy'] = proxySettingsFromString(cliOptions.proxyServer);
     if (cliOptions.proxyBypass)
       proxy.bypass = cliOptions.proxyBypass;
     // Set on both to ensure CLI takes precedence over any proxy set in the config file
@@ -388,13 +393,19 @@ function configFromCLIOptions(cliOptions: CLIOptions): Config & { configFile?: s
     outputDir: cliOptions.outputDir,
     outputMaxSize: cliOptions.outputMaxSize,
     imageResponses: cliOptions.imageResponses,
+    filePaths: cliOptions.filePaths,
     testIdAttribute: cliOptions.testIdAttribute,
     timeouts: {
       action: cliOptions.timeoutAction,
+      idle: cliOptions.idleTimeout,
       navigation: cliOptions.timeoutNavigation,
       settle: cliOptions.timeoutSettle,
     },
   };
+
+  // Note that cli args parser defaults to "true" when no option is passed, so only honor an explict "false".
+  if (cliOptions.webmcp === false)
+    config.webmcp = false;
 
   // `remoteHeaders` is for back-compat, assign it here so it survives config merging.
   if (cliOptions.remoteHeader)
@@ -425,6 +436,8 @@ export function configFromEnv(env?: NodeJS.ProcessEnv): Config & { configFile?: 
   options.device = envToString(e.PLAYWRIGHT_MCP_DEVICE);
   options.executablePath = envToString(e.PLAYWRIGHT_MCP_EXECUTABLE_PATH);
   options.extension = envToBoolean(e.PLAYWRIGHT_MCP_EXTENSION);
+  if (e.PLAYWRIGHT_MCP_FILE_PATHS)
+    options.filePaths = enumParser<'relative' | 'absolute'>('--file-paths', ['relative', 'absolute'], e.PLAYWRIGHT_MCP_FILE_PATHS);
   options.grantPermissions = commaSeparatedList(e.PLAYWRIGHT_MCP_GRANT_PERMISSIONS);
   options.headless = envToBoolean(e.PLAYWRIGHT_MCP_HEADLESS);
   options.host = envToString(e.PLAYWRIGHT_MCP_HOST);
@@ -437,7 +450,7 @@ export function configFromEnv(env?: NodeJS.ProcessEnv): Config & { configFile?: 
     options.initScript = [initScript];
   options.isolated = envToBoolean(e.PLAYWRIGHT_MCP_ISOLATED);
   if (e.PLAYWRIGHT_MCP_IMAGE_RESPONSES)
-    options.imageResponses = enumParser<'allow' | 'omit'>('--image-responses', ['allow', 'omit'], e.PLAYWRIGHT_MCP_IMAGE_RESPONSES);
+    options.imageResponses = enumParser<'allow' | 'omit' | 'only'>('--image-responses', ['allow', 'omit', 'only'], e.PLAYWRIGHT_MCP_IMAGE_RESPONSES);
   options.mobile = envToBoolean(e.PLAYWRIGHT_MCP_MOBILE);
   options.sandbox = envToBoolean(e.PLAYWRIGHT_MCP_SANDBOX);
   options.outputDir = envToString(e.PLAYWRIGHT_MCP_OUTPUT_DIR);
@@ -450,9 +463,11 @@ export function configFromEnv(env?: NodeJS.ProcessEnv): Config & { configFile?: 
   options.storageState = envToString(e.PLAYWRIGHT_MCP_STORAGE_STATE);
   options.testIdAttribute = envToString(e.PLAYWRIGHT_MCP_TEST_ID_ATTRIBUTE);
   options.timeoutAction = numberParser(e.PLAYWRIGHT_MCP_TIMEOUT_ACTION);
+  options.idleTimeout = numberParser(e.PLAYWRIGHT_MCP_IDLE_TIMEOUT);
   options.timeoutNavigation = numberParser(e.PLAYWRIGHT_MCP_TIMEOUT_NAVIGATION);
   options.timeoutSettle = numberParser(e.PLAYWRIGHT_MCP_TIMEOUT_SETTLE);
   options.userAgent = envToString(e.PLAYWRIGHT_MCP_USER_AGENT);
+  options.webmcp = envToBoolean(e.PLAYWRIGHT_MCP_WEBMCP);
   options.userDataDir = envToString(e.PLAYWRIGHT_MCP_USER_DATA_DIR);
   options.viewportSize = resolutionParser('--viewport-size', e.PLAYWRIGHT_MCP_VIEWPORT_SIZE);
   return configFromCLIOptions(options);

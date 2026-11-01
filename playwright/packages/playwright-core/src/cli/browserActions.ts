@@ -24,6 +24,7 @@ import debug from 'debug';
 import dotenv from 'dotenv';
 import { program } from 'commander';
 import { gracefullyProcessExitDoNotHang } from '@utils/processLauncher';
+import { proxySettingsFromString } from '@utils/network';
 import { ManualPromise } from '@isomorphic/manualPromise';
 import { playwright } from '../inprocess';
 import type { Browser } from '../client/browser';
@@ -92,9 +93,7 @@ async function launchContext(options: Options, extraOptions: LaunchOptions): Pro
   // Proxy
 
   if (options.proxyServer) {
-    launchOptions.proxy = {
-      server: options.proxyServer
-    };
+    launchOptions.proxy = proxySettingsFromString(options.proxyServer);
     if (options.proxyBypass)
       launchOptions.proxy.bypass = options.proxyBypass;
   }
@@ -258,7 +257,7 @@ export async function codegen(options: Options & { target: string, output?: stri
   const donePromise = new ManualPromise<void>();
   maybeSetupTestHooks(browser, closeBrowser, donePromise);
   dotenv.config({ path: 'playwright.env', quiet: true });
-  await context._enableRecorder({
+  await context._showRecorder({
     language,
     launchOptions,
     contextOptions,

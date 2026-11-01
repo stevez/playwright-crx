@@ -33,6 +33,16 @@ test('install-browser', async ({ cli, server, mcpBrowser }) => {
   expect(output).toMatch(/chromium-\d+/);
 });
 
+test('install-browser --no-shell', async ({ cli }) => {
+  const withShell = await cli('install-browser', 'chromium', '--dry-run');
+  expect(withShell.exitCode).toBe(0);
+  expect(withShell.output).toContain('chromium-headless-shell');
+  const noShell = await cli('install-browser', 'chromium', '--no-shell', '--dry-run');
+  expect(noShell.exitCode).toBe(0);
+  expect(noShell.output).toMatch(/chromium v\d+/);
+  expect(noShell.output).not.toContain('chromium-headless-shell');
+});
+
 test('install workspace', async ({ cli }, testInfo) => {
   const { output } = await cli('install');
   expect(output).toContain(`Workspace initialized at`);
@@ -63,6 +73,10 @@ test('install workspace w/skills', async ({ cli }, testInfo) => {
 
   const skillFile = testInfo.outputPath('.claude', 'skills', 'playwright-cli', 'SKILL.md');
   expect(fs.existsSync(skillFile)).toBe(true);
+  const skillContents = fs.readFileSync(skillFile, 'utf-8');
+  expect(skillContents.match(/^allowed-tools: .*/gm)).toEqual([
+    'allowed-tools: Bash(playwright-cli:*) Bash(npx playwright:*) Bash(npx --no-install playwright:*)',
+  ]);
 
   const referencesDir = testInfo.outputPath('.claude', 'skills', 'playwright-cli', 'references');
   const references = await fs.promises.readdir(referencesDir);

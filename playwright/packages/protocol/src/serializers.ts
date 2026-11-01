@@ -16,6 +16,18 @@
 
 import type { SerializedValue } from '@protocol/structs';
 
+// See https://nodejs.org/api/errors.html#errorcode.
+export function systemErrorCode(error: any): string | undefined {
+  return typeof error.code === 'string' ? error.code : undefined;
+}
+
+export function systemErrorMessage(error: any): string {
+  const message = error.message;
+  if (typeof error.code !== 'string' || !/^E[A-Z0-9]+$/.test(error.code) || message.includes(error.code))
+    return message;
+  return `${message} (${error.code})`;
+}
+
 export function parseSerializedValue(value: SerializedValue, handles: any[] | undefined): any {
   return innerParseSerializedValue(value, handles, new Map(), []);
 }
