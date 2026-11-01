@@ -106,21 +106,21 @@ const utilityFixtures: Fixtures<UtilityTestFixtures, UtilityWorkerFixtures> = {
         const zone = currentZone().data<TestStepInternal>('stepZone');
         const isExpectCall = (channel.type === 'Frame' && channel.method === 'expect') || (channel.type === 'Page' && channel.method === 'expectScreenshot');
         if (zone && zone.category === 'expect' && isExpectCall) {
-          data.stepId = zone.stepId;
+          data.callId = zone.stepId;
           return;
         }
 
-        // In the general case, create a step for each api call and connect them through the stepId.
+        // In the general case, create a step for each api call, use it as a callId.
         const params = renderParamsForCall({ type: channel.type, method: channel.method, params: channel.params });
         const step = testInfo._addStep({
-          location: data.frames[0],
+          stack: data.frames,
           category: 'pw:api',
           title: renderTitle(channel.type, channel.method, channel.params, data.title),
           subtitle: renderSubtitle(channel.type, channel.method, channel.params),
           params,
           group: getActionGroup({ type: channel.type, method: channel.method }),
         }, tracingGroupSteps[tracingGroupSteps.length - 1]);
-        data.stepId = step.stepId;
+        data.callId = step.stepId;
         if (channel.type === 'Tracing' && channel.method === 'tracingGroup') {
           // The step will end later, when the corresponding "tracing.groupEnd" call finishes.
           tracingGroupSteps.push(step);
@@ -279,6 +279,7 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures, UtilityTestFixt
   permissions: [({ contextOptions }, use) => use(contextOptions.permissions), { option: true, box: true }],
   proxy: [({ contextOptions }, use) => use(contextOptions.proxy), { option: true, box: true }],
   reducedMotion: [({ contextOptions }, use) => use(contextOptions.reducedMotion === undefined ? 'no-preference' : contextOptions.reducedMotion), { option: true, box: true }],
+  screen: [({ contextOptions }, use) => use(contextOptions.screen), { option: true, box: true }],
   storageState: [({ contextOptions }, use) => use(contextOptions.storageState), { option: true, box: true }],
   clientCertificates: [({ contextOptions }, use) => use(contextOptions.clientCertificates), { option: true, box: true }],
   timezoneId: [({ contextOptions }, use) => use(contextOptions.timezoneId), { option: true, box: true }],
@@ -311,6 +312,7 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures, UtilityTestFixt
     permissions,
     proxy,
     reducedMotion,
+    screen,
     storageState,
     viewport,
     timezoneId,
@@ -356,6 +358,8 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures, UtilityTestFixt
       options.proxy = proxy;
     if (reducedMotion !== undefined)
       options.reducedMotion = reducedMotion;
+    if (screen !== undefined)
+      options.screen = screen;
     if (storageState !== undefined)
       options.storageState = storageState;
     if (clientCertificates?.length)
@@ -414,6 +418,7 @@ const playwrightFixtures: Fixtures<TestFixtures, WorkerFixtures, UtilityTestFixt
         recordVideo: {
           dir: tracing().artifactsDir(),
           size: typeof video === 'string' ? undefined : video.size,
+          fps: typeof video === 'string' ? undefined : video.fps,
           showActions: show?.actions,
         }
       } : {};
@@ -876,7 +881,7 @@ async function installScreencastTitleUpdater(testInfo: TestInfoImpl, context: Br
   const fontSize = testAnnotate.fontSize ?? 14;
   const level = testAnnotate.level ?? 'step';
 
-  const updateOverlay = async () => {
+  const doUpdateOverlay = async () => {
     const parts = level === 'step' ? [...testTitle, ...stepStack] : testTitle;
     const html = createTestOverlay(parts, position, fontSize);
     for (const page of context.pages()) {
@@ -885,6 +890,12 @@ async function installScreencastTitleUpdater(testInfo: TestInfoImpl, context: Br
       const disposable = await page.screencast.showOverlay(html);
       overlays.set(page, disposable);
     }
+  };
+  let lastUpdate = Promise.resolve();
+  const updateOverlay = () => {
+    const result = lastUpdate.then(doUpdateOverlay);
+    lastUpdate = result.catch(() => {});
+    return result;
   };
   testInfo._onUserStepBegin = async title => {
     stepStack.push(title);

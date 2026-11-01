@@ -50,7 +50,7 @@ import { TimeoutSettings, kNoTimeout } from './timeoutSettings';
 import { mkdirIfNeeded } from './fileUtils';
 import { ConsoleMessage } from './consoleMessage';
 import type { BrowserContext } from './browserContext';
-import type { EvaluateOptions } from './jsHandle';
+import type { EvaluateOptions, ExposeFunctionsOptions } from './jsHandle';
 import type { Clock } from './clock';
 import type { APIRequestContext } from './fetch';
 import type { WaitForNavigationOptions } from './frame';
@@ -63,6 +63,7 @@ import type { AriaSnapshotJSON } from '@isomorphic/ariaSnapshot';
 import type { ByRoleOptions } from '@isomorphic/locatorUtils';
 import type { URLMatch } from '@isomorphic/urlMatch';
 import type * as channels from './channels';
+import type { WebMCP } from './webmcp';
 
 type PDFOptions = Omit<channels.PagePdfParams, 'width' | 'height' | 'margin'> & {
   width?: string | number,
@@ -109,7 +110,7 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
   readonly screencast: Screencast;
   readonly localStorage: WebStorage;
   readonly sessionStorage: WebStorage;
-
+  readonly webmcp: WebMCP;
 
   readonly _bindings = new Map<string, (source: structs.BindingSource, ...args: any[]) => any>();
   readonly _timeoutSettings: TimeoutSettings;
@@ -146,6 +147,7 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
 
     this._mainFrame = Frame.from(initializer.mainFrame);
     this._mainFrame._page = this;
+    this.webmcp = this._mainFrame.webmcp;
     this._frames.add(this._mainFrame);
     this._viewportSize = initializer.viewportSize;
     this._closed = initializer.isClosed;
@@ -407,8 +409,8 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
     return this._mainFrame.url();
   }
 
-  async content(): Promise<string> {
-    return await this._mainFrame.content();
+  async content(options?: channels.FrameContentOptions): Promise<string> {
+    return await this._mainFrame.content(options);
   }
 
   async setContent(html: string, options?: channels.FrameSetContentOptions & TimeoutOptions): Promise<void> {
@@ -557,7 +559,7 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
     return await this._mainFrame.evaluate(pageFunction, arg, options);
   }
 
-  async addInitScript(script: Function | string | { path?: string, content?: string }, arg?: any, options?: EvaluateOptions) {
+  async addInitScript(script: Function | string | { path?: string, content?: string }, arg?: any, options?: ExposeFunctionsOptions) {
     assertEvaluateOptions(options);
     if (options?.exposeFunctions)
       return await addInitScriptWithExposedFunctions(this, script, arg);
@@ -769,6 +771,10 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
 
   getByPlaceholder(text: string | RegExp, options?: { exact?: boolean }): Locator {
     return this.mainFrame().getByPlaceholder(text, options);
+  }
+
+  getByRef(ref: string): Locator {
+    return this.locator(`aria-ref=${ref}`);
   }
 
   getByText(text: string | RegExp, options?: { exact?: boolean }): Locator {

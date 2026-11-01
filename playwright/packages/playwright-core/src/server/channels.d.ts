@@ -18,8 +18,8 @@
 
 import type { Progress } from './progress';
 
-import type { Binary, Channel, AndroidWebView, AndroidSelector, AndroidElementInfo, APIResponse, Metadata, ClientSideCallMetadata, SDKLanguage, WaitInfo, HttpCredentials, SetNetworkCookie, NetworkCookie, ResourceTiming, SecurityDetails, RequestSizes, RemoteAddr, ExpectedTextValue, SelectorEngine, FormField, LifecycleEvent, ConsoleMessagesFilter, RecorderSource, IndexedDBDatabase, OPFSEntry, SetOriginStorage, OriginStorage, RecordHarOptions, SerializedValue, SerializedArgument, SerializedError, StackFrame, VirtualCredential, Point, Rect, URLPattern, NameValue } from '@protocol/structs';
-export type { Binary, Channel, AndroidWebView, AndroidSelector, AndroidElementInfo, APIResponse, Metadata, ClientSideCallMetadata, SDKLanguage, WaitInfo, HttpCredentials, SetNetworkCookie, NetworkCookie, ResourceTiming, SecurityDetails, RequestSizes, RemoteAddr, ExpectedTextValue, SelectorEngine, FormField, LifecycleEvent, ConsoleMessagesFilter, RecorderSource, IndexedDBDatabase, OPFSEntry, SetOriginStorage, OriginStorage, RecordHarOptions, SerializedValue, SerializedArgument, SerializedError, StackFrame, VirtualCredential, Point, Rect, URLPattern, NameValue } from '@protocol/structs';
+import type { Binary, Channel, AndroidWebView, AndroidSelector, AndroidElementInfo, APIResponse, Metadata, ClientSideCallMetadata, SDKLanguage, WaitInfo, HttpCredentials, SetNetworkCookie, NetworkCookie, ResourceTiming, SecurityDetails, RequestSizes, RemoteAddr, ExpectedTextValue, SelectorEngine, FormField, LifecycleEvent, ConsoleMessagesFilter, RecorderSource, IndexedDBDatabase, OPFSEntry, SetOriginStorage, OriginStorage, RecordHarOptions, SerializedValue, SerializedArgument, SerializedError, StackFrame, VirtualCredential, SetVirtualCredential, Point, Rect, URLPattern, NameValue } from '@protocol/structs';
+export type { Binary, Channel, AndroidWebView, AndroidSelector, AndroidElementInfo, APIResponse, Metadata, ClientSideCallMetadata, SDKLanguage, WaitInfo, HttpCredentials, SetNetworkCookie, NetworkCookie, ResourceTiming, SecurityDetails, RequestSizes, RemoteAddr, ExpectedTextValue, SelectorEngine, FormField, LifecycleEvent, ConsoleMessagesFilter, RecorderSource, IndexedDBDatabase, OPFSEntry, SetOriginStorage, OriginStorage, RecordHarOptions, SerializedValue, SerializedArgument, SerializedError, StackFrame, VirtualCredential, SetVirtualCredential, Point, Rect, URLPattern, NameValue } from '@protocol/structs';
 
 // ----------- Initializer Traits -----------
 export type InitializerTraits<T> =
@@ -421,11 +421,17 @@ export type AndroidDeviceLaunchBrowserParams = {
       width: number,
       height: number,
     },
+    fps?: number,
     showActions?: {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
       cursor?: 'none' | 'pointer',
+      style?: {
+        point?: string,
+        highlight?: string,
+        title?: string,
+      },
     },
   },
   strictSelectors?: boolean,
@@ -488,11 +494,17 @@ export type AndroidDeviceLaunchBrowserOptions = {
       width: number,
       height: number,
     },
+    fps?: number,
     showActions?: {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
       cursor?: 'none' | 'pointer',
+      style?: {
+        point?: string,
+        highlight?: string,
+        title?: string,
+      },
     },
   },
   strictSelectors?: boolean,
@@ -576,6 +588,9 @@ export interface APIRequestContextChannel extends APIRequestContextEventTarget, 
   fetch(params: APIRequestContextFetchParams, progress: Progress): Promise<APIRequestContextFetchResult>;
   fetchResponseBody(params: APIRequestContextFetchResponseBodyParams, progress: Progress): Promise<APIRequestContextFetchResponseBodyResult>;
   fetchLog(params: APIRequestContextFetchLogParams, progress: Progress): Promise<APIRequestContextFetchLogResult>;
+  addCookies(params: APIRequestContextAddCookiesParams, progress: Progress): Promise<APIRequestContextAddCookiesResult>;
+  clearCookies(params: APIRequestContextClearCookiesParams, progress: Progress): Promise<APIRequestContextClearCookiesResult>;
+  cookies(params: APIRequestContextCookiesParams, progress: Progress): Promise<APIRequestContextCookiesResult>;
   storageState(params: APIRequestContextStorageStateParams, progress: Progress): Promise<APIRequestContextStorageStateResult>;
   disposeAPIResponse(params: APIRequestContextDisposeAPIResponseParams, progress: Progress): Promise<APIRequestContextDisposeAPIResponseResult>;
   dispose(params: APIRequestContextDisposeParams, progress: Progress): Promise<APIRequestContextDisposeResult>;
@@ -629,6 +644,45 @@ export type APIRequestContextFetchLogOptions = {
 };
 export type APIRequestContextFetchLogResult = {
   log: string[],
+};
+export type APIRequestContextAddCookiesParams = {
+  cookies: SetNetworkCookie[],
+};
+export type APIRequestContextAddCookiesOptions = {
+
+};
+export type APIRequestContextAddCookiesResult = void;
+export type APIRequestContextClearCookiesParams = {
+  name?: string,
+  nameRegexSource?: string,
+  nameRegexFlags?: string,
+  domain?: string,
+  domainRegexSource?: string,
+  domainRegexFlags?: string,
+  path?: string,
+  pathRegexSource?: string,
+  pathRegexFlags?: string,
+};
+export type APIRequestContextClearCookiesOptions = {
+  name?: string,
+  nameRegexSource?: string,
+  nameRegexFlags?: string,
+  domain?: string,
+  domainRegexSource?: string,
+  domainRegexFlags?: string,
+  path?: string,
+  pathRegexSource?: string,
+  pathRegexFlags?: string,
+};
+export type APIRequestContextClearCookiesResult = void;
+export type APIRequestContextCookiesParams = {
+  urls: string[],
+};
+export type APIRequestContextCookiesOptions = {
+
+};
+export type APIRequestContextCookiesResult = {
+  cookies: NetworkCookie[],
 };
 export type APIRequestContextStorageStateParams = {
   indexedDB?: boolean,
@@ -870,11 +924,17 @@ export type BrowserNewContextParams = {
       width: number,
       height: number,
     },
+    fps?: number,
     showActions?: {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
       cursor?: 'none' | 'pointer',
+      style?: {
+        point?: string,
+        highlight?: string,
+        title?: string,
+      },
     },
   },
   strictSelectors?: boolean,
@@ -890,7 +950,7 @@ export type BrowserNewContextParams = {
   storageState?: {
     cookies?: SetNetworkCookie[],
     origins?: SetOriginStorage[],
-    credentials?: VirtualCredential[],
+    credentials?: SetVirtualCredential[],
   },
 };
 export type BrowserNewContextOptions = {
@@ -940,11 +1000,17 @@ export type BrowserNewContextOptions = {
       width: number,
       height: number,
     },
+    fps?: number,
     showActions?: {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
       cursor?: 'none' | 'pointer',
+      style?: {
+        point?: string,
+        highlight?: string,
+        title?: string,
+      },
     },
   },
   strictSelectors?: boolean,
@@ -960,7 +1026,7 @@ export type BrowserNewContextOptions = {
   storageState?: {
     cookies?: SetNetworkCookie[],
     origins?: SetOriginStorage[],
-    credentials?: VirtualCredential[],
+    credentials?: SetVirtualCredential[],
   },
 };
 export type BrowserNewContextResult = {
@@ -1013,11 +1079,17 @@ export type BrowserNewContextForReuseParams = {
       width: number,
       height: number,
     },
+    fps?: number,
     showActions?: {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
       cursor?: 'none' | 'pointer',
+      style?: {
+        point?: string,
+        highlight?: string,
+        title?: string,
+      },
     },
   },
   strictSelectors?: boolean,
@@ -1033,7 +1105,7 @@ export type BrowserNewContextForReuseParams = {
   storageState?: {
     cookies?: SetNetworkCookie[],
     origins?: SetOriginStorage[],
-    credentials?: VirtualCredential[],
+    credentials?: SetVirtualCredential[],
   },
 };
 export type BrowserNewContextForReuseOptions = {
@@ -1083,11 +1155,17 @@ export type BrowserNewContextForReuseOptions = {
       width: number,
       height: number,
     },
+    fps?: number,
     showActions?: {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
       cursor?: 'none' | 'pointer',
+      style?: {
+        point?: string,
+        highlight?: string,
+        title?: string,
+      },
     },
   },
   strictSelectors?: boolean,
@@ -1103,7 +1181,7 @@ export type BrowserNewContextForReuseOptions = {
   storageState?: {
     cookies?: SetNetworkCookie[],
     origins?: SetOriginStorage[],
-    credentials?: VirtualCredential[],
+    credentials?: SetVirtualCredential[],
   },
 };
 export type BrowserNewContextForReuseResult = {
@@ -1195,11 +1273,17 @@ export type BrowserContextInitializer = {
         width: number,
         height: number,
       },
+      fps?: number,
       showActions?: {
         duration?: number,
         position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
         fontSize?: number,
         cursor?: 'none' | 'pointer',
+        style?: {
+          point?: string,
+          highlight?: string,
+          title?: string,
+        },
       },
     },
     strictSelectors?: boolean,
@@ -1247,8 +1331,9 @@ export interface BrowserContextChannel extends BrowserContextEventTarget, Channe
   storageState(params: BrowserContextStorageStateParams, progress: Progress): Promise<BrowserContextStorageStateResult>;
   setStorageState(params: BrowserContextSetStorageStateParams, progress: Progress): Promise<BrowserContextSetStorageStateResult>;
   pause(params: BrowserContextPauseParams, progress: Progress): Promise<BrowserContextPauseResult>;
-  enableRecorder(params: BrowserContextEnableRecorderParams, progress: Progress): Promise<BrowserContextEnableRecorderResult>;
-  disableRecorder(params: BrowserContextDisableRecorderParams, progress: Progress): Promise<BrowserContextDisableRecorderResult>;
+  showRecorder(params: BrowserContextShowRecorderParams, progress: Progress): Promise<BrowserContextShowRecorderResult>;
+  startRecording(params: BrowserContextStartRecordingParams, progress: Progress): Promise<BrowserContextStartRecordingResult>;
+  stopRecording(params: BrowserContextStopRecordingParams, progress: Progress): Promise<BrowserContextStopRecordingResult>;
   exposeConsoleApi(params: BrowserContextExposeConsoleApiParams, progress: Progress): Promise<BrowserContextExposeConsoleApiResult>;
   newCDPSession(params: BrowserContextNewCDPSessionParams, progress: Progress): Promise<BrowserContextNewCDPSessionResult>;
   createTempFiles(params: BrowserContextCreateTempFilesParams, progress: Progress): Promise<BrowserContextCreateTempFilesResult>;
@@ -1509,24 +1594,23 @@ export type BrowserContextSetStorageStateParams = {
   storageState?: {
     cookies?: SetNetworkCookie[],
     origins?: SetOriginStorage[],
-    credentials?: VirtualCredential[],
+    credentials?: SetVirtualCredential[],
   },
 };
 export type BrowserContextSetStorageStateOptions = {
   storageState?: {
     cookies?: SetNetworkCookie[],
     origins?: SetOriginStorage[],
-    credentials?: VirtualCredential[],
+    credentials?: SetVirtualCredential[],
   },
 };
 export type BrowserContextSetStorageStateResult = void;
 export type BrowserContextPauseParams = {};
 export type BrowserContextPauseOptions = {};
 export type BrowserContextPauseResult = void;
-export type BrowserContextEnableRecorderParams = {
+export type BrowserContextShowRecorderParams = {
   language?: string,
   mode?: 'inspecting' | 'recording',
-  recorderMode?: 'default' | 'api',
   pauseOnNextStatement?: boolean,
   testIdAttributeName?: string,
   launchOptions?: any,
@@ -1537,10 +1621,9 @@ export type BrowserContextEnableRecorderParams = {
   handleSIGINT?: boolean,
   omitCallTracking?: boolean,
 };
-export type BrowserContextEnableRecorderOptions = {
+export type BrowserContextShowRecorderOptions = {
   language?: string,
   mode?: 'inspecting' | 'recording',
-  recorderMode?: 'default' | 'api',
   pauseOnNextStatement?: boolean,
   testIdAttributeName?: string,
   launchOptions?: any,
@@ -1551,10 +1634,17 @@ export type BrowserContextEnableRecorderOptions = {
   handleSIGINT?: boolean,
   omitCallTracking?: boolean,
 };
-export type BrowserContextEnableRecorderResult = void;
-export type BrowserContextDisableRecorderParams = {};
-export type BrowserContextDisableRecorderOptions = {};
-export type BrowserContextDisableRecorderResult = void;
+export type BrowserContextShowRecorderResult = void;
+export type BrowserContextStartRecordingParams = {
+  language?: string,
+};
+export type BrowserContextStartRecordingOptions = {
+  language?: string,
+};
+export type BrowserContextStartRecordingResult = void;
+export type BrowserContextStopRecordingParams = {};
+export type BrowserContextStopRecordingOptions = {};
+export type BrowserContextStopRecordingResult = void;
 export type BrowserContextExposeConsoleApiParams = {};
 export type BrowserContextExposeConsoleApiOptions = {};
 export type BrowserContextExposeConsoleApiResult = void;
@@ -1657,12 +1747,14 @@ export type BrowserContextCredentialsCreateParams = {
   userHandle?: string,
   privateKey?: string,
   publicKey?: string,
+  signCount?: number,
 };
 export type BrowserContextCredentialsCreateOptions = {
   id?: string,
   userHandle?: string,
   privateKey?: string,
   publicKey?: string,
+  signCount?: number,
 };
 export type BrowserContextCredentialsCreateResult = {
   credential: VirtualCredential,
@@ -1840,11 +1932,17 @@ export type BrowserTypeLaunchPersistentContextParams = {
       width: number,
       height: number,
     },
+    fps?: number,
     showActions?: {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
       cursor?: 'none' | 'pointer',
+      style?: {
+        point?: string,
+        highlight?: string,
+        title?: string,
+      },
     },
   },
   strictSelectors?: boolean,
@@ -1923,11 +2021,17 @@ export type BrowserTypeLaunchPersistentContextOptions = {
       width: number,
       height: number,
     },
+    fps?: number,
     showActions?: {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
       cursor?: 'none' | 'pointer',
+      style?: {
+        point?: string,
+        highlight?: string,
+        title?: string,
+      },
     },
   },
   strictSelectors?: boolean,
@@ -2025,11 +2129,17 @@ export type ElectronLaunchParams = {
       width: number,
       height: number,
     },
+    fps?: number,
     showActions?: {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
       cursor?: 'none' | 'pointer',
+      style?: {
+        point?: string,
+        highlight?: string,
+        title?: string,
+      },
     },
   },
   strictSelectors?: boolean,
@@ -2064,11 +2174,17 @@ export type ElectronLaunchOptions = {
       width: number,
       height: number,
     },
+    fps?: number,
     showActions?: {
       duration?: number,
       position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
       fontSize?: number,
       cursor?: 'none' | 'pointer',
+      style?: {
+        point?: string,
+        highlight?: string,
+        title?: string,
+      },
     },
   },
   strictSelectors?: boolean,
@@ -2220,6 +2336,8 @@ export interface FrameChannel extends FrameEventTarget, Channel {
   waitForFunction(params: FrameWaitForFunctionParams, progress: Progress): Promise<FrameWaitForFunctionResult>;
   waitForSelector(params: FrameWaitForSelectorParams, progress: Progress): Promise<FrameWaitForSelectorResult>;
   expect(params: FrameExpectParams, progress: Progress): Promise<FrameExpectResult>;
+  webmcpTools(params: FrameWebmcpToolsParams, progress: Progress): Promise<FrameWebmcpToolsResult>;
+  webmcpCallTool(params: FrameWebmcpCallToolParams, progress: Progress): Promise<FrameWebmcpCallToolResult>;
 }
 export type FrameLoadstateEvent = {
   add?: LifecycleEvent,
@@ -2365,8 +2483,12 @@ export type FrameClickOptions = {
   steps?: number,
 };
 export type FrameClickResult = void;
-export type FrameContentParams = {};
-export type FrameContentOptions = {};
+export type FrameContentParams = {
+  includeShadow?: boolean,
+};
+export type FrameContentOptions = {
+  includeShadow?: boolean,
+};
 export type FrameContentResult = {
   value: string,
 };
@@ -2505,12 +2627,14 @@ export type FrameFrameElementResult = {
 };
 export type FrameResolveSelectorParams = {
   selector: string,
+  sdkLanguage?: SDKLanguage,
 };
 export type FrameResolveSelectorOptions = {
-
+  sdkLanguage?: SDKLanguage,
 };
 export type FrameResolveSelectorResult = {
   resolvedSelector: string,
+  locatorCode?: string,
 };
 export type FrameHighlightParams = {
   selector: string,
@@ -2885,6 +3009,30 @@ export type FrameExpectErrorDetails = {
   },
   timedOut?: boolean,
   customErrorMessage?: string,
+};
+export type FrameWebmcpToolsParams = {};
+export type FrameWebmcpToolsOptions = {};
+export type FrameWebmcpToolsResult = {
+  tools: {
+    name: string,
+    description: string,
+    inputSchema?: any,
+    annotations?: {
+      readOnly?: boolean,
+      untrustedContent?: boolean,
+      consequential?: boolean,
+    },
+  }[],
+};
+export type FrameWebmcpCallToolParams = {
+  name: string,
+  input: SerializedArgument,
+};
+export type FrameWebmcpCallToolOptions = {
+
+};
+export type FrameWebmcpCallToolResult = {
+  result: SerializedValue,
 };
 
 export interface FrameEvents {
@@ -3409,6 +3557,7 @@ export interface LocalUtilsChannel extends LocalUtilsEventTarget, Channel {
   addStackToTracingNoReply(params: LocalUtilsAddStackToTracingNoReplyParams, progress: Progress): Promise<LocalUtilsAddStackToTracingNoReplyResult>;
   traceDiscarded(params: LocalUtilsTraceDiscardedParams, progress: Progress): Promise<LocalUtilsTraceDiscardedResult>;
   globToRegex(params: LocalUtilsGlobToRegexParams, progress: Progress): Promise<LocalUtilsGlobToRegexResult>;
+  asLocatorDescription(params: LocalUtilsAsLocatorDescriptionParams, progress: Progress): Promise<LocalUtilsAsLocatorDescriptionResult>;
 }
 export type LocalUtilsZipParams = {
   zipFile: string,
@@ -3522,6 +3671,16 @@ export type LocalUtilsGlobToRegexOptions = {
 };
 export type LocalUtilsGlobToRegexResult = {
   regex: string,
+};
+export type LocalUtilsAsLocatorDescriptionParams = {
+  selector: string,
+  sdkLanguage: SDKLanguage,
+};
+export type LocalUtilsAsLocatorDescriptionOptions = {
+
+};
+export type LocalUtilsAsLocatorDescriptionResult = {
+  description: string,
 };
 
 export interface LocalUtilsEvents {
@@ -4447,12 +4606,22 @@ export type PageScreencastShowActionsParams = {
   position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
   fontSize?: number,
   cursor?: 'none' | 'pointer',
+  style?: {
+    point?: string,
+    highlight?: string,
+    title?: string,
+  },
 };
 export type PageScreencastShowActionsOptions = {
   duration?: number,
   position?: 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right',
   fontSize?: number,
   cursor?: 'none' | 'pointer',
+  style?: {
+    point?: string,
+    highlight?: string,
+    title?: string,
+  },
 };
 export type PageScreencastShowActionsResult = void;
 export type PageScreencastHideActionsParams = {};
@@ -4464,6 +4633,7 @@ export type PageScreencastStartParams = {
     height: number,
   },
   quality?: number,
+  fps?: number,
   sendFrames?: boolean,
   record?: boolean,
 };
@@ -4473,6 +4643,7 @@ export type PageScreencastStartOptions = {
     height: number,
   },
   quality?: number,
+  fps?: number,
   sendFrames?: boolean,
   record?: boolean,
 };
@@ -5047,6 +5218,7 @@ export type TracingTracingStartParams = {
   snapshotAria?: boolean,
   snapshotScreen?: boolean,
   screencast?: boolean,
+  coverage?: boolean,
   live?: boolean,
 };
 export type TracingTracingStartOptions = {
@@ -5055,6 +5227,7 @@ export type TracingTracingStartOptions = {
   snapshotAria?: boolean,
   snapshotScreen?: boolean,
   screencast?: boolean,
+  coverage?: boolean,
   live?: boolean,
 };
 export type TracingTracingStartResult = void;

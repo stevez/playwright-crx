@@ -20,6 +20,7 @@ import url from 'url';
 import * as yazl from 'yazl';
 import { test as baseTest, expect as baseExpect, cliEntrypoint, createImage } from './playwright-test-fixtures';
 import { iso, utils } from '../../packages/playwright-core/lib/coreBundle';
+import { mergeServiceWorkerCoverage } from '../config/serviceWorkerCoverage';
 
 type HttpServer = utils.HttpServer;
 
@@ -27,6 +28,11 @@ const { msToString } = iso;
 const { spawnAsync } = utils;
 
 const test = baseTest.extend<{ showReport: (reportFolder?: string) => Promise<void> }>({
+  page: async ({ page }, use) => {
+    await use(page);
+    // Before the page is collected.
+    await mergeServiceWorkerCoverage(page);
+  },
   showReport: async ({ page }, use, testInfo) => {
     let server: HttpServer | undefined;
     await use(async (reportFolder?: string) => {
@@ -87,6 +93,30 @@ for (const useIntermediateMergeReport of [true, false] as const) {
       await expect(page.getByTestId('project-name'), 'should contain project name').toContainText('project-name');
 
       await expect(page.getByTestId('metadata-view')).not.toBeVisible();
+    });
+
+    test('speedboard "Show more" button should show the remaining test count', async ({ runInlineTest, showReport, page }) => {
+      const tests: string[] = [];
+      for (let i = 1; i <= 57; ++i)
+        tests.push(`test('test ${String(i).padStart(2, '0')}', async () => { await new Promise(f => setTimeout(f, ${i})); });`);
+      await runInlineTest({
+        'a.spec.ts': `
+          import { test } from '@playwright/test';
+          ${tests.join('\n          ')}
+        `,
+      }, { reporter: 'dot,html' }, { PLAYWRIGHT_HTML_OPEN: 'never' });
+
+      await showReport();
+      await page.getByRole('link', { name: 'Speedboard' }).click();
+
+      // 57 tests with the initial page size of 50 → exactly 7 remain.
+      const button = page.locator('button', { hasText: /Show \d+ more/ });
+      await expect(button).toHaveCount(1);
+      await expect(button).toContainText('Show 7 more');
+
+      // Revealing the remaining tests removes the button.
+      await button.click();
+      await expect(page.locator('button', { hasText: /Show \d+ more/ })).toHaveCount(0);
     });
 
     test('should allow navigating to testId=test.id', async ({ runInlineTest, page, showReport }) => {
@@ -3372,6 +3402,42 @@ for (const useIntermediateMergeReport of [true, false] as const) {
       expect(isShallow.trim()).toBe('false');
     });
 
+    test('should not hang when git fetch stalls', async ({ runInlineTest, writeFiles, useIntermediateMergeReport }) => {
+      test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/42630' });
+      test.skip(useIntermediateMergeReport, 'plugin output is not available in merge report');
+      const files = {
+        'playwright.config.ts': `export default {}`,
+        'example.spec.ts': `
+          import { test, expect } from '@playwright/test';
+          test('sample', async ({}) => { expect(2).toBe(2); });
+        `,
+        'hang.js': `
+          require('fs').writeFileSync(__filename + '.pid', String(process.pid));
+          setTimeout(() => {}, 120_000);
+        `,
+      };
+      const baseDir = await writeFiles(files);
+      await initGitRepo(baseDir);
+      await execGit(baseDir, ['remote', 'add', 'origin', 'ssh://example.com/repo.git']);
+      const hangScript = path.join(baseDir, 'hang.js');
+      const sshCommand = [process.execPath, hangScript].map(p => JSON.stringify(p.replace(/\\/g, '/'))).join(' ');
+      await execGit(baseDir, ['config', '--local', 'core.sshCommand', sshCommand]);
+      await execGit(baseDir, ['config', '--local', 'ssh.variant', 'ssh']);
+
+      const result = await runInlineTest({}, { reporter: 'dot' }, {
+        PLAYWRIGHT_HTML_OPEN: 'never',
+        ...(await ghaPullRequestEnv(baseDir, '1'.repeat(40))),
+      });
+      try {
+        process.kill(+await fs.promises.readFile(hangScript + '.pid', 'utf8'), 'SIGKILL');
+      } catch {
+      }
+
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain('timeout of 3000ms exceeded while running "git fetch origin');
+      expect(result.report.config.metadata.gitDiff).toBeUndefined();
+    });
+
     test('should include snapshot when page wasnt closed', async ({ runInlineTest, showReport, page }) => {
       const result = await runInlineTest({
         'example.spec.ts': `
@@ -3725,6 +3791,38 @@ test('should support merge files option', async ({ runInlineTest, showReport, pa
           - link "test 3"
           - link "b.test.js:4"
   `);
+});
+
+test('should print show-report command without path when invoked from the report dir', async ({ runInlineTest }, testInfo) => {
+  const result = await runInlineTest({
+    'playwright.config.ts': `
+      process.stdin.isTTY = true;
+      export default { reporter: 'html' };
+    `,
+    'a.test.js': `
+      import { test } from '@playwright/test';
+      test('passes', () => {});
+    `,
+  }, {}, { PLAYWRIGHT_HTML_OPEN: 'never', INIT_CWD: testInfo.outputPath() });
+  expect(result.exitCode).toBe(0);
+  expect(result.output).toContain('To open last HTML report run:');
+  expect(result.output).toMatch(/npx playwright show-report\n/);
+});
+
+test('should print show-report command with path relative to npm invocation dir', async ({ runInlineTest }, testInfo) => {
+  const result = await runInlineTest({
+    'sub/package.json': `{ "name": "sub" }`,
+    'sub/playwright.config.ts': `
+      process.stdin.isTTY = true;
+      export default { reporter: 'html' };
+    `,
+    'sub/a.test.js': `
+      import { test } from '@playwright/test';
+      test('passes', () => {});
+    `,
+  }, {}, { PLAYWRIGHT_HTML_OPEN: 'never', INIT_CWD: testInfo.outputPath() }, { cwd: 'sub' });
+  expect(result.exitCode).toBe(0);
+  expect(result.output).toContain(`npx playwright show-report ${path.join('sub', 'playwright-report')}\n`);
 });
 
 test.describe('show-report .zip support', () => {

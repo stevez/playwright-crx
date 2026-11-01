@@ -21,6 +21,7 @@ import console from './console';
 import cookies from './cookies';
 import devtools from './devtools';
 import dialogs from './dialogs';
+import emulation from './emulation';
 import evaluate from './evaluate';
 import files from './files';
 import find from './find';
@@ -41,6 +42,7 @@ import tracing from './tracing';
 import verify from './verify';
 import video from './video';
 import wait from './wait';
+import webmcp from './webmcp';
 import webstorage from './webstorage';
 
 import type { Tool } from './tool';
@@ -53,6 +55,7 @@ export const browserTools: Tool<any>[] = [
   ...cookies,
   ...devtools,
   ...dialogs,
+  ...emulation,
   ...evaluate,
   ...files,
   ...find,
@@ -73,6 +76,7 @@ export const browserTools: Tool<any>[] = [
   ...verify,
   ...video,
   ...wait,
+  ...webmcp,
   ...webstorage,
 ];
 

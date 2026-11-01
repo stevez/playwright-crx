@@ -23,7 +23,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { startMcpHttpServer } from './http';
 import { toMcpTool } from './tool';
 
-import type { CallToolResult, CallToolRequest, Root } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult, CallToolRequest, Root, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 export type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 export type { Tool, CallToolResult, CallToolRequest, Root } from '@modelcontextprotocol/sdk/types.js';
@@ -41,6 +41,8 @@ export type ClientInfo = {
 export interface ServerBackend {
   initialize?(clientInfo: ClientInfo): Promise<void>;
   callTool(name: string, args: CallToolRequest['params']['arguments'], signal: AbortSignal): Promise<CallToolResult>;
+  dynamicTools?(): Tool[];
+  on?(event: 'dynamictoolschange', listener: () => void): void;
   dispose?(): Promise<void>;
   once(event: 'disconnected', listener: () => void): void;
 }
@@ -61,17 +63,20 @@ export async function connect(factory: ServerBackendFactory, transport: Transpor
 export function createServer(name: string, version: string, factory: ServerBackendFactory, transportInitialized: Promise<void>, runHeartbeat: boolean): ServerType {
   const server = new Server({ name, version }, {
     capabilities: {
-      tools: {},
+      tools: { listChanged: true },
     }
-  });
-
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
-    serverDebug('listTools');
-    return { tools: factory.toolSchemas.map(s => toMcpTool(s)) };
   });
 
   let backendPromise: Promise<ServerBackend> | undefined;
   let heartbeatStarted = false;
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    serverDebug('listTools');
+    const tools = factory.toolSchemas.map(s => toMcpTool(s));
+    const backend = await backendPromise?.catch(() => undefined);
+    tools.push(...backend?.dynamicTools?.() ?? []);
+    return { tools };
+  });
 
   const onClose = () => backendPromise?.then(b => b.dispose?.()).catch(serverDebug);
   addServerListener(server, 'close', onClose);
@@ -82,6 +87,10 @@ export function createServer(name: string, version: string, factory: ServerBacke
     try {
       if (!backendPromise) {
         const promise = initializeServer(server, factory, transportInitialized).then(backend => {
+          backend.on?.('dynamictoolschange', () => {
+            if (backendPromise === promise)
+              void server.sendToolListChanged().catch(serverDebug);
+          });
           backend.once('disconnected', () => {
             if (backendPromise === promise)
               backendPromise = undefined;
@@ -179,9 +188,8 @@ function addServerListener(server: ServerType, event: 'close' | 'initialized', l
 export async function start(serverBackendFactory: ServerBackendFactory, options: { host?: string; port?: number, allowedHosts?: string[], socketPath?: string } = {}) {
   if (options.port === undefined) {
     const transport = new StdioServerTransport();
-    // The SDK's StdioServerTransport doesn't detect peer disconnect — it never listens for stdin
-    // end-of-stream. Wire it up so callTool requests can be cancelled when the client goes away.
-    process.stdin.on('end', () => void transport.close());
+    // Do not close the transport on stdin end. The exit watchdog closes the browsers on stdin
+    // close, and closing a browser that is already closing force-kills it.
     await connect(serverBackendFactory, transport, Promise.resolve(), false);
     return;
   }

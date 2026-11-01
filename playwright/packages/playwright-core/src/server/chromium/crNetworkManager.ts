@@ -17,7 +17,7 @@
 
 import { eventsHelper } from '@utils/eventsHelper';
 import { assert } from '@isomorphic/assert';
-import { headersArrayToObject, headersObjectToArray } from '@isomorphic/headers';
+import { headersArrayToObject, headersObjectToArray, splitSetCookieHeader } from '@isomorphic/headers';
 import { findMatchingHttpCredentials } from '../browserContext';
 import { helper } from '../helper';
 import * as network from '../network';
@@ -520,6 +520,11 @@ export class CRNetworkManager {
       request.request.setRawRequestHeaders(null);
     }
     this._deleteRequest(request);
+    // Chromium aborts 204 responses, other browsers finish them.
+    if (response?.status() === 204) {
+      (this._page?.frameManager || this._serviceWorker)!.reportRequestFinished(request.request, response);
+      return;
+    }
     request.request._setFailureText(event.errorText || event.blockedReason || '');
     (this._page?.frameManager || this._serviceWorker)!.requestFailed(request.request, !!event.canceled);
   }
@@ -738,20 +743,6 @@ async function catchDisallowedErrors(callback: () => Promise<void>) {
 // network stack source the cookie from the store. https://github.com/microsoft/playwright/issues/41428
 function removeCookieHeader(headers: types.HeadersArray): types.HeadersArray {
   return headers.filter(header => header.name.toLowerCase() !== 'cookie');
-}
-
-function splitSetCookieHeader(headers: types.HeadersArray): types.HeadersArray {
-  const index = headers.findIndex(({ name }) => name.toLowerCase() === 'set-cookie');
-  if (index === -1)
-    return headers;
-
-  const header = headers[index];
-  const values = header.value.split('\n');
-  if (values.length === 1)
-    return headers;
-  const result = headers.slice();
-  result.splice(index, 1, ...values.map(value => ({ name: header.name, value })));
-  return result;
 }
 
 const errorReasons: { [reason: string]: Protocol.Network.ErrorReason } = {

@@ -34,11 +34,11 @@ import type EventEmitter from 'events';
 
 export type Attachment = TestInfo['attachments'][0];
 export const testTraceEntryName = 'test.trace';
-const version: trace.VERSION = 9;
+const version: trace.VERSION = 10;
 let traceOrdinal = 0;
 
 type TraceFixtureValue =  PlaywrightWorkerOptions['trace'] | undefined;
-type TraceOptions = { screenshots: boolean, snapshots: boolean | { dom?: boolean, aria?: boolean, screen?: boolean }, sources: boolean, attachments: boolean, live: boolean, mode: TraceMode };
+type TraceOptions = { screenshots: boolean, snapshots: boolean | { dom?: boolean, aria?: boolean, screen?: boolean }, _coverage: boolean, sources: boolean, attachments: boolean, live: boolean, mode: TraceMode };
 
 export class TestTracing {
   private _testInfo: TestInfoImpl;
@@ -93,7 +93,7 @@ export class TestTracing {
   }
 
   async startIfNeeded(value: TraceFixtureValue) {
-    const defaultTraceOptions: TraceOptions = { screenshots: true, snapshots: true, sources: true, attachments: true, live: false, mode: 'off' };
+    const defaultTraceOptions: TraceOptions = { screenshots: true, snapshots: true, _coverage: false, sources: true, attachments: true, live: false, mode: 'off' };
 
     if (!value) {
       this._options = defaultTraceOptions;
@@ -277,7 +277,6 @@ export class TestTracing {
     this._appendTraceEvent({
       type: 'before',
       callId: options.stepId,
-      stepId: options.stepId,
       parentId: options.parentId,
       startTime: monotonicTime(),
       class: 'Test',

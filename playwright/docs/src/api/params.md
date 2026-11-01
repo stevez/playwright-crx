@@ -7,6 +7,12 @@ When to consider operation succeeded, defaults to `load`. Events can be either:
 * `'networkidle'` - **DISCOURAGED** consider operation to be finished when there are no network connections for at least `500` ms. Don't use this method for testing, rely on web assertions to assess readiness instead.
 * `'commit'` - consider operation to be finished when network response is received and the document started loading.
 
+## content-option-include-shadow
+- `includeShadow` <[boolean]>
+
+When true, contents of open shadow roots are included as [declarative shadow DOM](https://developer.mozilla.org/en-US/docs/Web/API/Web_components/Using_shadow_DOM#declaratively_with_html),
+i.e. `<template shadowrootmode="open">` elements nested inside their host elements. Closed shadow roots are never included. Defaults to `false`.
+
 ## navigation-timeout
 * langs: python, java, csharp
 - `timeout` <[float]>
@@ -324,6 +330,40 @@ obtained via [`method: BrowserContext.storageState`].
 Populates context with given storage state. This option can be used to initialize context with logged-in information
 obtained via [`method: BrowserContext.storageState`]. Path to the file with saved storage state.
 
+## add-cookies-param
+- `cookies` <[Array]<[Object]>>
+  * alias-java: Cookie
+  - `name` <[string]>
+  - `value` <[string]>
+  - `url` ?<[string]> Either `url` or both `domain` and `path` are required. Optional.
+  - `domain` ?<[string]> For the cookie to apply to all subdomains as well, prefix domain with a dot, like this: ".example.com". Either `url` or both `domain` and `path` are required. Optional.
+  - `path` ?<[string]> Either `url` or both `domain` and `path` are required. Optional.
+  - `expires` ?<[float]> Unix time in seconds. Optional.
+  - `httpOnly` ?<[boolean]> Optional.
+  - `secure` ?<[boolean]> Optional.
+  - `sameSite` ?<[SameSiteAttribute]<"Strict"|"Lax"|"None">> Optional.
+  - `partitionKey` ?<[string]> For partitioned third-party cookies (aka [CHIPS](https://developer.mozilla.org/en-US/docs/Web/Privacy/Guides/Privacy_sandbox/Partitioned_cookies)), the partition key. Optional.
+
+## clear-cookies-option-name
+- `name` <[string]|[RegExp]>
+
+Only removes cookies with the given name.
+
+## clear-cookies-option-domain
+- `domain` <[string]|[RegExp]>
+
+Only removes cookies with the given domain.
+
+## clear-cookies-option-path
+- `path` <[string]|[RegExp]>
+
+Only removes cookies with the given path.
+
+## cookies-param-urls
+- `urls` ?<[string]|[Array]<[string]>>
+
+Optional list of URLs.
+
 ## storagestate-option-path
 - `path` <[path]>
 
@@ -588,13 +628,13 @@ Function to be evaluated in the page context.
 * langs: js
 - `exposeFunctions` <[boolean]>
 
-When set to `true`, functions passed inside [`param: arg`] are exposed in the page and can be called from the page function. Calling one returns a [Promise] of its result. Under the hood, each function is exposed via [`method: Page.exposeFunction`], so it is technically accessible from all frames and worlds of the page. Exposed functions are cleared upon the top-level navigation. Defaults to `false`, in which case functions are not serializable and passing one throws an error.
+When set to `true`, functions passed inside [`param: arg`] are exposed in the page and can be called from the page function. Calling one returns a [Promise] of its result. Under the hood, each function is exposed via [`method: Page.exposeFunction`], so it is technically accessible from all frames of the page. Exposed functions are cleared upon the top-level navigation. Defaults to `false`, in which case functions are not serializable and passing one throws an error.
 
 ## js-init-script-expose-functions
 * langs: js
 - `exposeFunctions` <[boolean]>
 
-When set to `true`, functions passed inside [`param: arg`] are exposed in the page and can be called from the init script. Calling one returns a [Promise] of its result. Under the hood, each function is exposed via [`method: Page.exposeFunction`], so it is technically accessible from all frames and worlds of the page. Unlike functions passed to [`method: Page.evaluate`], functions passed to an init script are exposed in every new document, so they survive navigations. Defaults to `false`, in which case functions are not serializable and are silently dropped.
+When set to `true`, functions passed inside [`param: arg`] are exposed in the page and can be called from the init script. Calling one returns a [Promise] of its result. Under the hood, each function is exposed via [`method: Page.exposeFunction`], so it is technically accessible from all frames of the page. Unlike functions passed to [`method: Page.evaluate`], functions passed to an init script are exposed in every new document, so they survive navigations. Defaults to `false`, in which case functions are not serializable and are silently dropped.
 
 ## js-evalonselector-pagefunction
 * langs: js
@@ -671,7 +711,7 @@ Specify device scale factor (can be thought of as dpr). Defaults to `1`. Learn m
 ## context-option-ismobile
 - `isMobile` <[boolean]>
 
-Whether the `meta viewport` tag is taken into account and touch events are enabled. isMobile is a part of device, so you don't actually need to set it manually. Defaults to `false` and is not supported in Firefox. Learn more about [mobile emulation](../emulation.md#ismobile).
+Whether the `meta viewport` tag is taken into account and touch events are enabled. isMobile is a part of device, so you don't actually need to set it manually. Defaults to `false`. Learn more about [mobile emulation](../emulation.md#ismobile).
 
 ## context-option-hastouch
 - `hasTouch` <[boolean]>
@@ -845,11 +885,16 @@ When set to `minimal`, only record information necessary for routing from HAR. T
     Actual picture of each page will be scaled down if necessary to fit the specified size.
     - `width` <[int]> Video frame width.
     - `height` <[int]> Video frame height.
+  - `fps` ?<[int]> Frame rate of the recorded videos in frames per second. Defaults to `25`. Firefox and WebKit currently capture up to 25 frames per second.
   - `showActions` ?<[Object]> If specified, enables visual annotations on interacted elements during video recording.
     - `duration` ?<[float]> How long each annotation is displayed in milliseconds. Defaults to `500`.
     - `position` ?<[AnnotatePosition]<"top-left"|"top"|"top-right"|"bottom-left"|"bottom"|"bottom-right">> Position of the action title overlay. Defaults to `"top-right"`.
-    - `fontSize` ?<[int]> Font size of the action title in pixels. Defaults to `24`.
+    - `fontSize` ?<[int]> Font size of the action title in pixels. Defaults to `24`. Deprecated, use `style.title` instead.
     - `cursor` ?<[ScreencastCursor]<"none"|"pointer">> Cursor decoration shown for pointer actions. `"pointer"` (the default) renders a mouse pointer that animates from the previous action point to the next one. `"none"` disables the cursor decoration.
+    - `style` ?<[Object]> Styles of the action decorations.
+      - `point` ?<[string]> CSS declarations for the zero-sized marker centered on the action point. Not shown when omitted.
+      - `highlight` ?<[string]> CSS declarations for the box that covers the target element. Not shown when omitted.
+      - `title` ?<[string]> CSS declarations for the action title.
 
 Enables video recording for all pages into `recordVideo.dir` directory. If not specified videos are not recorded. Make
 sure to await [`method: BrowserContext.close`] for videos to be saved.
@@ -873,6 +918,13 @@ not recorded. Make sure to call [`method: BrowserContext.close`] for videos to b
 Dimensions of the recorded videos. If not specified the size will be equal to `viewport`
 scaled down to fit into 800x800. If `viewport` is not configured explicitly the video size defaults to 800x450.
 Actual picture of each page will be scaled down if necessary to fit the specified size.
+
+## context-option-recordvideo-fps
+* langs: csharp, java, python
+  - alias-python: record_video_fps
+- `recordVideoFps` <[int]>
+
+Frame rate of the recorded videos in frames per second. Defaults to `25`. Firefox and WebKit currently capture up to 25 frames per second.
 
 ## context-option-proxy
 - `proxy` <[Object]>
@@ -1068,13 +1120,13 @@ Whether to perform case-insensitive match. [`option: ignoreCase`] option takes p
 * langs: js
 - `maxDiffPixels` <[int]>
 
-An acceptable amount of pixels that could be different. Default is configurable with `TestConfig.expect`. Unset by default.
+An acceptable amount of pixels that could be different. Default is configurable with `TestConfig.expect`. Note that [`option: threshold`] defines which pixels are considered different.
 
 ## assertions-max-diff-pixel-ratio
 * langs: js
 - `maxDiffPixelRatio` <[float]>
 
-An acceptable ratio of pixels that are different to the total amount of pixels, between `0` and `1`. Default is configurable with `TestConfig.expect`. Unset by default.
+An acceptable ratio of pixels that are different to the total amount of pixels, between `0` and `1`. Default is configurable with `TestConfig.expect`. Note that [`option: threshold`] defines which pixels are considered different.
 
 ## assertions-threshold
 * langs: js
@@ -1216,7 +1268,7 @@ Logger sink for Playwright logging.
 ## browser-option-timeout
 - `timeout` <[float]>
 
-Maximum time in milliseconds to wait for the browser instance to start. Defaults to `30000` (30 seconds). Pass `0` to
+Maximum time in milliseconds to wait for the browser instance to start. Defaults to `180000` (3 minutes). Pass `0` to
 disable timeout.
 
 ## browser-option-artifactsdir

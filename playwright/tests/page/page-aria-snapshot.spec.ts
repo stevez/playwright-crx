@@ -55,6 +55,25 @@ it('should snapshot list with accessible name', async ({ page }) => {
   `);
 });
 
+it('should quote names that look like regexes', async ({ page }) => {
+  await page.setContent(`
+    <nav>
+      <a href="/">/</a>
+      <a href="/docs/">/docs/</a>
+      <a href="/a(b/">/a(b/</a>
+    </nav>
+  `);
+  await checkAndMatchSnapshot(page.locator('nav'), `
+    - navigation:
+      - link "/":
+        - /url: /
+      - link "/docs/":
+        - /url: /docs/
+      - link "/a(b/":
+        - /url: /a(b/
+  `);
+});
+
 it('should snapshot complex', async ({ page }) => {
   await page.setContent(`
     <ul>
@@ -793,4 +812,15 @@ it('should not include box when option is omitted', async ({ page }) => {
   await page.setContent(`<button>click</button>`);
   const snapshot = await page.ariaSnapshot();
   expect(snapshot).not.toMatch(/\[box=/);
+});
+
+it('should not include hidden iframes', async ({ page }) => {
+  await page.setContent(`
+    <iframe name="visible" srcdoc="<button>Visible</button>"></iframe>
+    <iframe name="hidden" style="visibility: hidden" srcdoc="<button>Hidden</button>"></iframe>
+    <iframe name="none" style="display: none" srcdoc="<button>None</button>"></iframe>
+  `);
+  expect(await page.ariaSnapshot()).toBe(unshift(`
+    - iframe
+  `));
 });

@@ -99,12 +99,13 @@ export class FullConfigInternal {
       metadata: metadata ?? userConfig.metadata,
       preserveOutput: takeFirst(userConfig.preserveOutput, 'always'),
       projects: [],
+      filteredProjects: [],
       quiet: takeFirst(configCLIOverrides.quiet, userConfig.quiet, false),
       reporter: [...takeFirst(configCLIOverrides.reporter, resolveReporters(userConfig.reporter, configDir), [[defaultReporter]]), ...(configCLIOverrides.additionalReporters ?? [])],
       reportSlowTests: takeFirst(userConfig.reportSlowTests, { max: 5, threshold: 300_000 /* 5 minutes */ }),
       shard: takeFirst(configCLIOverrides.shard, userConfig.shard, null),
       tags: globalTags,
-      updateSnapshots: takeFirst(configCLIOverrides.updateSnapshots, userConfig.updateSnapshots, 'missing'),
+      updateSnapshots: takeFirst(configCLIOverrides.updateSnapshots, userConfig.updateSnapshots, 'default'),
       updateSourceMethod: takeFirst(configCLIOverrides.updateSourceMethod, userConfig.updateSourceMethod, 'patch'),
       version: packageJSON.version,
       workers: resolveWorkers(takeFirst((configCLIOverrides.debug || configCLIOverrides.pause) ? 1 : undefined, configCLIOverrides.workers, userConfig.workers, '50%')),
@@ -135,6 +136,7 @@ export class FullConfigInternal {
     resolveProjectDependencies(this.projects);
     this._assignUniqueProjectIds(this.projects);
     this.config.projects = this.projects.map(p => p.project);
+    this.config.filteredProjects = this.config.projects;
   }
 
   private _assignUniqueProjectIds(projects: FullProjectInternal[]) {
@@ -162,6 +164,7 @@ export class FullProjectInternal {
   readonly respectGitIgnore: boolean;
   readonly snapshotPathTemplate: string | undefined;
   readonly workers: number | undefined;
+  readonly default: boolean;
   id = '';
   deps: FullProjectInternal[] = [];
   teardown: FullProjectInternal | undefined;
@@ -207,6 +210,7 @@ export class FullProjectInternal {
     this.workers = projectConfig.workers ? resolveWorkers(projectConfig.workers) : undefined;
     if (configCLIOverrides.debug && this.workers)
       this.workers = 1;
+    this.default = projectConfig.default ?? true;
   }
 }
 
@@ -289,7 +293,7 @@ export function toReporters(reporters: BuiltInReporter | ReporterDescription[] |
   return reporters;
 }
 
-export const builtInReporters = ['list', 'line', 'dot', 'json', 'junit', 'null', 'github', 'html', 'blob', 'perfetto'] as const;
+export const builtInReporters = ['list', 'line', 'dot', 'json', 'junit', 'null', 'github', 'html', 'blob', 'perfetto', 'coverage'] as const;
 export type BuiltInReporter = typeof builtInReporters[number];
 
 export type ContextReuseMode = 'none' | 'when-possible';

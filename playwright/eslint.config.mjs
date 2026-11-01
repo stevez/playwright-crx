@@ -41,6 +41,7 @@ const ignores = [
   "*.js",
   "**/.cache/",
   "**/*.d.ts",
+  "coverage/",
   "index.d.ts",
   "node_modules/",
   "output/",
@@ -237,6 +238,7 @@ const noWebGlobalsRuleList = [
   { name: "cancelIdleCallback", message: "Use InjectedScript.utils.builtins.cancelIdleCallback instead" },
   { name: "Date", message: "Use InjectedScript.utils.builtins.Date instead" },
   { name: "Intl", message: "Use InjectedScript.utils.builtins.Intl instead" },
+  { name: "Temporal", message: "Use InjectedScript.utils.builtins.Temporal instead" },
   { name: "performance", message: "Use InjectedScript.utils.builtins.performance instead" },
 ];
 
@@ -294,6 +296,11 @@ const reactFiles = [
   `packages/web/src/**/*.tsx`,
 ];
 
+const noProcessExitSyntax = {
+  selector: "CallExpression[callee.name='processExit']",
+  message: "Please use gracefullyProcessExitDoNotHang function to exit the process.",
+};
+
 function reactPackageSection(packageName) {
   return {
     files: [
@@ -345,6 +352,10 @@ export default [
         },
         { object: "process", property: "stdout" },
         { object: "process", property: "stderr" },
+      ],
+      "no-restricted-syntax": [
+        "error",
+        noProcessExitSyntax,
       ],
     },
   },
@@ -422,6 +433,7 @@ export default [
       ],
       "no-restricted-syntax": [
         "error",
+        noProcessExitSyntax,
         {
           selector: "TSAsExpression > TSAnyKeyword",
           message: "Avoid 'as any' — risk of accidentally casting to client interfaces. Use a precise type or add an eslint-disable with justification.",

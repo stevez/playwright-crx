@@ -387,7 +387,7 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
   }
 
   async screencastShowActions(params: channels.PageScreencastShowActionsParams): Promise<channels.PageScreencastShowActionsResult> {
-    this._page.screencast.showActions({ duration: params.duration, position: params.position, fontSize: params.fontSize, cursor: params.cursor });
+    this._page.screencast.showActions({ duration: params.duration, position: params.position, fontSize: params.fontSize, cursor: params.cursor, style: params.style });
   }
 
   async screencastHideActions(): Promise<channels.PageScreencastHideActionsResult> {
@@ -397,6 +397,8 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
   async screencastStart(params: channels.PageScreencastStartParams, progress?: Progress): Promise<channels.PageScreencastStartResult> {
     if (this._screencastClient || this._videoRecorder)
       throw new Error('Screencast is already running');
+    if (params.fps !== undefined && params.fps <= 0)
+      throw new Error(`"fps" must be a positive number, got ${params.fps}`);
 
     if (params.sendFrames) {
       this._screencastClient = {
@@ -411,6 +413,7 @@ export class PageDispatcher extends Dispatcher<Page, channels.PageChannel, Brows
         dispose: () => this._clearScreencastFrameAcks(),
         size: params.size,
         quality: params.quality,
+        fps: params.fps,
       };
       this._page.screencast.addClient(this._screencastClient);
     }

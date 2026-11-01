@@ -168,6 +168,7 @@ const PartitionedWorkbench: React.FunctionComponent<WorkbenchProps & { partition
   }, [model]);
 
   const playback = usePlayback(actions || [], selectedAction, onActionSelected, selectedTime, boundaries);
+  const { showSelectedAction } = playback;
 
   const selectPropertiesTab = React.useCallback((tab: string) => {
     setSelectedPropertiesTab(tab);
@@ -178,8 +179,11 @@ const PartitionedWorkbench: React.FunctionComponent<WorkbenchProps & { partition
   const setIsInspecting = React.useCallback((value: boolean) => {
     if (!isInspecting && value)
       selectPropertiesTab('inspector');
+    // Inspecting works against the DOM snapshot, not the screencast frame.
+    if (value)
+      showSelectedAction();
     setIsInspectingState(value);
-  }, [setIsInspectingState, selectPropertiesTab, isInspecting]);
+  }, [setIsInspectingState, selectPropertiesTab, isInspecting, showSelectedAction]);
 
   const elementPicked = React.useCallback((element: HighlightedElement) => {
     setHighlightedElement(element);
@@ -234,7 +238,7 @@ const PartitionedWorkbench: React.FunctionComponent<WorkbenchProps & { partition
     errorCount: errorsModel.errors.size,
     render: () => <ErrorsTab errorsModel={errorsModel} testRunMetadata={testRunMetadata} sdkLanguage={sdkLanguage} revealInSource={error => {
       if (error.action)
-        setSelectedAction(error.action);
+        playback.selectAction(error.action);
       else
         setRevealedErrorKey(error.message);
       selectPropertiesTab('source');
@@ -347,7 +351,7 @@ const PartitionedWorkbench: React.FunctionComponent<WorkbenchProps & { partition
         setSelectedTime={setSelectedTime}
         treeState={treeState}
         setTreeState={setTreeState}
-        onSelected={onActionSelected}
+        onSelected={playback.selectAction}
         onHighlighted={setHighlightedAction}
         revealActionAttachment={revealActionAttachment}
         revealConsole={() => selectPropertiesTab('console')}
@@ -368,7 +372,7 @@ const PartitionedWorkbench: React.FunctionComponent<WorkbenchProps & { partition
     {!hideTimeline && <Timeline
       model={model}
       boundaries={boundaries}
-      onSelected={onActionSelected}
+      onSelected={playback.selectAction}
       selectedTime={selectedTime}
       setSelectedTime={setSelectedTime}
       highlightedTime={highlightedTime}
@@ -391,6 +395,7 @@ const PartitionedWorkbench: React.FunctionComponent<WorkbenchProps & { partition
           setIsInspecting={setIsInspecting}
           highlightedElement={highlightedElement}
           setHighlightedElement={elementPicked}
+          screencastTime={highlightedAction ? undefined : playback.screencastTime}
           playback={playback} />}
         sidebar={
           <TabbedPane

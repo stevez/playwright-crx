@@ -30,7 +30,7 @@ import { applySuggestedRebaselines, clearSuggestedRebaselines } from './rebase';
 import { TaskRunner } from './taskRunner';
 import { detectChangedTestFiles } from './vcs';
 import { cc, config as commonConfig, FullConfigInternal, suiteUtils, test as testNs } from '../common';
-import { createTestGroups } from '../runner/testGroups';
+import { createTestGroups, shuffleTestGroups } from '../runner/testGroups';
 import { createTitleMatcher, forceRegExp, removeDirAndLogToConsole } from '../util';
 
 import type { TestGroup } from '../runner/testGroups';
@@ -59,6 +59,7 @@ export type TestRunOptions = {
   grepInvert?: string;
   onlyChanged?: string;
   projectFilter?: string[];
+  includeNonDefaultProjects?: boolean;
   listMode?: boolean;
   passWithNoTests?: boolean;
   lastFailed?: boolean;
@@ -98,7 +99,8 @@ export class TestRun {
     this.config = config;
     this.options = options ?? {};
     this.reporter = reporter;
-    this.filteredProjects = filterProjects(config.projects, this.options.projectFilter);
+    this.filteredProjects = filterProjects(config.projects, this.options.projectFilter, this.options.includeNonDefaultProjects);
+    config.config.filteredProjects = this.filteredProjects.map(p => p.project);
   }
 
   onTestPaused(params: TestPausedParams) {
@@ -416,6 +418,8 @@ function createPhasesTask(): Task<TestRun> {
       }
 
       testRun.config.config.metadata.actualWorkers = Math.min(testRun.config.config.workers, maxConcurrentTestGroups);
+      if (testRun.config.configCLIOverrides.shuffle)
+        testRun.config.config.metadata.shuffleSeed = testRun.config.configCLIOverrides.shuffle;
     },
   };
 }
@@ -446,6 +450,9 @@ function createRunTestsTask(): Task<TestRun> {
           if (!hasFailedDeps)
             phaseTestGroups.push(...testGroups);
         }
+
+        if (testRun.config.configCLIOverrides.shuffle)
+          shuffleTestGroups(phaseTestGroups, testRun.config.configCLIOverrides.shuffle);
 
         if (phaseTestGroups.length) {
           await dispatcher!.run(phaseTestGroups, extraEnvByProjectId);

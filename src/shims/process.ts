@@ -35,7 +35,7 @@ process.hrtime = (previousTimestamp?: [number, number]): [number, number] => {
   return [seconds, nanoseconds];
 };
 process.platform = 'linux';
-process.versions.node = '18.16';
+process.versions.node = '20.0'; // playwright 1.64+ checks for Node 20+ at load (bootstrap.ts)
 process.stdout = { isTTY: 'false' };
 process.geteuid = () => '';
 
