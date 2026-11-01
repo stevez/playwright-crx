@@ -18,8 +18,11 @@ function noop() {}
 
 export const createConnection = noop;
 export const isIP = noop;
+// playwright 1.63+ reads this at module load (utils/network.ts); 250 is Node's default
+export const getDefaultAutoSelectFamilyAttemptTimeout = () => 250;
 
 export default {
   createConnection,
   isIP,
+  getDefaultAutoSelectFamilyAttemptTimeout,
 };
