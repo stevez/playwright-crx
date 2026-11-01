@@ -15,12 +15,13 @@
  */
 
 import { parseAriaSnapshot } from '@isomorphic/ariaSnapshot';
+import { renderAriaSnapshotAsYaml } from '@isomorphic/ariaSnapshotRenderer';
 import { asLocator } from '@isomorphic/locatorGenerators';
 import { splitTestIdAttributeNames } from '@isomorphic/locatorUtils';
 import { parseAttributeSelector, parseSelector, stringifySelector, visitAllSelectorParts } from '@isomorphic/selectorParser';
 import { cacheNormalizedWhitespaces, normalizeWhiteSpace, trimStringWithEllipsis } from '@isomorphic/stringUtils';
 
-import { generateAriaTree, getAllElementsMatchingExpectAriaTemplate, matchesExpectAriaTemplate, renderAriaTree, findNewElement } from './ariaSnapshot';
+import { generateAriaTree, getAllElementsMatchingExpectAriaTemplate, matchesExpectAriaTemplate, renderAriaTreeAsJSON, findNewElement } from './ariaSnapshot';
 import { beginDOMCaches, enclosingShadowRootOrDocument, endDOMCaches, isElementVisible, isInsideScope, parentElementOrShadowHost, setGlobalOptions } from './domUtils';
 import { Highlight } from './highlight';
 import { kLayoutSelectorNames, layoutSelectorScore } from './layoutSelectorUtils';
@@ -33,7 +34,7 @@ import { XPathEngine } from './xpathSelectorEngine';
 import { ConsoleAPI } from './consoleApi';
 import { UtilityScript } from './utilityScript';
 
-import type { AriaTemplateNode } from '@isomorphic/ariaSnapshot';
+import type { AriaSnapshotJSON, AriaTemplateNode } from '@isomorphic/ariaSnapshot';
 import type { CSSComplexSelectorList } from '@isomorphic/cssParser';
 import type { Language } from '@isomorphic/locatorGenerators';
 import type { AttributeSelectorPart, NestedSelectorBody, ParsedSelector, ParsedSelectorPart } from '@isomorphic/selectorParser';
@@ -242,6 +243,7 @@ export class InjectedScript {
     this._engines.set('internal:role', createRoleEngine(true));
     this._engines.set('internal:describe', this._createDescribeEngine());
     this._engines.set('aria-ref', this._createAriaRefEngine());
+    this._engines.set('aria-template', this._createAriaTemplateEngine());
 
     for (const { name, source } of options.customEngines)
       this._engines.set(name, this.eval(source));
@@ -315,29 +317,31 @@ export class InjectedScript {
   }
 
   ariaSnapshot(node: Node, options: AriaTreeOptions): string {
-    return this.ariaSnapshotWithRefs(node, options).text;
+    const { json } = this.ariaSnapshotJSON(node, options);
+    return renderAriaSnapshotAsYaml(json, { convertStringsToRegex: options.mode === 'codegen' });
   }
 
-  ariaSnapshotWithRefs(node: Node, options: AriaTreeOptions & { depth?: number }): { text: string, iframeRefs: string[], iframeDepths: Record<string, number> } {
+  ariaSnapshotJSON(node: Node, options: AriaTreeOptions & { depth?: number }): { json: AriaSnapshotJSON, iframeRefs: string[], iframeDepths: Record<string, number> } {
     if (node.nodeType !== Node.ELEMENT_NODE)
       throw this.createStacklessError('Can only capture aria snapshot of Element nodes.');
     options = { ...options, refPrefix: this._frameSeq && options.mode === 'ai' ? 'f' + this._frameSeq : '' };
     const ariaSnapshot = generateAriaTree(node as Element, options);
-    const rendered = renderAriaTree(ariaSnapshot, options);
+    const rendered = renderAriaTreeAsJSON(ariaSnapshot, options);
     this._lastAriaSnapshotForQuery = ariaSnapshot;
-    return { text: rendered.text, iframeRefs: ariaSnapshot.iframeRefs, iframeDepths: rendered.iframeDepths };
+    return { json: rendered.json, iframeRefs: ariaSnapshot.iframeRefs, iframeDepths: rendered.iframeDepths };
   }
 
   ariaSnapshotForRecorder(): { ariaSnapshot: string, refs: Map<Element, string> } {
     const tree = generateAriaTree(this.document.body, { mode: 'ai' });
-    const { text: ariaSnapshot } = renderAriaTree(tree, { mode: 'ai' });
-    return { ariaSnapshot, refs: tree.refs };
+    const { json } = renderAriaTreeAsJSON(tree, { mode: 'ai' });
+    return { ariaSnapshot: renderAriaSnapshotAsYaml(json), refs: tree.refs };
   }
 
   ariaSnapshotForExpectFailure(element: Element, options: AriaTreeOptions): string {
     // Bypass _lastAriaSnapshotForQuery — that cache is reserved for explicit
     // ariaSnapshot() calls used by the aria-ref selector engine.
-    return renderAriaTree(generateAriaTree(element, options), options).text;
+    const { json } = renderAriaTreeAsJSON(generateAriaTree(element, options), options);
+    return renderAriaSnapshotAsYaml(json);
   }
 
   getAllElementsMatchingExpectAriaTemplate(document: Document, template: AriaTemplateNode): Element[] {
@@ -539,6 +543,8 @@ export class InjectedScript {
       queryAll(root: SelectorRoot, body: any) {
         if (body === 'enter-frame')
           return [];
+        if (body === 'any-frame')
+          return [];
         if (body === 'return-empty')
           return [];
         if (body === 'component') {
@@ -732,6 +738,17 @@ export class InjectedScript {
     const queryAll = (root: SelectorRoot, selector: string): Element[] => {
       const result = this._lastAriaSnapshotForQuery?.info?.get(selector);
       return result && result.element.isConnected ? [result.element] : [];
+    };
+    return { queryAll };
+  }
+
+  _createAriaTemplateEngine() {
+    const queryAll = (root: SelectorRoot, body: string): Element[] => {
+      const template = JSON.parse(body) as AriaTemplateNode;
+      const rootElement = root.nodeType === 9 /* Node.DOCUMENT_NODE */ ? (root as Document).documentElement : root as Element;
+      if (!rootElement)
+        return [];
+      return getAllElementsMatchingExpectAriaTemplate(rootElement, template);
     };
     return { queryAll };
   }
@@ -1327,14 +1344,11 @@ export class InjectedScript {
     return this._highlight;
   }
 
-  addHighlight(selector: ParsedSelector, style?: string) {
+  setHighlights(highlights: { selector: ParsedSelector, cssStyle?: string }[]) {
+    if (!highlights.length && !this._highlight)
+      return;
     const highlight = this._ensureHighlight();
-    highlight.addElementHighlight(selector, style);
-  }
-
-  removeHighlight(selector: ParsedSelector) {
-    const highlight = this._ensureHighlight();
-    highlight.removeElementHighlight(selector);
+    highlight.setElementHighlights(highlights);
   }
 
   setScreencastAnnotation(annotation: { point?: Point, box?: Rect, actionTitle?: string, duration?: number, position?: string, fontSize?: number, cursor?: 'none' | 'pointer' } | null) {
@@ -1618,7 +1632,7 @@ export class InjectedScript {
       } else if (expression === 'to.have.accessible.name') {
         received = getElementAccessibleNameText(element, false /* includeHidden */);
       } else if (expression === 'to.have.accessible.description') {
-        received = getElementAccessibleDescription(element, false /* includeHidden */);
+        received = getElementAccessibleDescription(element, false /* includeHidden */).text;
       } else if (expression === 'to.have.accessible.error.message') {
         received = getElementAccessibleErrorMessage(element);
       } else if (expression === 'to.have.role') {

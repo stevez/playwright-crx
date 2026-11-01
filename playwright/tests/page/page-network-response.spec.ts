@@ -83,6 +83,22 @@ it('should return uncompressed text for brotli encoding', {
   expect(await response.text()).toBe(text);
 });
 
+it('should return text for identity encoding', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/42501' },
+}, async ({ page, server }) => {
+  const text = '<div>hello</div>';
+  server.setRoute('/identity.html', (req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Encoding': 'Identity',
+    });
+    res.end(text);
+  });
+  const response = await page.goto(server.PREFIX + '/identity.html');
+  expect(response.headers()['content-encoding']).toBe('Identity');
+  expect(await response.text()).toBe(text);
+});
+
 it('should throw when requesting body of redirected response', async ({ page, server }) => {
   server.setRedirect('/foo.html', '/empty.html');
   const response = await page.goto(server.PREFIX + '/foo.html');
@@ -344,14 +360,36 @@ it('should report if request was fromServiceWorker', async ({ page, server, isAn
   }
 });
 
-it('should return body for prefetch script', async ({ page, server, browserName }) => {
+it('should return body for prefetch script', async ({ page, server, browserName, browserMajorVersion }) => {
   it.skip(browserName === 'webkit', 'No prefetch in WebKit: https://caniuse.com/link-rel-prefetch');
+  it.skip(browserName === 'chromium' && browserMajorVersion < 138, 'Requires Sec-Purpose header, shipped in Chrome 138');
   const [response] = await Promise.all([
     page.waitForResponse('**/prefetch.js'),
     page.goto(server.PREFIX + '/prefetch.html')
   ]);
   const body = await response.body();
   expect(body.toString()).toBe('// Scripts will be pre-fetched');
+});
+
+it('should return body for image with evicted body', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/42002' },
+}, async ({ page, server, isMac, browserName }) => {
+  it.fixme(isMac && browserName === 'webkit', 'WebKit on Mac evicts the body and returns empty buffer');
+  const imageBase64 = 'R0lGODlhAQABAAAAACw='; // truncated 1x1 gif, Chromium evicts its body
+  server.setRoute('/pixel.gif', (req, res) => {
+    res.setHeader('content-type', 'image/gif');
+    res.end(Buffer.from(imageBase64, 'base64'));
+  });
+  server.setRoute('/page.html', (req, res) => {
+    res.setHeader('content-type', 'text/html');
+    res.end('<html><body><img src="/pixel.gif"></body></html>');
+  });
+  const [response] = await Promise.all([
+    page.waitForResponse('**/pixel.gif'),
+    page.goto(server.PREFIX + '/page.html'),
+  ]);
+  const body = await response.body();
+  expect(body.toString('base64')).toBe(imageBase64);
 });
 
 it('should bypass disk cache when page interception is enabled', async ({ page, server }) => {

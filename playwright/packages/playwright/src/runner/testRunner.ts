@@ -15,8 +15,6 @@
  */
 
 import EventEmitter from 'events';
-import fs from 'fs';
-import path from 'path';
 
 import { registry } from 'playwright-core/lib/coreBundle';
 
@@ -102,7 +100,6 @@ export class TestRunner extends EventEmitter<TestRunnerEventMap> {
   private _globalSetup: { cleanup: () => Promise<any> } | undefined;
   private _plugins: TestRunnerPluginRegistration[] | undefined;
   private _watchTestDirs = false;
-  private _populateDependenciesOnList = false;
   private _startingEnv: NodeJS.ProcessEnv = {};
   private _lastLoadedConfig: FullConfigInternal | undefined;
 
@@ -119,11 +116,9 @@ export class TestRunner extends EventEmitter<TestRunnerEventMap> {
 
   async initialize(params: {
     watchTestDirs?: boolean;
-    populateDependenciesOnList?: boolean;
   }) {
     setPlaywrightTestProcessEnv();
     this._watchTestDirs = !!params.watchTestDirs;
-    this._populateDependenciesOnList = !!params.populateDependenciesOnList;
     this._startingEnv = { ...process.env };
   }
 
@@ -197,7 +192,6 @@ export class TestRunner extends EventEmitter<TestRunnerEventMap> {
     if (!config)
       return { status: 'failed' };
     const status = await runTasks(new TestRun(config, reporter), [
-      ...createPluginSetupTasks(config),
       createClearCacheTask(config),
     ]);
     return { status };
@@ -253,7 +247,7 @@ export class TestRunner extends EventEmitter<TestRunnerEventMap> {
     };
 
     const status = await runTasks(new TestRun(config, reporter, options), [
-      createLoadTask('out-of-process', { failOnLoadErrors: false, filterOnly: false, populateDependencies: this._populateDependenciesOnList }),
+      createLoadTask('out-of-process', { failOnLoadErrors: false, filterOnly: false }),
       createReportBeginTask(),
     ]);
     return { config, status };
@@ -265,12 +259,6 @@ export class TestRunner extends EventEmitter<TestRunnerEventMap> {
     for (const p of config.projects) {
       this._watchedProjectDirs.add(p.project.testDir);
       this._ignoredProjectOutputs.add(p.project.outputDir);
-    }
-
-    const result = await resolveCtDirs(config);
-    if (result) {
-      this._watchedProjectDirs.add(result.templateDir);
-      this._ignoredProjectOutputs.add(result.outDir);
     }
 
     if (this._watchTestDirs)
@@ -368,7 +356,7 @@ export class TestRunner extends EventEmitter<TestRunnerEventMap> {
       return { errors: errorReporter.errors(), testFiles: [] };
     const status = await runTasks(new TestRun(config, reporter), [
       ...createPluginSetupTasks(config),
-      createLoadTask('out-of-process', { failOnLoadErrors: true, filterOnly: false, populateDependencies: true }),
+      createLoadTask('out-of-process', { failOnLoadErrors: true, filterOnly: false }),
     ]);
     if (status !== 'passed')
       return { errors: errorReporter.errors(), testFiles: [] };
@@ -426,20 +414,6 @@ export class TestRunner extends EventEmitter<TestRunnerEventMap> {
 function printInternalError(e: Error) {
   // eslint-disable-next-line no-console
   console.error('Internal error:', e);
-}
-
-// TODO: remove CT dependency.
-async function resolveCtDirs(config: FullConfigInternal) {
-  const use = config.config.projects[0].use as any;
-  const relativeTemplateDir = use.ctTemplateDir || 'playwright';
-  const templateDir = await fs.promises.realpath(path.normalize(path.join(config.configDir, relativeTemplateDir))).catch(() => undefined);
-  if (!templateDir)
-    return null;
-  const outDir = use.ctCacheDir ? path.resolve(config.configDir, use.ctCacheDir) : path.resolve(templateDir, '.cache');
-  return {
-    outDir,
-    templateDir
-  };
 }
 
 export async function runAllTestsWithConfig(config: FullConfigInternal, options: TestRunOptions): Promise<FullResultStatus> {

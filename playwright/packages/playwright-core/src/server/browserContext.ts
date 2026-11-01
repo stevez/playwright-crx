@@ -45,6 +45,7 @@ import type { ClientCertificatesProxy } from './socksClientCertificatesIntercept
 import type { SerializedStorage } from '@injected/storageScript';
 import type * as types from './types';
 import type * as channels from './channels';
+import type { HttpCredentials } from '@protocol/structs';
 
 const BrowserContextEvent = {
   Console: 'console',
@@ -158,14 +159,14 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
       this._debugger.setPauseAt();
       this._debugger.on(Debugger.Events.PausedStateChanged, () => {
         if (this._debugger.isPaused())
-          RecorderApp.showInspectorNoReply(this);
+          RecorderApp.enable(this, {}).catch(() => {});
       });
     }
 
     // When PWDEBUG=1, show inspector for each context.
     if (debugMode() === 'inspector') {
       this._debugger.setPauseAt({ next: true });
-      await RecorderApp.show(this, { pauseOnNextStatement: true });
+      await RecorderApp.enable(this, { pauseOnNextStatement: true });
     }
 
     if (debugMode() === 'console')
@@ -221,6 +222,7 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
 
   async resetForReuse(progress: Progress, params: channels.BrowserNewContextForReuseParams | null) {
     await this.tracing.resetForReuse(progress);
+    await this.fetchRequest.tracing().resetForReuse(progress);
 
     if (params) {
       for (const key of paramsThatAllowContextReuse)
@@ -268,6 +270,7 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
     this._closedStatus = 'closed';
     this._clientCertificatesProxy?.close().catch(() => {});
     this.tracing.abort();
+    this.fetchRequest.tracing().abort();
     this._closePromiseFulfill!(new Error('Context closed'));
     this.emit(BrowserContext.Events.Close);
   }
@@ -288,7 +291,7 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
   protected abstract doClearCookies(): Promise<void>;
   protected abstract doGrantPermissions(origin: string, permissions: string[]): Promise<void>;
   protected abstract doClearPermissions(): Promise<void>;
-  protected abstract doSetHTTPCredentials(httpCredentials?: types.Credentials): Promise<void>;
+  protected abstract doSetHTTPCredentials(httpCredentials?: HttpCredentials[]): Promise<void>;
   protected abstract doAddInitScript(initScript: InitScript): Promise<void>;
   protected abstract doRemoveInitScripts(initScripts: InitScript[]): Promise<void>;
   protected abstract doUpdateExtraHTTPHeaders(): Promise<void>;
@@ -343,11 +346,11 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
     })));
   }
 
-  setHTTPCredentials(progress: Progress, httpCredentials?: types.Credentials): Promise<void> {
+  setHTTPCredentials(progress: Progress, httpCredentials?: HttpCredentials[]): Promise<void> {
     return progress.race(this.innerSetHTTPCredentials(httpCredentials));
   }
 
-  innerSetHTTPCredentials(httpCredentials?: types.Credentials): Promise<void> {
+  innerSetHTTPCredentials(httpCredentials?: HttpCredentials[]): Promise<void> {
     return this.doSetHTTPCredentials(httpCredentials);
   }
 
@@ -479,7 +482,7 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
     const proxy = this._options.proxy || this._browser.options.proxy || { username: undefined, password: undefined };
     const { username, password } = proxy;
     if (username) {
-      this._options.httpCredentials = { username, password: password! };
+      this._options.httpCredentials = [{ username, password: password! }];
       const token = Buffer.from(`${username}:${password}`).toString('base64');
       this._options.extraHTTPHeaders = network.mergeHeaders([
         this._options.extraHTTPHeaders,
@@ -494,7 +497,7 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
       return;
     const { username, password } = proxy;
     if (username)
-      this._options.httpCredentials = { username, password: password || '' };
+      this._options.httpCredentials = [{ username, password: password || '' }];
   }
 
   async addInitScript(progress: Progress, source: string): Promise<InitScript> {
@@ -551,13 +554,17 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
   }
 
   async close(progress: Progress, options: { reason?: string }) {
+    let flushError: Error | undefined;
     if (this._closedStatus === 'open') {
       if (options.reason)
         this._closeReason = options.reason;
       this.emit(BrowserContext.Events.BeforeClose);
       this._closedStatus = 'closing';
 
-      await progress.race(this.tracing.flush());
+      await progress.race(Promise.all([
+        this.tracing.flush().catch(e => flushError = flushError ?? e),
+        this.fetchRequest.tracing().flush().catch(e => flushError = flushError ?? e),
+      ]));
       await progress.race(Promise.all(this.pages().map(page => page.screencast.handlePageOrContextClose())));
 
       if (this._customCloseHandler) {
@@ -581,6 +588,8 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
         this._didCloseInternal();
     }
     await this._closePromise;
+    if (flushError)
+      throw flushError;
   }
 
   async newPage(progress: Progress, forStorageState?: boolean): Promise<Page> {
@@ -607,7 +616,7 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
     this._origins.add(origin);
   }
 
-  async storageState(progress: Progress, indexedDB = false, credentials = false): Promise<channels.BrowserContextStorageStateResult> {
+  async storageState(progress: Progress, { indexedDB = false, opfs = false, credentials = false }: { indexedDB?: boolean, opfs?: boolean, credentials?: boolean } = {}): Promise<channels.BrowserContextStorageStateResult> {
     const result: channels.BrowserContextStorageStateResult = {
       cookies: await this.cookies(progress),
       origins: []
@@ -615,12 +624,13 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
     if (credentials)
       result.credentials = await progress.race(this.credentials.get());
     const originsToSave = new Set(this._origins);
+    const hasStorage = (storage: SerializedStorage) => !!(storage.localStorage.length || storage.indexedDB?.length || storage.opfs?.length);
 
     const collectScript = `(() => {
       const module = {};
       ${rawStorageSource.source}
-      const script = new (module.exports.StorageScript())(${this._browser.options.name === 'firefox'});
-      return script.collect(${indexedDB});
+      const script = new (module.exports.StorageScript())(${JSON.stringify(this._browser.options.name)});
+      return script.collect({ indexedDB: ${indexedDB}, opfs: ${opfs} });
     })()`;
 
     // First try collecting storage stage from existing pages.
@@ -630,8 +640,8 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
         continue;
       try {
         const storage: SerializedStorage = await progress.race(page.mainFrame().nonStallingEvaluateInExistingContext(collectScript, 'utility'));
-        if (storage.localStorage.length || storage.indexedDB?.length)
-          result.origins.push({ origin, localStorage: storage.localStorage, indexedDB: storage.indexedDB });
+        if (hasStorage(storage))
+          result.origins.push({ origin, ...storage });
         originsToSave.delete(origin);
       } catch {
         // When failed on the live page, we'll retry on the blank page below.
@@ -649,8 +659,8 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
           const frame = page.mainFrame();
           await frame.gotoImpl(progress, origin, {});
           const storage: SerializedStorage = await frame.evaluateExpression(progress, collectScript, { world: 'utility' });
-          if (storage.localStorage.length || storage.indexedDB?.length)
-            result.origins.push({ origin, localStorage: storage.localStorage, indexedDB: storage.indexedDB });
+          if (hasStorage(storage))
+            result.origins.push({ origin, ...storage });
         }
       } finally {
         await page.close(progress);
@@ -704,7 +714,7 @@ export abstract class BrowserContext<EM extends EventMap = EventMap> extends Sdk
           const restoreScript = `(() => {
             const module = {};
             ${rawStorageSource.source}
-            const script = new (module.exports.StorageScript())(${this._browser.options.name === 'firefox'});
+            const script = new (module.exports.StorageScript())(${JSON.stringify(this._browser.options.name)});
             return script.restore(${JSON.stringify(newOrigins.get(origin))});
           })()`;
           await frame.evaluateExpression(progress, restoreScript, { world: 'utility' });
@@ -766,6 +776,11 @@ export function validateBrowserContextOptions(options: types.BrowserContextOptio
   if (options.proxy)
     options.proxy = normalizeProxySettings(options.proxy);
   verifyGeolocation(options.geolocation);
+}
+
+export function findMatchingHttpCredentials(credentials: HttpCredentials[] | undefined, url: string): HttpCredentials | undefined {
+  const origin = new URL(url).origin.toLowerCase();
+  return credentials?.find(c => !c.origin || c.origin.toLowerCase() === origin);
 }
 
 export function verifyGeolocation(geolocation?: types.Geolocation): asserts geolocation is types.Geolocation {

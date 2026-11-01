@@ -18,6 +18,7 @@ import { inspect } from 'util';
 
 import { asLocatorDescription, locatorCustomDescription } from '@isomorphic/locatorGenerators';
 import { getByAltTextSelector, getByLabelSelector, getByPlaceholderSelector, getByRoleSelector, getByTestIdSelector, getByTextSelector, getByTitleSelector } from '@isomorphic/locatorUtils';
+import { kAnyFrameSelector } from '@isomorphic/selectorParser';
 import { escapeForTextSelector } from '@isomorphic/stringUtils';
 import { isString } from '@isomorphic/rtti';
 import { monotonicTime } from '@isomorphic/time';
@@ -31,6 +32,7 @@ import type { EvaluateOptions } from './jsHandle';
 import type { DropPayload, FilePayload, FrameExpectParams, Rect, SelectOption, SelectOptionOptions, TimeoutOptions } from './types';
 import type * as structs from '../../types/structs';
 import type * as api from '../../types/types';
+import type { AriaSnapshotJSON } from '@isomorphic/ariaSnapshot';
 import type { ByRoleOptions } from '@isomorphic/locatorUtils';
 import type * as channels from './channels';
 
@@ -214,6 +216,10 @@ export class Locator implements api.Locator {
     return new Locator(this._frame, this._selector, options);
   }
 
+  visible(): Locator {
+    return new Locator(this._frame, this._selector, { visible: true });
+  }
+
   async elementHandle(options?: TimeoutOptions): Promise<ElementHandle<SVGElement | HTMLElement>> {
     return await this._frame.waitForSelector(this._selector, { strict: true, state: 'attached', ...options })!;
   }
@@ -333,6 +339,11 @@ export class Locator implements api.Locator {
     return result.snapshot;
   }
 
+  async ariaSnapshotJSON(options: TimeoutOptions & { mode?: 'ai' | 'default', depth?: number, boxes?: boolean } = {}): Promise<AriaSnapshotJSON> {
+    const result = await this._frame._channel.ariaSnapshotJSON({ mode: options.mode, selector: this._selector, depth: options.depth, boxes: options.boxes }, this._frame._timeout(options));
+    return result.snapshot;
+  }
+
   async scrollIntoViewIfNeeded(options: channels.ElementHandleScrollIntoViewIfNeededOptions & TimeoutOptions = {}) {
     return await this._withElement((h, timeout) => h.scrollIntoViewIfNeeded({ ...options, timeout }), { title: 'Scroll into view', timeout: options.timeout, signal: options.signal });
   }
@@ -430,12 +441,18 @@ export class FrameLocator implements api.FrameLocator {
     this._frameSelector = selector;
   }
 
+  private _childSelector(selector: string): string {
+    if (this._frameSelector === kAnyFrameSelector)
+      return this._frameSelector + ' >> ' + selector;
+    return this._frameSelector + ' >> internal:control=enter-frame >> ' + selector;
+  }
+
   locator(selectorOrLocator: string | Locator, options?: LocatorOptions): Locator {
     if (isString(selectorOrLocator))
-      return new Locator(this._frame, this._frameSelector + ' >> internal:control=enter-frame >> ' + selectorOrLocator, options);
+      return new Locator(this._frame, this._childSelector(selectorOrLocator), options);
     if (selectorOrLocator._frame !== this._frame)
       throw new Error(`Locators must belong to the same frame.`);
-    return new Locator(this._frame, this._frameSelector + ' >> internal:control=enter-frame >> ' + selectorOrLocator._selector, options);
+    return new Locator(this._frame, this._childSelector(selectorOrLocator._selector), options);
   }
 
   getByTestId(testId: string | RegExp): Locator {
@@ -471,19 +488,25 @@ export class FrameLocator implements api.FrameLocator {
   }
 
   frameLocator(selector: string): FrameLocator {
-    return new FrameLocator(this._frame, this._frameSelector + ' >> internal:control=enter-frame >> ' + selector);
+    return new FrameLocator(this._frame, this._childSelector(selector));
+  }
+
+  private _nthSelector(nth: string): string {
+    if (this._frameSelector === kAnyFrameSelector)
+      throw new Error(`Selecting the nth frame is not allowed on frameLocator().`);
+    return this._frameSelector + ` >> nth=${nth}`;
   }
 
   first(): FrameLocator {
-    return new FrameLocator(this._frame, this._frameSelector + ' >> nth=0');
+    return new FrameLocator(this._frame, this._nthSelector('0'));
   }
 
   last(): FrameLocator {
-    return new FrameLocator(this._frame, this._frameSelector + ` >> nth=-1`);
+    return new FrameLocator(this._frame, this._nthSelector('-1'));
   }
 
   nth(index: number): FrameLocator {
-    return new FrameLocator(this._frame, this._frameSelector + ` >> nth=${index}`);
+    return new FrameLocator(this._frame, this._nthSelector(String(index)));
   }
 }
 

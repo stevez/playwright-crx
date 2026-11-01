@@ -33,12 +33,13 @@ import type * as childProcess from 'child_process';
 import type { BrowserWindow } from 'electron';
 import type { Playwright } from './playwright';
 
-type ElectronOptions = Omit<channels.ElectronLaunchOptions, 'env'|'extraHTTPHeaders'|'recordHar'|'colorScheme'|'acceptDownloads'> & {
+type ElectronOptions = Omit<channels.ElectronLaunchOptions, 'env'|'extraHTTPHeaders'|'recordHar'|'colorScheme'|'acceptDownloads'|'httpCredentials'> & {
   env?: NodeJS.ProcessEnv,
   extraHTTPHeaders?: Headers,
   recordHar?: BrowserContextOptions['recordHar'],
   colorScheme?: 'dark' | 'light' | 'no-preference' | null,
   acceptDownloads?: boolean,
+  httpCredentials?: BrowserContextOptions['httpCredentials'],
   timeout?: number,
 };
 
@@ -68,6 +69,7 @@ export class Electron extends ChannelOwner<channels.ElectronChannel> implements 
     app.once(Events.ElectronApplication.Close, () => this._playwright.selectors._contextsForSelectors.delete(app._context));
     await app._context._initializeHarFromOptions(options.recordHar);
     app._context.tracing._tracesDir = options.tracesDir;
+    app._context.request.tracing._tracesDir = options.tracesDir;
     return app;
   }
 }

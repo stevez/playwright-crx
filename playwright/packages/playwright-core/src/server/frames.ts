@@ -17,6 +17,7 @@
 
 import yaml from 'yaml';
 import { parseAriaSnapshotUnsafe } from '@isomorphic/ariaSnapshot';
+import { renderAriaSnapshotAsYaml } from '@isomorphic/ariaSnapshotRenderer';
 import { isInvalidSelectorError } from '@isomorphic/selectorParser';
 import { ManualPromise } from '@isomorphic/manualPromise';
 import { eventsHelper } from '@utils/eventsHelper';
@@ -24,18 +25,17 @@ import { LongStandingScope } from '@isomorphic/manualPromise';
 import { asLocator } from '@isomorphic/locatorGenerators';
 import { assert } from '@isomorphic/assert';
 import { constructURLBasedOnBaseURL } from '@isomorphic/urlMatch';
-import { makeWaitForNextTask } from '@utils/task';
 import { createGuid } from '@utils/crypto';
 import { BrowserContext } from './browserContext';
 import * as dom from './dom';
-import { TimeoutError, isTargetClosedError } from './errors';
+import { EvaluationStalledError, TimeoutError, isTargetClosedError } from './errors';
 import { prepareFilesForUpload } from './fileUploadUtils';
 import { FrameSelectors } from './frameSelectors';
 import { helper } from './helper';
 import { SdkObject } from './instrumentation';
 import * as js from './javascript';
 import * as network from './network';
-import { Page, ariaSnapshotForFrame } from './page';
+import { Page, ariaSnapshotJSONForFrame } from './page';
 import { isAbortError, nullProgress, ProgressController, raceUncancellableOperationWithCleanup } from './progress';
 import * as types from './types';
 import { isSessionClosedError } from './protocolError';
@@ -46,6 +46,7 @@ import type { Progress } from './progress';
 import type { ScreenshotOptions } from './screenshotter';
 import type { RegisteredListener } from '@utils/eventsHelper';
 import type * as channels from './channels';
+import type { AriaSnapshotJSON } from '@isomorphic/ariaSnapshot';
 
 type ContextData = {
   contextPromise: ManualPromise<dom.FrameExecutionContext | { destroyedReason: string }>;
@@ -84,7 +85,7 @@ export type NavigationEvent = {
   isPublic?: boolean;
 };
 
-type ElementCallback<T, R> = (injected: InjectedScript, element: Element, data: T) => R;
+type ElementCallback<T, R> = (injected: InjectedScript, element: Element, data: js.Unboxed<T>) => R;
 
 export class NavigationAbortedError extends Error {
   readonly documentId?: string;
@@ -155,7 +156,7 @@ export class FrameManager {
 
     function collect(frame: Frame) {
       frames.push(frame);
-      for (const subframe of frame._getChildFrames())
+      for (const subframe of frame.childFrames())
         collect(subframe);
     }
   }
@@ -197,7 +198,7 @@ export class FrameManager {
       await progress.race(this._page.delegate.inputActionEpilogue());
       await barrier.waitFor(progress);
       // Resolve in the next task, after all waitForNavigations.
-      await new Promise<void>(makeWaitForNextTask());
+      await new Promise<void>(f => setImmediate(f));
       return result;
     } finally {
       this._signalBarriers.delete(barrier);
@@ -368,7 +369,7 @@ export class FrameManager {
   }
 
   removeChildFramesRecursively(frame: Frame) {
-    for (const child of frame._getChildFrames())
+    for (const child of frame.childFrames())
       this._removeFramesRecursively(child);
   }
 
@@ -432,20 +433,19 @@ export class FrameManager {
     this._webSockets.set(requestId, ws);
   }
 
-  onWebSocketRequest(requestId: string, requestData?: { headers: types.HeadersArray, wallTimeMs?: number }) {
+  onWebSocketRequest(requestId: string, requestData: { headers: types.HeadersArray, wallTimeMs?: number }) {
     const ws = this._webSockets.get(requestId);
     if (!ws)
       return;
 
-    ws.setWallTimeMs(requestData?.wallTimeMs);
+    ws.setWallTimeMs(requestData.wallTimeMs);
 
     if (ws.markAsNotified()) {
       this._page.emit(Page.Events.WebSocket, ws);
       this._page.browserContext.emit(BrowserContext.Events.WebSocket, ws, this._page);
     }
 
-    if (requestData)
-      ws.requestSent(requestData.headers);
+    ws.requestSent(requestData.headers);
   }
 
   onWebSocketResponse(requestId: string, responseData: { status: number, statusText: string, headers: types.HeadersArray }) {
@@ -585,7 +585,7 @@ export class Frame extends SdkObject<FrameEventMap> {
   _setPendingDocument(documentInfo: DocumentInfo | undefined) {
     this._pendingDocument = documentInfo;
     if (documentInfo)
-      this.invalidateNonStallingEvaluations(new Error('Navigation interrupted the evaluation'));
+      this.invalidateNonStallingEvaluations(new EvaluationStalledError('Navigation interrupted the evaluation'));
   }
 
   pendingDocument(): DocumentInfo | undefined {
@@ -601,9 +601,9 @@ export class Frame extends SdkObject<FrameEventMap> {
 
   async raceAgainstEvaluationStallingEvents<T>(cb: () => Promise<T>): Promise<T> {
     if (this._pendingDocument)
-      throw new Error('Frame is currently attempting a navigation');
+      throw new EvaluationStalledError('Frame is currently attempting a navigation');
     if (this._page.browserContext.dialogManager.hasOpenDialogsForPage(this._page))
-      throw new Error('Open JavaScript dialog prevents evaluation');
+      throw new EvaluationStalledError('Open JavaScript dialog prevents evaluation');
 
     const promise = new ManualPromise<T>();
     this._raceAgainstEvaluationStallingEventsPromises.add(promise);
@@ -619,7 +619,7 @@ export class Frame extends SdkObject<FrameEventMap> {
 
   nonStallingRawEvaluateInExistingMainContext(expression: string): Promise<any> {
     return this.raceAgainstEvaluationStallingEvents(() => {
-      const context = this._existingMainContext();
+      const context = this.existingContext('main');
       if (!context)
         throw new Error('Frame does not yet have a main execution context');
       return context.rawEvaluateJSON(expression);
@@ -798,8 +798,10 @@ export class Frame extends SdkObject<FrameEventMap> {
     return this.context('main');
   }
 
-  private _existingMainContext(): dom.FrameExecutionContext | null {
-    return this._contextData.get('main')?.context || null;
+  existingContext(world: types.World): dom.FrameExecutionContext | null {
+    if (this._page.delegate.noUtilityWorld?.())
+      world = 'main';
+    return this._contextData.get(world)?.context || null;
   }
 
   utilityContext(): Promise<dom.FrameExecutionContext> {
@@ -1005,7 +1007,7 @@ export class Frame extends SdkObject<FrameEventMap> {
     return this._parentFrame;
   }
 
-  _getChildFrames(): Frame[] {
+  childFrames(): Frame[] {
     return Array.from(this._childFrames);
   }
 
@@ -1198,7 +1200,7 @@ export class Frame extends SdkObject<FrameEventMap> {
     progress: Progress,
     selector: string,
     options: { strict?: boolean, noAutoWaiting?: boolean, force?: boolean, performActionPreChecks?: boolean },
-    action: (progress: Progress, handle: dom.ElementHandle<Element>) => Promise<R | 'error:notconnected'>): Promise<R> {
+    action: (progress: Progress, handle: dom.ElementHandle<Element>, box?: types.Rect) => Promise<R | 'error:notconnected'>): Promise<R> {
     progress.log(`waiting for ${this._asLocator(selector)}`);
     const noAutoWaiting = (options as any).__testHookNoAutoWaiting ?? options.noAutoWaiting;
     const performActionPreChecks = (options.performActionPreChecks ?? !options.force) && !noAutoWaiting;
@@ -1213,7 +1215,8 @@ export class Frame extends SdkObject<FrameEventMap> {
           log = `  locator resolved to ${elements.length} elements. Proceeding with the first one: ${injected.previewNode(elements[0])}`;
         else if (element)
           log = `  locator resolved to ${injected.previewNode(element)}`;
-        return { log, success: !!element, element };
+        const rect = element?.getBoundingClientRect();
+        return { log, success: !!element, element, box: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : undefined };
       }, {}));
       if (!resolved) {
         if (noAutoWaiting)
@@ -1221,7 +1224,7 @@ export class Frame extends SdkObject<FrameEventMap> {
         return continuePolling;
       }
       const result = resolved.result;
-      const { log, success } = await progress.race(result.evaluate(r => ({ log: r.log, success: r.success })));
+      const { log, success, box } = await progress.race(result.evaluate(r => ({ log: r.log, success: r.success, box: r.box })));
       if (log)
         progress.log(log);
       if (!success) {
@@ -1233,7 +1236,7 @@ export class Frame extends SdkObject<FrameEventMap> {
       const element = await progress.race(result.evaluateHandle(r => r.element)) as dom.ElementHandle<Element>;
       result.dispose();
       try {
-        const result = await action(progress, element);
+        const result = await action(progress, element, box);
         if (result === 'error:notconnected') {
           if (noAutoWaiting)
             throw new dom.NonRecoverableDOMError('Element is not attached to the DOM');
@@ -1293,7 +1296,7 @@ export class Frame extends SdkObject<FrameEventMap> {
   }
 
   async fill(progress: Progress, selector: string, value: string, options: types.CommonActionOptions) {
-    return dom.assertDone(await this._retryWithProgressIfNotConnected(progress, selector, options, (progress, handle) => handle._fill(progress, value, options)));
+    return dom.assertDone(await this._retryWithProgressIfNotConnected(progress, selector, options, (progress, handle, box) => handle._fill(progress, value, options, box)));
   }
 
   async focus(progress: Progress, selector: string, options: types.StrictOptions & { noAutoWaiting?: boolean }) {
@@ -1368,26 +1371,6 @@ export class Frame extends SdkObject<FrameEventMap> {
     return result;
   }
 
-  async addHighlight(progress: Progress, selector: string, style?: string) {
-    await progress.race(this.selectors.callOnSelector(selector, { strict: false, callWithoutMatches: true }, ({ injected, info }, style) => {
-      return injected.addHighlight(info.parsed, style);
-    }, style));
-  }
-
-  async removeHighlight(progress: Progress, selector: string) {
-    await progress.race(this.selectors.callOnSelector(selector, { strict: false, callWithoutMatches: true }, ({ injected, info }) => {
-      return injected.removeHighlight(info.parsed);
-    }, {}));
-  }
-
-  async hideHighlight() {
-    return this.raceAgainstEvaluationStallingEvents(async () => {
-      const context = this._contextData.get('utility')?.context;
-      const injectedScript = await context?.injectedScript();
-      await injectedScript?.evaluate(injected => injected.hideHighlight());
-    });
-  }
-
   private async _elementState(progress: Progress, selector: string, state: ElementStateWithoutStable, options: types.QueryOnSelectorOptions, scope?: dom.ElementHandle): Promise<boolean> {
     const { result } = await this._waitForFunctionOnSelector(progress, selector, (injected, element, data) => {
       return { result: injected.elementState(element, data.state) };
@@ -1442,12 +1425,12 @@ export class Frame extends SdkObject<FrameEventMap> {
   }
 
   async selectOption(progress: Progress, selector: string, elements: dom.ElementHandle[], values: types.SelectOption[], options: types.CommonActionOptions): Promise<string[]> {
-    return await this._retryWithProgressIfNotConnected(progress, selector, options, (progress, handle) => handle._selectOption(progress, elements, values, options));
+    return await this._retryWithProgressIfNotConnected(progress, selector, options, (progress, handle, box) => handle._selectOption(progress, elements, values, options, box));
   }
 
   async setInputFiles(progress: Progress, selector: string, params: Omit<channels.FrameSetInputFilesParams, 'timeout'> & { noAutoWaiting?: boolean }): Promise<channels.FrameSetInputFilesResult> {
     const inputFileItems = await progress.race(prepareFilesForUpload(this, params));
-    return dom.assertDone(await this._retryWithProgressIfNotConnected(progress, selector, params, (progress, handle) => handle._setInputFiles(progress, inputFileItems)));
+    return dom.assertDone(await this._retryWithProgressIfNotConnected(progress, selector, params, (progress, handle, box) => handle._setInputFiles(progress, inputFileItems, box)));
   }
 
   async drop(progress: Progress, selector: string, params: Omit<channels.FrameDropParams, 'timeout' | 'selector'>, options: types.PointerActionWaitOptions): Promise<void> {
@@ -1461,11 +1444,11 @@ export class Frame extends SdkObject<FrameEventMap> {
   }
 
   async type(progress: Progress, selector: string, text: string, options: { delay?: number, noAutoWaiting?: boolean } & types.StrictOptions) {
-    return dom.assertDone(await this._retryWithProgressIfNotConnected(progress, selector, options, (progress, handle) => handle._type(progress, text, options)));
+    return dom.assertDone(await this._retryWithProgressIfNotConnected(progress, selector, options, (progress, handle, box) => handle._type(progress, text, options, box)));
   }
 
   async press(progress: Progress, selector: string, key: string, options: { delay?: number, noWaitAfter?: boolean, noAutoWaiting?: boolean } & types.StrictOptions) {
-    return dom.assertDone(await this._retryWithProgressIfNotConnected(progress, selector, options, (progress, handle) => handle._press(progress, key, options)));
+    return dom.assertDone(await this._retryWithProgressIfNotConnected(progress, selector, options, (progress, handle, box) => handle._press(progress, key, options, box)));
   }
 
   async check(progress: Progress, selector: string, options: types.PointerActionWaitOptions) {
@@ -1533,7 +1516,7 @@ export class Frame extends SdkObject<FrameEventMap> {
       });
     } catch (e) {
       const details: ExpectErrorDetails = {};
-      if (isInvalidSelectorError(e)) {
+      if (isInvalidSelectorError(e) || dom.isNonRecoverableDOMError(e)) {
         details.customErrorMessage = e.message;
       } else if (js.isJavaScriptErrorInEvaluate(e)) {
         details.customErrorMessage = e.message.startsWith('Error: ') ? e.message.substring('Error: '.length) : e.message;
@@ -1781,7 +1764,7 @@ export class Frame extends SdkObject<FrameEventMap> {
       const resolved = await progress.race(this.selectors.callOnSelector(selector, { ...options, scope, markTargets: 'first' }, ({ injected, elements }, { callbackText, taskData }) => {
         const callback = injected.eval(callbackText) as ElementCallback<T, R>;
         const element = elements[0];
-        const value = callback(injected, element, taskData);
+        const value = callback(injected, element, taskData as js.Unboxed<T>);
         if (!value)
           return { success: false };
         const log = `  locator resolved to ${injected.previewNode(element)}`;
@@ -1861,15 +1844,20 @@ export class Frame extends SdkObject<FrameEventMap> {
   }
 
   async ariaSnapshot(progress: Progress, options: { mode?: 'ai' | 'default', doNotRenderActive?: boolean, selector?: string, depth?: number, boxes?: boolean } = {}): Promise<{ snapshot: string }> {
+    // Serialize to yaml at the last moment, before returning to the client.
+    const { snapshot } = await this.ariaSnapshotJSON(progress, options);
+    return { snapshot: renderAriaSnapshotAsYaml(snapshot) };
+  }
+
+  async ariaSnapshotJSON(progress: Progress, options: { mode?: 'ai' | 'default', doNotRenderActive?: boolean, selector?: string, depth?: number, boxes?: boolean } = {}): Promise<{ snapshot: AriaSnapshotJSON }> {
     if (options.selector && options.mode !== 'ai') {
       // Non-ai locator snapshot is auto-waiting and does not include iframes.
       const snapshot = await this._retryWithProgressIfNotConnected(progress, options.selector, { strict: true, performActionPreChecks: true }, async (progress, handle) => {
-        return await progress.race(handle.evaluateInUtility(([injected, element, opts]) => injected.ariaSnapshot(element, opts), { mode: 'default' as const, depth: options.depth, boxes: options.boxes }));
+        return await progress.race(handle.evaluateInUtility(([injected, element, opts]) => injected.ariaSnapshotJSON(element, opts).json, { mode: 'default' as const, depth: options.depth, boxes: options.boxes }));
       });
       return { snapshot };
     }
-    const lines = await ariaSnapshotForFrame(progress, this, options.selector, options);
-    return { snapshot: lines.join('\n') };
+    return { snapshot: await ariaSnapshotJSONForFrame(progress, this, options.selector, options) };
   }
 
   private _asLocator(selector: string) {

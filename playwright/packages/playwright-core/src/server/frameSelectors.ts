@@ -17,10 +17,13 @@
 import { InvalidSelectorError,  splitSelectorByFrame, stringifySelector, visitAllSelectorParts } from '@isomorphic/selectorParser';
 import { asLocator } from '@isomorphic/locatorGenerators';
 
+import { NonRecoverableDOMError } from './dom';
+import { EvaluationStalledError } from './errors';
+
 import type { ElementHandle, FrameExecutionContext } from './dom';
 import type { Frame } from './frames';
 import type { InjectedScript } from '@injected/injectedScript';
-import type { JSHandle, SmartHandle } from './javascript';
+import type { JSHandle, SmartHandle, Unboxed } from './javascript';
 import type * as types from './types';
 import type { ParsedSelector } from '@isomorphic/selectorParser';
 
@@ -31,13 +34,13 @@ export type SelectorInfo = {
   strict: boolean,
 };
 
-export type SelectorInFrame = {
+type SelectorInFrame = {
   frame: Frame;
   info: SelectorInfo;
   scope?: ElementHandle;
 };
 
-type MatchedElementsCallback<Arg, R> = (data: { injected: InjectedScript, elements: Element[], info: SelectorInfo }, arg: Arg) => R | Promise<R>;
+type MatchedElementsCallback<Arg, R> = (data: { injected: InjectedScript, elements: Element[], info: SelectorInfo }, arg: Unboxed<Arg>) => R | Promise<R>;
 
 export class FrameSelectors {
   readonly frame: Frame;
@@ -117,31 +120,95 @@ export class FrameSelectors {
     return jumptToFrame;
   }
 
-  private async _resolveFrameForSelector(selector: string, options: types.StrictOptions = {}, scope?: ElementHandle): Promise<SelectorInFrame | null> {
-    let frame: Frame = this.frame;
-    const frameChunks = splitSelectorByFrame(selector);
-
-    for (const chunk of frameChunks) {
+  async resolveFramesForSelector(selector: string, options: types.StrictOptions & { anyFrame?: boolean } = {}, scope?: ElementHandle): Promise<SelectorInFrame[]> {
+    const { anyFrame, chunks } = splitSelectorByFrame(selector);
+    for (const chunk of chunks) {
       visitAllSelectorParts(chunk, (part, nested) => {
         if (nested && part.name === 'internal:control' && part.body === 'enter-frame') {
           const locator = asLocator(this.frame._page.browserContext._browser.sdkLanguage(), selector);
           throw new InvalidSelectorError(`Frame locators are not allowed inside composite locators, while querying "${locator}"`);
         }
+        if (nested && part.name === 'internal:control' && part.body === 'any-frame') {
+          const locator = asLocator(this.frame._page.browserContext._browser.sdkLanguage(), selector);
+          throw new InvalidSelectorError(`frameLocator() is not allowed inside composite locators, while querying "${locator}"`);
+        }
       });
     }
 
+    if (!anyFrame && !options.anyFrame) {
+      const result = await this._resolveChainedSelector(this.frame, selector, options, chunks, scope, false /* noStall */);
+      return result ? [result] : [];
+    }
+
+    const result: SelectorInFrame[] = [];
+    const seenFrames = new Set<Frame>();
+    for (const startFrame of await this._anyFrameCandidates(scope)) {
+      const resolved = await this._resolveChainedSelector(startFrame, selector, options, chunks, startFrame === this.frame ? scope : undefined, startFrame !== this.frame /* noStall */);
+      // Different starting frames may resolve into the same frame, e.g. with an aria-ref selector.
+      if (!resolved || seenFrames.has(resolved.frame))
+        continue;
+      seenFrames.add(resolved.frame);
+      result.push(resolved);
+    }
+    return result;
+  }
+
+  // All the frames the selector may start in: the frame subtree, restricted to the scope when given.
+  private async _anyFrameCandidates(scope: ElementHandle | undefined): Promise<Frame[]> {
+    const result: Frame[] = [];
+    const collectSubtree = (frame: Frame) => {
+      result.push(frame);
+      for (const child of frame.childFrames())
+        collectSubtree(child);
+    };
+
+    if (!scope) {
+      collectSubtree(this.frame);
+      return result;
+    }
+
+    result.push(this.frame);
+    await this.frame.raceAgainstEvaluationStallingEvents(async () => {
+      const injected = await scope._context.injectedScript();
+      const frameElements = await injected.evaluateHandle((injected, scope) => {
+        return injected.querySelectorAll(injected.parseSelector('css=frame,iframe'), scope);
+      }, scope);
+      const count = await frameElements.evaluate(elements => elements.length);
+      for (let i = 0; i < count; ++i) {
+        const frameElement = await frameElements.evaluateHandle((elements, i) => elements[i], i) as ElementHandle<Element>;
+        const childFrame = await this.frame._page.delegate.getContentFrame(frameElement);
+        frameElement.dispose();
+        if (childFrame)
+          collectSubtree(childFrame);
+      }
+      frameElements.dispose();
+    }).catch(() => {});
+    return result;
+  }
+
+  private async _resolveChainedSelector(startFrame: Frame, selector: string, options: types.StrictOptions, frameChunks: ParsedSelector[], scope: ElementHandle | undefined, noStall: boolean): Promise<SelectorInFrame | null> {
+    let frame = startFrame;
     for (let i = 0; i < frameChunks.length - 1; ++i) {
       const info = this._parseSelector(frameChunks[i], options);
       frame = this._jumpToAriaRefFrameIfNeeded(selector, info, frame);
-      const context = await frame.context(info.world);
-      const injectedScript = await context.injectedScript();
-      const handle = await injectedScript.evaluateHandle((injected, { info, scope, selectorString }) => {
-        const element = injected.querySelector(info.parsed, scope || document, info.strict);
-        if (element && element.nodeName !== 'IFRAME' && element.nodeName !== 'FRAME')
-          throw injected.createStacklessError(`Selector "${selectorString}" resolved to ${injected.previewNode(element)}, <iframe> was expected`);
-        return element;
-      }, { info, scope: i === 0 ? scope : undefined, selectorString: stringifySelector(info.parsed) });
-      const element = handle.asElement() as ElementHandle<Element> | null;
+      const context = noStall ? frame.existingContext(info.world) : await frame.context(info.world);
+      if (!context)
+        return null;
+      const queryFrameElement = async () => {
+        const injectedScript = await context.injectedScript();
+        return await injectedScript.evaluateHandle((injected, { info, scope, selectorString }) => {
+          const element = injected.querySelector(info.parsed, scope || document, info.strict);
+          if (element && element.nodeName !== 'IFRAME' && element.nodeName !== 'FRAME')
+            throw injected.createStacklessError(`Selector "${selectorString}" resolved to ${injected.previewNode(element)}, <iframe> was expected`);
+          return element;
+        }, { info, scope: i === 0 ? scope : undefined, selectorString: stringifySelector(info.parsed) });
+      };
+      const handle = noStall ? await frame.raceAgainstEvaluationStallingEvents(queryFrameElement).catch(e => {
+        if (e instanceof EvaluationStalledError)
+          return null;
+        throw e;
+      }) : await queryFrameElement();
+      const element = handle?.asElement() as ElementHandle<Element> | null;
       if (!element)
         return null;
       const maybeFrame = await frame._page.delegate.getContentFrame(element);
@@ -151,20 +218,67 @@ export class FrameSelectors {
       frame = maybeFrame;
     }
     // If we end up in the different frame, we should start from the frame root, so throw away the scope.
-    if (frame !== this.frame)
+    if (frame !== startFrame)
       scope = undefined;
     const lastChunk = frame.selectors._parseSelector(frameChunks[frameChunks.length - 1], options);
     frame = this._jumpToAriaRefFrameIfNeeded(selector, lastChunk, frame);
     return { frame, info: lastChunk, scope };
   }
 
-  private async _resolveInjectedForSelector(selector: string, options: types.StrictOptions & { mainWorld?: boolean }, scope?: ElementHandle): Promise<{ frame: Frame, info: SelectorInfo, injected: JSHandle<InjectedScript>, scope?: ElementHandle } | null> {
-    const resolved = await this._resolveFrameForSelector(selector, options, scope);
-    if (!resolved)
-      return null;
-    const context = await resolved.frame.context(options.mainWorld ? 'main' : resolved.info.world);
-    const injected = await context.injectedScript();
-    return { frame: resolved.frame, info: resolved.info, injected, scope: resolved.scope };
+  private async _callOnSelectorInternal<Arg, R>(
+    selector: string,
+    options: types.StrictOptions & { mainWorld?: boolean, callWithoutMatches?: boolean, scope?: ElementHandle, markTargets?: 'all' | 'first' | 'none' },
+    pageFunction: MatchedElementsCallback<Arg, R>,
+    arg: Arg,
+    returnByValue: boolean,
+  ): Promise<{ frame: Frame, info: SelectorInfo, result: R | SmartHandle<R> } | null> {
+    const resolved = await this.resolveFramesForSelector(selector, options, options.scope);
+    let aggregatedResult: { frame: Frame, info: SelectorInfo, result: R | SmartHandle<R> } | null = null;
+    const noStall = resolved.length > 1;
+    for (const { frame, info, scope } of resolved) {
+      const world = options.mainWorld ? 'main' : info.world;
+      const context = noStall ? frame.existingContext(world) : await frame.context(world);
+      if (!context)
+        continue;
+      const getResult = async () => {
+        const injected = await context.injectedScript();
+        const method = returnByValue ? 'evaluate' : 'evaluateHandle';
+        const evalResult = await injected[method]((injected, params) => {
+          const elements = injected.querySelectorAll(params.info.parsed, params.scope || document);
+          if (params.markTargets === 'all')
+            injected.markTargetElements(new Set(elements));
+          else if (params.markTargets === 'first' && elements.length)
+            injected.markTargetElements(new Set([elements[0]]));
+          else if (params.markTargets === 'first')
+            injected.markTargetElements(new Set());
+          injected.checkDeprecatedSelectorUsage(params.info.parsed, elements);
+          if (params.info.strict && elements.length > 1)
+            throw injected.strictModeViolationError(params.info.parsed, elements);
+          if (!elements.length && !params.callWithoutMatches)
+            return '--playwright--no--result--value--';
+          const func = injected.eval('(' + params.functionText + ')') as MatchedElementsCallback<Arg, R>;
+          return func({ injected, elements, info: params.info }, params.arg);
+        }, { info, scope, functionText: String(pageFunction), arg, callWithoutMatches: options.callWithoutMatches, markTargets: options.markTargets, returnByValue });
+        if (returnByValue && evalResult === '--playwright--no--result--value--')
+          return;
+        if (!returnByValue && (evalResult as JSHandle)._value === '--playwright--no--result--value--') {
+          (evalResult as JSHandle).dispose();
+          return;
+        }
+        return { result: evalResult as R | SmartHandle<R> };
+      };
+      const maybeResult = noStall ? await frame.raceAgainstEvaluationStallingEvents(getResult).catch(e => {
+        if (e instanceof EvaluationStalledError)
+          return;
+        throw e;
+      }) : await getResult();
+      if (!maybeResult)
+        continue;
+      if (aggregatedResult)
+        throw new NonRecoverableDOMError(`frameLocator() matched elements in multiple frames.`);
+      aggregatedResult = { frame, info, result: maybeResult.result };
+    }
+    return aggregatedResult;
   }
 
   async callOnSelector<Arg, R>(
@@ -173,14 +287,8 @@ export class FrameSelectors {
     pageFunction: MatchedElementsCallback<Arg, R>,
     arg: Arg,
   ): Promise<{ frame: Frame, info: SelectorInfo, result: R } | null> {
-    const resolved = await this._resolveInjectedForSelector(selector, options, options.scope);
-    if (!resolved)
-      return null;
-    const result = await resolved.injected.evaluate(callMatchedElements, { info: resolved.info, scope: resolved.scope, functionText: String(pageFunction), arg, callWithoutMatches: !!options.callWithoutMatches, markTargets: options.markTargets }) as R;
-    // callMatchedElements returns undefined when there were no matches and it skipped the page function.
-    if (!options.callWithoutMatches && result === undefined)
-      return null;
-    return { frame: resolved.frame, info: resolved.info, result };
+    const result = await this._callOnSelectorInternal(selector, options, pageFunction, arg, true /* returnByValue */);
+    return result as { frame: Frame, info: SelectorInfo, result: R } | null;
   }
 
   async callOnSelectorHandle<Arg, R>(
@@ -189,34 +297,9 @@ export class FrameSelectors {
     pageFunction: MatchedElementsCallback<Arg, R>,
     arg: Arg,
   ): Promise<{ result: SmartHandle<R> } | null> {
-    const resolved = await this._resolveInjectedForSelector(selector, options, options.scope);
-    if (!resolved)
-      return null;
-    const result = await resolved.injected.evaluateHandle(callMatchedElements, { info: resolved.info, scope: resolved.scope, functionText: String(pageFunction), arg, callWithoutMatches: false, markTargets: options.markTargets }) as SmartHandle<R>;
-    // A skipped page function returns undefined, which has no object id (unlike a matched element/object).
-    if (!result._objectId) {
-      result.dispose();
-      return null;
-    }
-    return { result };
+    const result = await this._callOnSelectorInternal(selector, { ...options, callWithoutMatches: false }, pageFunction, arg, false /* returnByValue */);
+    return result as { frame: Frame, info: SelectorInfo, result: SmartHandle<R> } | null;
   }
-}
-
-function callMatchedElements(injected: InjectedScript, { info, scope, functionText, arg, callWithoutMatches, markTargets }: { info: SelectorInfo, scope: Node | undefined, functionText: string, arg: any, callWithoutMatches: boolean, markTargets?: 'all' | 'first' | 'none' }): any {
-  const elements = injected.querySelectorAll(info.parsed, scope || document);
-  if (markTargets === 'all')
-    injected.markTargetElements(new Set(elements));
-  else if (markTargets === 'first' && elements.length)
-    injected.markTargetElements(new Set([elements[0]]));
-  else if (markTargets === 'first')
-    injected.markTargetElements(new Set());
-  injected.checkDeprecatedSelectorUsage(info.parsed, elements);
-  if (info.strict && elements.length > 1)
-    throw injected.strictModeViolationError(info.parsed, elements);
-  if (!elements.length && !callWithoutMatches)
-    return undefined;
-  const pageFunction = injected.eval('(' + functionText + ')');
-  return pageFunction({ injected, elements, info }, arg);
 }
 
 async function adoptIfNeeded<T extends Node>(handle: ElementHandle<T>, context: FrameExecutionContext): Promise<ElementHandle<T>> {

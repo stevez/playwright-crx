@@ -157,6 +157,7 @@ function transform(template: string, params: TemplateParams, testIdAttributeName
   // Transform to selector engines.
   template = template
       .replace(/\,set([\w]+)\(([^)]+)\)/g, (_, group1, group2) => ',' + group1.toLowerCase() + '=' + group2.toLowerCase())
+      .replace(/framelocator\(\)/g, 'internal:control=any-frame')
       .replace(/framelocator\(([^)]+)\)/g, '$1.internal:control=enter-frame')
       .replace(/contentframe(\(\))?/g, 'internal:control=enter-frame')
       .replace(/locator\(([^)]+),hastext=([^),]+)\)/g, 'locator($1).internal:has-text=$2')
@@ -173,6 +174,7 @@ function transform(template: string, params: TemplateParams, testIdAttributeName
       .replace(/nth\(([^)]+)\)/g, 'nth=$1')
       .replace(/filter\(,?visible=true\)/g, 'visible=true')
       .replace(/filter\(,?visible=false\)/g, 'visible=false')
+      .replace(/\.visible(\(\))?(?!=)/g, '.visible=true')
       .replace(/filter\(,?hastext=([^)]+)\)/g, 'internal:has-text=$1')
       .replace(/filter\(,?hasnottext=([^)]+)\)/g, 'internal:has-not-text=$1')
       .replace(/filter\(,?has2=([^)]+)\)/g, 'internal:has=$1')

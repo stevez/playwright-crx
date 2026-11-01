@@ -134,7 +134,7 @@ export class DebugController extends SdkObject {
     for (const recorder of await progress.race(this._allRecorders()))
       promises.push(recorder.hideHighlightedSelector());
     // Hide all locator.highlight highlights.
-    promises.push(...this._playwright.allPages().map(p => p.hideHighlight().catch(() => {})));
+    promises.push(...this._playwright.allPages().map(p => p.highlightController.hideHighlights().catch(() => {})));
     await progress.race(Promise.all(promises));
   }
 
@@ -188,8 +188,7 @@ function wireListeners(recorder: Recorder, debugController: DebugController) {
   const languageGenerator = new JavaScriptLanguageGenerator(/* isPlaywrightTest */true);
 
   const actionsChanged = () => {
-    const aa = collapseActions(actions);
-    const { header, footer, text, actionTexts } = generateCode(aa, languageGenerator, {
+    const { header, footer, text, actionTexts } = generateCode(collapseActions(actions), languageGenerator, {
       browserName: 'chromium',
       launchOptions: {},
       contextOptions: {},
@@ -212,10 +211,19 @@ function wireListeners(recorder: Recorder, debugController: DebugController) {
     actions.push(action);
     actionsChanged();
   });
+  recorder.on(RecorderEvent.ModeChanged, (mode: Mode) => {
+    // Recording session has ended (mode switched to 'none' when the client
+    // stops recording, or 'standby' when the recorder toolbar pauses it):
+    // drop the accumulated actions, so that the next session does not leak
+    // them into the emitted source (the client would re-insert the stale
+    // last action into the editor).
+    if (mode === 'none' || mode === 'standby')
+      actions.length = 0;
+  });
   recorder.on(RecorderEvent.SignalAdded, (signal: actions.SignalInContext) => {
     const lastAction = actions.findLast(a => a.pageGuid === signal.pageGuid);
     if (lastAction)
-      lastAction.action.signals.push(signal.signal);
+      lastAction.signals.push(signal.signal);
     actionsChanged();
   });
 }

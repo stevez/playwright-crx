@@ -18,8 +18,8 @@
 
 import type { Progress } from './progress';
 
-import type { Binary, Channel, AndroidWebView, AndroidSelector, AndroidElementInfo, APIResponse, Metadata, ClientSideCallMetadata, SDKLanguage, WaitInfo, SetNetworkCookie, NetworkCookie, ResourceTiming, SecurityDetails, RequestSizes, RemoteAddr, ExpectedTextValue, SelectorEngine, FormField, LifecycleEvent, ConsoleMessagesFilter, RecorderSource, IndexedDBDatabase, SetOriginStorage, OriginStorage, RecordHarOptions, SerializedValue, SerializedArgument, SerializedError, StackFrame, VirtualCredential, Point, Rect, URLPattern, NameValue } from '@protocol/structs';
-export type { Binary, Channel, AndroidWebView, AndroidSelector, AndroidElementInfo, APIResponse, Metadata, ClientSideCallMetadata, SDKLanguage, WaitInfo, SetNetworkCookie, NetworkCookie, ResourceTiming, SecurityDetails, RequestSizes, RemoteAddr, ExpectedTextValue, SelectorEngine, FormField, LifecycleEvent, ConsoleMessagesFilter, RecorderSource, IndexedDBDatabase, SetOriginStorage, OriginStorage, RecordHarOptions, SerializedValue, SerializedArgument, SerializedError, StackFrame, VirtualCredential, Point, Rect, URLPattern, NameValue } from '@protocol/structs';
+import type { Binary, Channel, AndroidWebView, AndroidSelector, AndroidElementInfo, APIResponse, Metadata, ClientSideCallMetadata, SDKLanguage, WaitInfo, HttpCredentials, SetNetworkCookie, NetworkCookie, ResourceTiming, SecurityDetails, RequestSizes, RemoteAddr, ExpectedTextValue, SelectorEngine, FormField, LifecycleEvent, ConsoleMessagesFilter, RecorderSource, IndexedDBDatabase, OPFSEntry, SetOriginStorage, OriginStorage, RecordHarOptions, SerializedValue, SerializedArgument, SerializedError, StackFrame, VirtualCredential, Point, Rect, URLPattern, NameValue } from '@protocol/structs';
+export type { Binary, Channel, AndroidWebView, AndroidSelector, AndroidElementInfo, APIResponse, Metadata, ClientSideCallMetadata, SDKLanguage, WaitInfo, HttpCredentials, SetNetworkCookie, NetworkCookie, ResourceTiming, SecurityDetails, RequestSizes, RemoteAddr, ExpectedTextValue, SelectorEngine, FormField, LifecycleEvent, ConsoleMessagesFilter, RecorderSource, IndexedDBDatabase, OPFSEntry, SetOriginStorage, OriginStorage, RecordHarOptions, SerializedValue, SerializedArgument, SerializedError, StackFrame, VirtualCredential, Point, Rect, URLPattern, NameValue } from '@protocol/structs';
 
 // ----------- Initializer Traits -----------
 export type InitializerTraits<T> =
@@ -405,12 +405,7 @@ export type AndroidDeviceLaunchBrowserParams = {
   permissions?: string[],
   extraHTTPHeaders?: NameValue[],
   offline?: boolean,
-  httpCredentials?: {
-    username: string,
-    password: string,
-    origin?: string,
-    send?: 'always' | 'unauthorized',
-  },
+  httpCredentials?: HttpCredentials[],
   deviceScaleFactor?: number,
   isMobile?: boolean,
   hasTouch?: boolean,
@@ -477,12 +472,7 @@ export type AndroidDeviceLaunchBrowserOptions = {
   permissions?: string[],
   extraHTTPHeaders?: NameValue[],
   offline?: boolean,
-  httpCredentials?: {
-    username: string,
-    password: string,
-    origin?: string,
-    send?: 'always' | 'unauthorized',
-  },
+  httpCredentials?: HttpCredentials[],
   deviceScaleFactor?: number,
   isMobile?: boolean,
   hasTouch?: boolean,
@@ -642,9 +632,11 @@ export type APIRequestContextFetchLogResult = {
 };
 export type APIRequestContextStorageStateParams = {
   indexedDB?: boolean,
+  opfs?: boolean,
 };
 export type APIRequestContextStorageStateOptions = {
   indexedDB?: boolean,
+  opfs?: boolean,
 };
 export type APIRequestContextStorageStateResult = {
   cookies: NetworkCookie[],
@@ -862,12 +854,7 @@ export type BrowserNewContextParams = {
   permissions?: string[],
   extraHTTPHeaders?: NameValue[],
   offline?: boolean,
-  httpCredentials?: {
-    username: string,
-    password: string,
-    origin?: string,
-    send?: 'always' | 'unauthorized',
-  },
+  httpCredentials?: HttpCredentials[],
   deviceScaleFactor?: number,
   isMobile?: boolean,
   hasTouch?: boolean,
@@ -937,12 +924,7 @@ export type BrowserNewContextOptions = {
   permissions?: string[],
   extraHTTPHeaders?: NameValue[],
   offline?: boolean,
-  httpCredentials?: {
-    username: string,
-    password: string,
-    origin?: string,
-    send?: 'always' | 'unauthorized',
-  },
+  httpCredentials?: HttpCredentials[],
   deviceScaleFactor?: number,
   isMobile?: boolean,
   hasTouch?: boolean,
@@ -1015,12 +997,7 @@ export type BrowserNewContextForReuseParams = {
   permissions?: string[],
   extraHTTPHeaders?: NameValue[],
   offline?: boolean,
-  httpCredentials?: {
-    username: string,
-    password: string,
-    origin?: string,
-    send?: 'always' | 'unauthorized',
-  },
+  httpCredentials?: HttpCredentials[],
   deviceScaleFactor?: number,
   isMobile?: boolean,
   hasTouch?: boolean,
@@ -1090,12 +1067,7 @@ export type BrowserNewContextForReuseOptions = {
   permissions?: string[],
   extraHTTPHeaders?: NameValue[],
   offline?: boolean,
-  httpCredentials?: {
-    username: string,
-    password: string,
-    origin?: string,
-    send?: 'always' | 'unauthorized',
-  },
+  httpCredentials?: HttpCredentials[],
   deviceScaleFactor?: number,
   isMobile?: boolean,
   hasTouch?: boolean,
@@ -1207,12 +1179,7 @@ export type BrowserContextInitializer = {
     permissions?: string[],
     extraHTTPHeaders?: NameValue[],
     offline?: boolean,
-    httpCredentials?: {
-      username: string,
-      password: string,
-      origin?: string,
-      send?: 'always' | 'unauthorized',
-    },
+    httpCredentials?: HttpCredentials[],
     deviceScaleFactor?: number,
     isMobile?: boolean,
     hasTouch?: boolean,
@@ -1246,6 +1213,7 @@ export interface BrowserContextEventTarget {
   _dispatchEvent(event: 'console', params?: BrowserContextConsoleEvent): void;
   _dispatchEvent(event: 'close', params?: BrowserContextCloseEvent): void;
   _dispatchEvent(event: 'dialog', params?: BrowserContextDialogEvent): void;
+  _dispatchEvent(event: 'dialogClosed', params?: BrowserContextDialogClosedEvent): void;
   _dispatchEvent(event: 'page', params?: BrowserContextPageEvent): void;
   _dispatchEvent(event: 'pageError', params?: BrowserContextPageErrorEvent): void;
   _dispatchEvent(event: 'route', params?: BrowserContextRouteEvent): void;
@@ -1315,6 +1283,9 @@ export type BrowserContextConsoleEvent = {
 };
 export type BrowserContextCloseEvent = {};
 export type BrowserContextDialogEvent = {
+  dialog: DialogChannel,
+};
+export type BrowserContextDialogClosedEvent = {
   dialog: DialogChannel,
 };
 export type BrowserContextPageEvent = {
@@ -1482,18 +1453,10 @@ export type BrowserContextSetGeolocationOptions = {
 };
 export type BrowserContextSetGeolocationResult = void;
 export type BrowserContextSetHTTPCredentialsParams = {
-  httpCredentials?: {
-    username: string,
-    password: string,
-    origin?: string,
-  },
+  httpCredentials?: HttpCredentials[],
 };
 export type BrowserContextSetHTTPCredentialsOptions = {
-  httpCredentials?: {
-    username: string,
-    password: string,
-    origin?: string,
-  },
+  httpCredentials?: HttpCredentials[],
 };
 export type BrowserContextSetHTTPCredentialsResult = void;
 export type BrowserContextSetNetworkInterceptionPatternsParams = {
@@ -1529,10 +1492,12 @@ export type BrowserContextSetOfflineOptions = {
 export type BrowserContextSetOfflineResult = void;
 export type BrowserContextStorageStateParams = {
   indexedDB?: boolean,
+  opfs?: boolean,
   credentials?: boolean,
 };
 export type BrowserContextStorageStateOptions = {
   indexedDB?: boolean,
+  opfs?: boolean,
   credentials?: boolean,
 };
 export type BrowserContextStorageStateResult = {
@@ -1619,7 +1584,7 @@ export type BrowserContextCreateTempFilesResult = {
   writableStreams: WritableStreamChannel[],
 };
 export type BrowserContextUpdateSubscriptionParams = {
-  event: 'console' | 'dialog' | 'request' | 'response' | 'requestFinished' | 'requestFailed',
+  event: 'console' | 'dialog' | 'dialogClosed' | 'request' | 'response' | 'requestFinished' | 'requestFailed',
   enabled: boolean,
 };
 export type BrowserContextUpdateSubscriptionOptions = {
@@ -1726,6 +1691,7 @@ export interface BrowserContextEvents {
   'console': BrowserContextConsoleEvent;
   'close': BrowserContextCloseEvent;
   'dialog': BrowserContextDialogEvent;
+  'dialogClosed': BrowserContextDialogClosedEvent;
   'page': BrowserContextPageEvent;
   'pageError': BrowserContextPageErrorEvent;
   'route': BrowserContextRouteEvent;
@@ -1858,12 +1824,7 @@ export type BrowserTypeLaunchPersistentContextParams = {
   permissions?: string[],
   extraHTTPHeaders?: NameValue[],
   offline?: boolean,
-  httpCredentials?: {
-    username: string,
-    password: string,
-    origin?: string,
-    send?: 'always' | 'unauthorized',
-  },
+  httpCredentials?: HttpCredentials[],
   deviceScaleFactor?: number,
   isMobile?: boolean,
   hasTouch?: boolean,
@@ -1946,12 +1907,7 @@ export type BrowserTypeLaunchPersistentContextOptions = {
   permissions?: string[],
   extraHTTPHeaders?: NameValue[],
   offline?: boolean,
-  httpCredentials?: {
-    username: string,
-    password: string,
-    origin?: string,
-    send?: 'always' | 'unauthorized',
-  },
+  httpCredentials?: HttpCredentials[],
   deviceScaleFactor?: number,
   isMobile?: boolean,
   hasTouch?: boolean,
@@ -1990,6 +1946,7 @@ export type BrowserTypeConnectOverCDPParams = {
   slowMo?: number,
   isLocal?: boolean,
   noDefaults?: boolean,
+  isWebView?: boolean,
   artifactsDir?: string,
   transport?: Binary,
 };
@@ -1999,6 +1956,7 @@ export type BrowserTypeConnectOverCDPOptions = {
   slowMo?: number,
   isLocal?: boolean,
   noDefaults?: boolean,
+  isWebView?: boolean,
   artifactsDir?: string,
   transport?: Binary,
 };
@@ -2057,11 +2015,7 @@ export type ElectronLaunchParams = {
     latitude: number,
     accuracy?: number,
   },
-  httpCredentials?: {
-    username: string,
-    password: string,
-    origin?: string,
-  },
+  httpCredentials?: HttpCredentials[],
   ignoreHTTPSErrors?: boolean,
   locale?: string,
   offline?: boolean,
@@ -2100,11 +2054,7 @@ export type ElectronLaunchOptions = {
     latitude: number,
     accuracy?: number,
   },
-  httpCredentials?: {
-    username: string,
-    password: string,
-    origin?: string,
-  },
+  httpCredentials?: HttpCredentials[],
   ignoreHTTPSErrors?: boolean,
   locale?: string,
   offline?: boolean,
@@ -2225,6 +2175,7 @@ export interface FrameChannel extends FrameEventTarget, Channel {
   addScriptTag(params: FrameAddScriptTagParams, progress: Progress): Promise<FrameAddScriptTagResult>;
   addStyleTag(params: FrameAddStyleTagParams, progress: Progress): Promise<FrameAddStyleTagResult>;
   ariaSnapshot(params: FrameAriaSnapshotParams, progress: Progress): Promise<FrameAriaSnapshotResult>;
+  ariaSnapshotJSON(params: FrameAriaSnapshotJSONParams, progress: Progress): Promise<FrameAriaSnapshotJSONResult>;
   blur(params: FrameBlurParams, progress: Progress): Promise<FrameBlurResult>;
   check(params: FrameCheckParams, progress: Progress): Promise<FrameCheckResult>;
   click(params: FrameClickParams, progress: Progress): Promise<FrameClickResult>;
@@ -2346,6 +2297,21 @@ export type FrameAriaSnapshotOptions = {
 };
 export type FrameAriaSnapshotResult = {
   snapshot: string,
+};
+export type FrameAriaSnapshotJSONParams = {
+  mode?: 'ai' | 'default',
+  selector?: string,
+  depth?: number,
+  boxes?: boolean,
+};
+export type FrameAriaSnapshotJSONOptions = {
+  mode?: 'ai' | 'default',
+  selector?: string,
+  depth?: number,
+  boxes?: boolean,
+};
+export type FrameAriaSnapshotJSONResult = {
+  snapshot: any,
 };
 export type FrameBlurParams = {
   selector: string,
@@ -4524,7 +4490,7 @@ export type PageScreencastStopParams = {};
 export type PageScreencastStopOptions = {};
 export type PageScreencastStopResult = void;
 export type PageUpdateSubscriptionParams = {
-  event: 'console' | 'dialog' | 'fileChooser' | 'request' | 'response' | 'requestFinished' | 'requestFailed',
+  event: 'console' | 'dialog' | 'dialogClosed' | 'fileChooser' | 'request' | 'response' | 'requestFinished' | 'requestFailed',
   enabled: boolean,
 };
 export type PageUpdateSubscriptionOptions = {
@@ -4652,12 +4618,7 @@ export type PlaywrightNewRequestParams = {
     pfx?: Binary,
   }[],
   maxRedirects?: number,
-  httpCredentials?: {
-    username: string,
-    password: string,
-    origin?: string,
-    send?: 'always' | 'unauthorized',
-  },
+  httpCredentials?: HttpCredentials[],
   proxy?: {
     server: string,
     bypass?: string,
@@ -4684,12 +4645,7 @@ export type PlaywrightNewRequestOptions = {
     pfx?: Binary,
   }[],
   maxRedirects?: number,
-  httpCredentials?: {
-    username: string,
-    password: string,
-    origin?: string,
-    send?: 'always' | 'unauthorized',
-  },
+  httpCredentials?: HttpCredentials[],
   proxy?: {
     server: string,
     bypass?: string,
@@ -4977,6 +4933,7 @@ export interface BindingCallEvents {
 export type DebuggerInitializer = {};
 export interface DebuggerEventTarget {
   _dispatchEvent(event: 'pausedStateChanged', params?: DebuggerPausedStateChangedEvent): void;
+  _dispatchEvent(event: 'apiCallsUpdated', params?: DebuggerApiCallsUpdatedEvent): void;
 }
 export interface DebuggerChannel extends DebuggerEventTarget, Channel {
   _type_Debugger: boolean;
@@ -4984,6 +4941,7 @@ export interface DebuggerChannel extends DebuggerEventTarget, Channel {
   resume(params: DebuggerResumeParams, progress: Progress): Promise<DebuggerResumeResult>;
   next(params: DebuggerNextParams, progress: Progress): Promise<DebuggerNextResult>;
   runTo(params: DebuggerRunToParams, progress: Progress): Promise<DebuggerRunToResult>;
+  enable(params: DebuggerEnableParams, progress: Progress): Promise<DebuggerEnableResult>;
 }
 export type DebuggerPausedStateChangedEvent = {
   pausedDetails?: {
@@ -4995,6 +4953,21 @@ export type DebuggerPausedStateChangedEvent = {
     title: string,
     stack?: string,
   },
+};
+export type DebuggerApiCallsUpdatedEvent = {
+  apiCalls: {
+    id: string,
+    title: string,
+    location?: {
+      file: string,
+      line?: number,
+      column?: number,
+    },
+    newLogEntries: string[],
+    actionPoint?: Point,
+    status: 'running' | 'success' | 'error',
+    error?: string,
+  }[],
 };
 export type DebuggerRequestPauseParams = {};
 export type DebuggerRequestPauseOptions = {};
@@ -5016,9 +4989,13 @@ export type DebuggerRunToOptions = {
 
 };
 export type DebuggerRunToResult = void;
+export type DebuggerEnableParams = {};
+export type DebuggerEnableOptions = {};
+export type DebuggerEnableResult = void;
 
 export interface DebuggerEvents {
   'pausedStateChanged': DebuggerPausedStateChangedEvent;
+  'apiCallsUpdated': DebuggerApiCallsUpdatedEvent;
 }
 
 // ----------- Dialog -----------
@@ -5066,14 +5043,18 @@ export interface TracingChannel extends TracingEventTarget, Channel {
 }
 export type TracingTracingStartParams = {
   name?: string,
-  snapshots?: boolean,
-  screenshots?: boolean,
+  snapshotDom?: boolean,
+  snapshotAria?: boolean,
+  snapshotScreen?: boolean,
+  screencast?: boolean,
   live?: boolean,
 };
 export type TracingTracingStartOptions = {
   name?: string,
-  snapshots?: boolean,
-  screenshots?: boolean,
+  snapshotDom?: boolean,
+  snapshotAria?: boolean,
+  snapshotScreen?: boolean,
+  screencast?: boolean,
   live?: boolean,
 };
 export type TracingTracingStartResult = void;

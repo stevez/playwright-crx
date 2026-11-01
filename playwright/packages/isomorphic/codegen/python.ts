@@ -74,7 +74,7 @@ export class PythonLanguageGenerator implements LanguageGenerator {
     }
 
     const subject = pageAlias;
-    const signals = toSignalMap(action);
+    const signals = toSignalMap(actionInContext);
 
     if (signals.dialog)
       formatter.add(`  ${pageAlias}.once("dialog", lambda dialog: dialog.dismiss())`);
@@ -146,7 +146,7 @@ export class PythonLanguageGenerator implements LanguageGenerator {
         return `expect(${subject}.${this._asLocator(action.selector)}).to_be_visible()`;
       case 'assertValue': {
         const assertion = action.value ? `to_have_value(${quote(action.value)})` : `to_be_empty()`;
-        return `expect(${subject}.${this._asLocator(action.selector)}).${assertion};`;
+        return `expect(${subject}.${this._asLocator(action.selector)}).${assertion}`;
       }
       case 'assertSnapshot':
         return `expect(${subject}.${this._asLocator(action.selector)}).to_match_aria_snapshot(${quote(action.ariaSnapshot)})`;
