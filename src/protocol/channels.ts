@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { BrowserContextChannel, Channel, PageChannel, PlaywrightInitializer } from '@protocol/channels';
+import type { BrowserContextChannel, Channel, PageChannel, PlaywrightInitializer } from 'playwright-core/lib/server/channels';
 import type { Mode } from '@recorder/recorderTypes';
 import type { CallMetadata } from 'playwright-core/lib/server/instrumentation';
 import type { CrxBrowserContextOptions } from 'src/types/types';

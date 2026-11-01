@@ -181,6 +181,7 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
     all: true,
     allInnerTexts: true,
     allTextContents: true,
+    waitForFunction: true,
     normalize: true,
     drop: true,
     hideHighlight: true,

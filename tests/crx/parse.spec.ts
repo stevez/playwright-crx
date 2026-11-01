@@ -15,7 +15,7 @@
  */
 
 import { test as base, expect } from './crxTest';
-import type { Action, ActionInContext } from '../../../playwright/packages/recorder/src/actions';
+import type { Action, ActionInContext } from '../../playwright/packages/isomorphic/codegen/actions';
 import type { TestOptions } from '../../src/server/recorder/parser';
 
 const test = base.extend<{ testParse: (code: string, skipAssertCode?: boolean) => Promise<{ actions: (Action & { pageAlias: string })[], options: TestOptions }> }>({
@@ -27,7 +27,7 @@ const test = base.extend<{ testParse: (code: string, skipAssertCode?: boolean) =
       }, code);
       if (!skipAssertCode)
         expect.soft(code).toEqual(resultCode);
-      const actions = actionsInContext.map(a => ({ ...a.action, pageAlias: a.frame.pageAlias }));
+      const actions = actionsInContext.map(a => ({ ...a.action, pageAlias: a.pageGuid }));
       return { actions, options };
     });
   },
