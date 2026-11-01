@@ -58,6 +58,7 @@ export class HarRecorder implements HarTracerDelegate {
       waitForContentOnStop: true,
       urlFilter: urlFilterRe ?? options.urlGlob,
     });
+    this._tracer.setOmitWebSocketFrames(!!process.env.PLAYWRIGHT_HAR_NO_WEBSOCKET_FRAMES);
     this._tracer.start({ omitScripts: false });
   }
 
@@ -75,6 +76,13 @@ export class HarRecorder implements HarTracerDelegate {
       this._fs.mkdir(this._resourcesDir);
     this._writtenContentEntries.add(sha1);
     this._fs.writeFile(path.join(this._resourcesDir, sha1), buffer, true /* skipIfExists */);
+  }
+
+  onContentBlobAppend(sha1: string, text: string) {
+    if (!this._writtenContentEntries.size)
+      this._fs.mkdir(this._resourcesDir);
+    this._writtenContentEntries.add(sha1);
+    this._fs.appendFile(path.join(this._resourcesDir, sha1), text);
   }
 
   private async _flush() {
