@@ -1,8 +1,8 @@
 {
   "name": "@playwright-repl/playwright-crx",
-  "version": "1.21.4",
+  "version": "1.22.0",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "author": {
     "name": "Rui Figueira"

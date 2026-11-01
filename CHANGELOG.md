@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.22.0
+
+### Breaking Changes
+
+- **Upgrade to Playwright 1.64.1**: incremental upgrade from 1.59.1 through 1.60, 1.61, 1.62, 1.63 to 1.64.1 (#30–#34). The public `crx` / `CrxApplication` API is unchanged.
+- **Requires Node.js 20+**: `engines.node` is now `>=20`, matching Playwright 1.64.
+
+### Changes
+
+- Moved imports to Playwright's new `packages/*` layout (`@isomorphic`, `@utils`, `@protocol`, `@injected`, `@recorder`, …), set up as Vite aliases.
+- Recorder parser: actions use `pageGuid` (1.62) and carry `signals` on the action context (1.63).
+- Detach/close hide highlights via `page.highlightController` (1.63).
+- New Vite stubs for modules that don't work in a service worker:
+  - `open`, `commander` and `proxy-agent-negotiate` (Kerberos). The Kerberos module's lazy `import()` chunk kept the extension service worker from restarting.
+  - `package.ts` and `browser.bind()` servers.
+- New shims:
+  - `inspector`: the npm `inspector@0.5` package crashed the service worker at load.
+  - `net.getDefaultAutoSelectFamilyAttemptTimeout`.
+  - `process.versions.node` now reports Node 20, which Playwright 1.64 checks for at startup.
+- Re-applied the vendored CRX patches (CSP `unsafe-eval` guard, internal `CrxApplication` metainfo) after each upgrade.
+
+### Tests
+
+- Test harness `@playwright/test` follows the vendored version (now 1.64.1, Chromium 156).
+- Tracing tests updated for trace format v9 (`_file` resources, snapshot `phase`).
+- Incognito fixture updated for Chromium 156's extensions page ("Allow in Incognito" is now a switch).
+
 ## 1.21.4
 
 ### Build
