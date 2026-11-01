@@ -671,7 +671,7 @@ set NODE_EXTRA_CA_CERTS="C:\certs\root.crt"
 $Env:NODE_EXTRA_CA_CERTS="C:\certs\root.crt"
 ```
 
-If your network is slow to connect to Playwright browser archive, you can increase the connection timeout in milliseconds with `PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT` environment variable:
+If the browser archive download is slow or stalls, you can increase the download socket timeout in milliseconds with the `PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT` environment variable. Despite its name this is an idle timeout rather than a connection timeout; it limits how long the download may go without receiving data, and defaults to 30 seconds:
 
 ```bash tab=bash-bash lang=js
 PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=120000 npx playwright install
@@ -888,7 +888,7 @@ pwsh bin/Debug/netX/playwright.ps1 install
 ```
 
 ## Using a pre-installed Node.js
-* langs: python, java, dotnet
+* langs: python, java, csharp
 By default, Playwright uses its bundled Node.js runtime for operations such as browser installation and script execution. If you want Playwright to use a pre-installed Node.js binary instead of the bundled runtime, you can specify it using the `PLAYWRIGHT_NODEJS_PATH` environment variable. This can be useful in environments where you need to use a specific version of Node.js or where the bundled runtime is not compatible.
 
 ```bash tab=bash-bash lang=js

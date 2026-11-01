@@ -155,6 +155,12 @@ test('reset the database', { lock: ['database', 'external-api'] }, async () => {
 });
 ```
 
+You can also add locks to the enclosing file or describe group with [`method: Test.describe.configure`].  Repeated calls add locks without removing existing ones.
+
+```js
+test.describe.configure({ lock: 'user-settings' });
+```
+
 Playwright acquires all the locks of a test before the test starts and releases them when it finishes.
 
 :::note
@@ -243,7 +249,7 @@ export default defineConfig({
 
 ## Worker index and parallel index
 
-Each worker process is assigned two ids: a unique worker index that starts with 1, and a parallel index that is between `0` and `workers - 1`. When a worker is restarted, for example after a failure, the new worker process has the same `parallelIndex` and a new `workerIndex`.
+Each worker process is assigned two ids: a unique worker index that starts with 0, and a parallel index that is between `0` and `workers - 1`. When a worker is restarted, for example after a failure, the new worker process has the same `parallelIndex` and a new `workerIndex`.
 
 You can read an index from environment variables `process.env.TEST_WORKER_INDEX` and `process.env.TEST_PARALLEL_INDEX`, or access them through [`property: TestInfo.workerIndex`] and [`property: TestInfo.parallelIndex`].
 

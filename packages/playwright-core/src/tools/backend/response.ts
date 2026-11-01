@@ -20,6 +20,7 @@ import path from 'path';
 import debug from 'debug';
 import { actionInContext, codeframeForLanguage, renderCode, substituteSecrets } from './codegen';
 import { renderModalStates } from './tab';
+import { renderWebMCPToolsYaml, webmcpToolsJSON } from './webmcp';
 
 import { outputDir as resolveOutputDir } from './context';
 
@@ -42,6 +43,7 @@ type SectionContent = string[] | { json: unknown };
 
 type Section = {
   title: string;
+  key?: string; // Property name in the json output, defaults to the lower-cased title.
   content: SectionContent;
   isError?: boolean;
   codeframe?: 'yaml' | 'js' | 'json' | 'python' | 'java' | 'csharp';
@@ -76,7 +78,9 @@ export class Response {
     this._raw = this._json || (options?.raw ?? false);
   }
 
-  private _computeRelativeTo(fileName: string): string {
+  private _printablePath(fileName: string): string {
+    if (this._context.config.filePaths === 'absolute')
+      return path.resolve(fileName);
     const rel = path.relative(this._clientWorkspace, fileName);
     // Prefix bare filenames with `./` so they're not mistaken for living in
     // the auto-named `.playwright-cli/` artifact directory.
@@ -92,7 +96,7 @@ export class Response {
     else
       fileName = await this._context.outputFile(template, { origin: 'llm' });
     await fs.promises.mkdir(path.dirname(fileName), { recursive: true });
-    const relativeName = this._computeRelativeTo(fileName);
+    const relativeName = this._printablePath(fileName);
     const printableLink = `- [${title}](${relativeName})`;
     return { fileName, relativeName, printableLink };
   }
@@ -128,7 +132,7 @@ export class Response {
   }
 
   addFileLink(title: string, fileName: string) {
-    const relativeName = this._computeRelativeTo(fileName);
+    const relativeName = this._printablePath(fileName);
     this.addTextResult(`- [${title}](${relativeName})`);
   }
 
@@ -168,17 +172,17 @@ export class Response {
   async serialize(): Promise<CallToolResult> {
     const allSections = await this._build();
     await this._enforceOutputBudget();
-    const rawSections = ['Error', 'Result', 'Snapshot'] as const;
+    const rawSections = ['Error', 'Result', 'WebMCP tools', 'Snapshot'] as const;
     const sections = this._raw ? allSections.filter(section => rawSections.includes(section.title as typeof rawSections[number])) : allSections;
 
+    const isError = sections.some(section => section.isError);
     let serializedText: string;
     if (this._json) {
       const payload: Record<string, unknown> = {};
-      const isError = sections.some(section => section.isError);
       if (isError)
         payload.isError = true;
       for (const section of sections) {
-        const key = section.title.toLowerCase();
+        const key = section.key ?? section.title.toLowerCase();
         if (!Array.isArray(section.content)) {
           if (section.content.json !== undefined)
             payload[key] = section.content.json;
@@ -214,23 +218,18 @@ export class Response {
       serializedText = text.join('\n');
     }
 
-    const content: (TextContent | ImageContent)[] = [
-      {
-        type: 'text',
-        text: sanitizeUnicode(this._context.redactSecrets(serializedText)),
-      }
+    const imageResponses = this._context.config.imageResponses ?? 'allow';
+    const images: ImageContent[] = imageResponses === 'omit' ? [] : this._imageResults.map(imageResult => ({ type: 'image', data: imageResult.data.toString('base64'), mimeType: `image/${imageResult.imageType}` }));
+    const imagesOnly = imageResponses === 'only' && images.length > 0 && !isError;
+    const content: (TextContent | ImageContent)[] = imagesOnly ? images : [
+      { type: 'text', text: sanitizeUnicode(this._context.redactSecrets(serializedText)) },
+      ...images,
     ];
-
-    // Image attachments.
-    if (this._context.config.imageResponses !== 'omit') {
-      for (const imageResult of this._imageResults)
-        content.push({ type: 'image', data: imageResult.data.toString('base64'), mimeType: `image/${imageResult.imageType}` });
-    }
 
     return {
       content,
       ...(this._isClose ? { isClose: true } : {}),
-      ...(sections.some(section => section.isError) ? { isError: true } : {}),
+      ...(isError ? { isError: true } : {}),
     };
   }
 
@@ -267,8 +266,8 @@ export class Response {
 
   private async _build(): Promise<Section[]> {
     const sections: Section[] = [];
-    const addSection = (title: string, content: SectionContent, codeframe?: Section['codeframe']) => {
-      const section = { title, content, isError: title === 'Error', codeframe };
+    const addSection = (title: string, content: SectionContent, codeframe?: Section['codeframe'], key?: string) => {
+      const section = { title, key, content, isError: title === 'Error', codeframe };
       sections.push(section);
       return content;
     };
@@ -289,7 +288,9 @@ export class Response {
     // Render tab titles upon changes or when more than one tab.
     const snapshotToFile = this._includeSnapshot !== 'explicit' || !!this._includeSnapshotFileName;
     const ariaFormat = this._includeSnapshot === 'none' ? 'none' : (this._json && !snapshotToFile ? 'json' : 'text');
-    const tabSnapshot = this._context.currentTab() ? await this._context.currentTabOrDie().captureSnapshot(this._includeSnapshotRoot, this._includeSnapshotDepth, this._includeSnapshotBoxes, this._clientWorkspace, ariaFormat) : undefined;
+    const updateWebMCP = this._includeSnapshot !== 'none'; // Collect the page's WebMCP tools whenever a snapshot is taken anyway.
+    const logRelativeTo = this._context.config.filePaths === 'absolute' ? undefined : this._clientWorkspace;
+    const tabSnapshot = this._context.currentTab() ? await this._context.currentTabOrDie().captureSnapshot(this._includeSnapshotRoot, this._includeSnapshotDepth, this._includeSnapshotBoxes, logRelativeTo, ariaFormat, updateWebMCP) : undefined;
     const tabHeaders = await Promise.all(this._context.tabs().map(tab => tab.headerSnapshot()));
     if (this._includeSnapshot !== 'none' || tabHeaders.some(header => header.changed)) {
       if (tabHeaders.length !== 1)
@@ -301,17 +302,25 @@ export class Response {
     if (tabSnapshot?.modalStates.length)
       addSection('Modal state', renderModalStates(this._context.config, tabSnapshot.modalStates));
 
-    // Handle tab snapshot
+    // Handle tab snapshot and WebMCP tools.
     if (tabSnapshot && this._includeSnapshot !== 'none') {
-      if (snapshotToFile) {
-        const suggestedFilename = this._includeSnapshotFileName === '<auto>' ? undefined : this._includeSnapshotFileName;
-        const resolvedFile = await this.resolveClientOutputFile({ prefix: 'page', ext: 'yml', suggestedFilename }, 'Snapshot');
-        await this._writeFile(resolvedFile, tabSnapshot.ariaSnapshot);
-        addSection('Snapshot', [resolvedFile.printableLink]);
-      } else if (tabSnapshot.ariaSnapshotJSON !== undefined) {
+      const webmcpListing = this._context.currentTab()?.webmcpTools();
+      if (!snapshotToFile && tabSnapshot.ariaSnapshotJSON !== undefined) {
+        if (webmcpListing?.tools.length)
+          addSection('WebMCP tools', { json: webmcpToolsJSON(webmcpListing) }, 'json', 'webmcpTools');
         addSection('Snapshot', { json: tabSnapshot.ariaSnapshotJSON }, 'json');
       } else {
-        addSection('Snapshot', [tabSnapshot.ariaSnapshot], 'yaml');
+        let ariaSnapshot = tabSnapshot.ariaSnapshot;
+        if (webmcpListing?.tools.length)
+          ariaSnapshot = renderWebMCPToolsYaml(webmcpListing).join('\n') + '\n\n' + ariaSnapshot;
+        if (snapshotToFile) {
+          const suggestedFilename = this._includeSnapshotFileName === '<auto>' ? undefined : this._includeSnapshotFileName;
+          const resolvedFile = await this.resolveClientOutputFile({ prefix: 'page', ext: 'yml', suggestedFilename }, 'Snapshot');
+          await this._writeFile(resolvedFile, ariaSnapshot);
+          addSection('Snapshot', [resolvedFile.printableLink]);
+        } else {
+          addSection('Snapshot', [ariaSnapshot], 'yaml');
+        }
       }
     }
 
@@ -324,7 +333,7 @@ export class Response {
         if (event.type === 'download-start')
           text.push(`- Downloading file ${event.download.download.suggestedFilename()} ...`);
         else if (event.type === 'download-finish')
-          text.push(`- Downloaded file ${event.download.download.suggestedFilename()} to "${this._computeRelativeTo(event.download.outputFile)}"`);
+          text.push(`- Downloaded file ${event.download.download.suggestedFilename()} to "${this._printablePath(event.download.outputFile)}"`);
       }
     }
     if (text.length)
@@ -333,7 +342,7 @@ export class Response {
     const pausedDetails = this._context.debugger().pausedDetails();
     if (pausedDetails) {
       addSection('Paused', [
-        `- ${pausedDetails.title} at ${this._computeRelativeTo(pausedDetails.location.file)}${pausedDetails.location.line ? ':' + pausedDetails.location.line : ''}`,
+        `- ${pausedDetails.title} at ${this._printablePath(pausedDetails.location.file)}${pausedDetails.location.line ? ':' + pausedDetails.location.line : ''}`,
         '- Use any tools to explore and interact, resume by calling resume/step-over/pause-at',
       ]);
     }
@@ -345,11 +354,15 @@ export function renderTabMarkdown(tab: TabHeader): string[] {
   const lines = [`- Page URL: ${tab.url}`];
   if (tab.title)
     lines.push(`- Page Title: ${tab.title}`);
+  if (tab.isolatedContext)
+    lines.push(`- Isolated context: ${tab.isolatedContext}`);
   if (tab.crashed)
     lines.push(`- Page status: crashed`);
   const status = tab.mainDocumentStatus;
   if (status && (status.status < 200 || status.status >= 300))
     lines.push(`- HTTP status: ${status.status}${status.statusText ? ' ' + status.statusText : ''}`);
+  if (tab.webmcpToolCount)
+    lines.push(`- ${tab.webmcpToolCount} webmcp tool${tab.webmcpToolCount === 1 ? '' : 's'} available on the page`);
   if (tab.console.errors || tab.console.warnings)
     lines.push(`- Console: ${tab.console.errors} errors, ${tab.console.warnings} warnings`);
   return lines;
@@ -364,7 +377,8 @@ export function renderTabsMarkdown(tabs: TabHeader[]): string[] {
     const tab = tabs[i];
     const current = tab.current ? ' (current)' : '';
     const crashed = tab.crashed ? ' [crashed]' : '';
-    lines.push(`- ${i}:${current} [${tab.title}](${tab.url})${crashed}`);
+    const isolatedContext = tab.isolatedContext ? ` [isolatedContext: ${tab.isolatedContext}]` : '';
+    lines.push(`- ${i}:${current} [${tab.title}](${tab.url})${crashed}${isolatedContext}`);
   }
   return lines;
 }

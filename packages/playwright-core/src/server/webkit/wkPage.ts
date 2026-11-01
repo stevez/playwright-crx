@@ -211,8 +211,8 @@ export class WKPage implements PageDelegate {
       }));
     }
     promises.push(session.send('Network.setExtraHTTPHeaders', { headers: headersArrayToObject(this._calculateExtraHTTPHeaders(), false /* lowerCase */) }));
-    if (contextOptions.offline)
-      promises.push(session.send('Network.setEmulateOfflineState', { offline: true }));
+    if (contextOptions.offline !== undefined)
+      promises.push(session.send('Network.setEmulateOfflineState', { offline: contextOptions.offline }));
     promises.push(session.send('Page.setTouchEmulationEnabled', { enabled: !!contextOptions.hasTouch }));
     if (contextOptions.timezoneId) {
       promises.push(session.send('Page.setTimeZone', { timeZone: contextOptions.timezoneId }).
@@ -1037,7 +1037,7 @@ export class WKPage implements PageDelegate {
         // Make sure the request completes if the provisional navigation is canceled.
         this._onLoadingFailed(provisionalPage._session, {
           requestId: requestId,
-          errorText: 'Provisiolal navigation canceled.',
+          errorText: 'Provisional navigation canceled.',
           timestamp: request._timestamp,
           canceled: true,
         });

@@ -586,7 +586,7 @@ export namespace Protocol {
        */
       groupings?: Grouping[];
       /**
-       * <code>true</code> if this style is for a rule implicitly wrapping properties declared inside of CSSGrouping.
+       * <code>true</code> if this is a nested declarations rule holding declarations interleaved with other rules inside a style rule or nested grouping rule. Such a rule has no selector of its own, it matches whatever its nesting parent style rule matches.
        */
       isImplicitlyNested?: boolean;
     }
@@ -6389,7 +6389,11 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
       /**
        * Limits the bytes per second of requests if positive. Removes any limits if zero or not provided.
        */
-      bytesPerSecondLimit?: number;
+      bandwidth?: number;
+      /**
+       * Adds a round-trip delay (in milliseconds) to each request if positive. Removes any delay if zero or not provided.
+       */
+      latency?: number;
     }
     export type setEmulatedConditionsReturnValue = {
     }

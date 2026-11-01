@@ -31,6 +31,7 @@ export type ScreencastClient = {
   dispose: () => void;
   size?: types.Size;
   quality?: number;
+  fps?: number;
 };
 
 type AnnotatePosition = 'top-left' | 'top' | 'top-right' | 'bottom-left' | 'bottom' | 'bottom-right';
@@ -40,6 +41,7 @@ type ActionOptions = {
   position?: AnnotatePosition,
   fontSize?: number,
   cursor?: 'none' | 'pointer',
+  style?: { point?: string, highlight?: string, title?: string },
 };
 
 export class Screencast implements InstrumentationListener {
@@ -48,10 +50,15 @@ export class Screencast implements InstrumentationListener {
   private _actions: ActionOptions | undefined;
   private _size: types.Size | undefined;
   private _lastFrame: types.ScreencastFrame | undefined;
+  private _cursorPoint: types.Point | undefined;
 
   constructor(page: Page) {
     this.page = page;
     this.page.instrumentation.addListener(this, this.page.browserContext);
+    this.page.on(Page.Events.InternalFrameNavigatedToNewDocument, frame => {
+      if (!frame.parentFrame() && this._cursorPoint)
+        this._restoreCursor(this._cursorPoint).catch(e => debugLogger.log('error', e));
+    });
   }
 
   async handlePageOrContextClose() {
@@ -75,18 +82,39 @@ export class Screencast implements InstrumentationListener {
   }
 
   showActions(options: ActionOptions) {
-    this._actions = options;
+    // Deprecated fontSize is folded into the title style, explicit title style wins.
+    const title = options.fontSize !== undefined ? `font-size: ${options.fontSize}px; ${options.style?.title ?? ''}` : options.style?.title;
+    this._actions = { ...options, style: { ...options.style, title } };
+    if (options.cursor === 'none')
+      this._hideCursor();
   }
 
   hideActions() {
     this._actions = undefined;
+    this._hideCursor();
+  }
+
+  private async _restoreCursor(point: types.Point) {
+    const utility = await this.page.mainFrame().utilityContext();
+    await utility.evaluate(({ injected, point }) => injected.restoreScreencastCursor(point), { injected: await utility.injectedScript(), point });
+  }
+
+  private _hideCursor() {
+    if (!this._cursorPoint)
+      return;
+    this._cursorPoint = undefined;
+    const frame = this.page.mainFrame();
+    frame.raceAgainstEvaluationStallingEvents(async () => {
+      const injectedScript = await frame.existingContext('utility')?.injectedScript();
+      await injectedScript?.evaluate(injected => injected.hideScreencastCursor());
+    }).catch(e => debugLogger.log('error', e));
   }
 
   addClient(client: ScreencastClient): { size: types.Size } {
     const isFirst = this._clients.size === 0;
     this._clients.set(client, new LongStandingScope());
     if (isFirst) {
-      this._startScreencast(client.size, client.quality);
+      this._startScreencast(client.size, client.quality, client.fps);
     } else if (this._lastFrame) {
       // Deliver the cached last frame to the new client so it does not have
       // to wait for the next browser repaint. setTimeout(0) ensures the caller
@@ -111,7 +139,7 @@ export class Screencast implements InstrumentationListener {
       this._stopScreencast();
   }
 
-  private _startScreencast(size: types.Size | undefined, quality: number | undefined) {
+  private _startScreencast(size: types.Size | undefined, quality: number | undefined, fps: number | undefined) {
     this._size = size;
     if (!this._size) {
       const viewport = this.page.browserContext._options.viewport || { width: 800, height: 600 };
@@ -122,7 +150,7 @@ export class Screencast implements InstrumentationListener {
       };
     }
 
-    // Make sure both dimensions are odd, this is required for vp8
+    // Make sure both dimensions are even, ffmpeg's pad and crop filters round yuv420p frames down to even sizes.
     this._size = {
       width: this._size.width & ~1,
       height: this._size.height & ~1
@@ -132,6 +160,7 @@ export class Screencast implements InstrumentationListener {
       width: this._size.width,
       height: this._size.height,
       quality: quality ?? 90,
+      fps,
     });
   }
 
@@ -166,10 +195,14 @@ export class Screencast implements InstrumentationListener {
     if (page !== this.page)
       return;
 
-    if (!box && (sdkObject instanceof ElementHandle))
+    if (!box && this._actions.style?.highlight && (sdkObject instanceof ElementHandle))
       box = await sdkObject.boundingBox(nullProgress) || undefined;
 
     const actionTitle = renderFullTitleForCall(progress.metadata, this.page.browserContext._browser.sdkLanguage());
+    const cursor = this._actions?.cursor ?? 'pointer';
+    const lastCursorPoint = this._cursorPoint;
+    if (point && cursor !== 'none')
+      this._cursorPoint = point;
     const utility = await progress.race(page.mainFrame().utilityContext());
 
     // Run this outside of the progress timer.
@@ -186,8 +219,9 @@ export class Screencast implements InstrumentationListener {
       box,
       actionTitle,
       position: this._actions?.position,
-      fontSize: this._actions?.fontSize,
-      cursor: this._actions?.cursor ?? 'pointer',
+      cursor,
+      style: this._actions?.style,
+      lastCursorPoint,
     }).catch(e => debugLogger.log('error', e)));
   }
 }

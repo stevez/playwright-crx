@@ -164,6 +164,7 @@ export type TerminalReporterOptions = {
   omitFailures?: boolean;
   includeTestId?: boolean;
   omitTags?: boolean;
+  lastResult?: boolean;
 };
 
 export class TerminalReporter implements ReporterV2 {
@@ -241,9 +242,10 @@ export class TerminalReporter implements ReporterV2 {
   protected generateStartingMessage() {
     const jobs = this.config.metadata.actualWorkers ?? this.config.workers;
     const shardDetails = this.config.shard ? `, shard ${this.config.shard.current} of ${this.config.shard.total}` : '';
+    const shuffleDetails = this.config.metadata.shuffleSeed ? `, shuffle seed ${this.config.metadata.shuffleSeed}` : '';
     if (!this.totalTestCount)
       return '';
-    return '\n' + this.screen.colors.dim('Running ') + this.totalTestCount + this.screen.colors.dim(` test${this.totalTestCount !== 1 ? 's' : ''} using `) + jobs + this.screen.colors.dim(` worker${jobs !== 1 ? 's' : ''}${shardDetails}`);
+    return '\n' + this.screen.colors.dim('Running ') + this.totalTestCount + this.screen.colors.dim(` test${this.totalTestCount !== 1 ? 's' : ''} using `) + jobs + this.screen.colors.dim(` worker${jobs !== 1 ? 's' : ''}${shardDetails}${shuffleDetails}`);
   }
 
   protected getSlowTests(): [string, number][] {
@@ -402,7 +404,8 @@ function formatResultErrors(screen: Screen, test: TestCase, result: TestResult):
 export function formatFailure(screen: Screen, config: FullConfig, test: TestCase, index?: number, options?: TerminalReporterOptions): string {
   const lines: string[] = [];
   let printedHeader = false;
-  for (const result of test.results) {
+  const results = options?.lastResult ? test.results.slice(-1) : test.results;
+  for (const result of results) {
     const resultLines: string[] = [];
     const errors = formatResultFailure(screen, test, result, '    ');
     if (!errors.length)

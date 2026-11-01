@@ -254,6 +254,23 @@ test.describe('viewport', () => {
   });
 });
 
+test('config file preserves context media preferences', async ({}, testInfo) => {
+  const configFile = testInfo.outputPath('config.json');
+  const fileConfig: Config = {
+    browser: {
+      contextOptions: {
+        colorScheme: 'dark',
+        contrast: 'more',
+        forcedColors: 'active',
+        reducedMotion: 'reduce',
+      },
+    },
+  };
+  await fs.promises.writeFile(configFile, JSON.stringify(fileConfig));
+  const config = await resolveCLIConfigForMCP({ config: configFile }, emptyEnv);
+  expect(config.browser.contextOptions).toMatchObject(fileConfig.browser!.contextOptions!);
+});
+
 test.describe('mobile', () => {
   test('--mobile defaults to a Chromium mobile device', async () => {
     const config = await resolveCLIConfigForMCP({ mobile: true }, emptyEnv);
@@ -455,10 +472,21 @@ test.describe('resolveCLIConfigForMCP', () => {
   });
 
   test('cli timeout overrides defaults', async () => {
-    const config = await resolveCLIConfigForMCP({ timeoutAction: 10000, timeoutNavigation: 30000 }, emptyEnv);
+    const config = await resolveCLIConfigForMCP({ timeoutAction: 10000, timeoutNavigation: 30000, idleTimeout: 60000 }, emptyEnv);
     expect(config.timeouts.action).toBe(10000);
     expect(config.timeouts.navigation).toBe(30000);
     expect(config.timeouts.expect).toBe(5000);
+    expect(config.timeouts.idle).toBe(60000);
+  });
+
+  test('idle timeout is unset by default and comes from the config file or env', async ({}, testInfo) => {
+    expect((await resolveCLIConfigForMCP({}, emptyEnv)).timeouts.idle).toBeUndefined();
+
+    const configFile = testInfo.outputPath('config.json');
+    await fs.promises.writeFile(configFile, JSON.stringify({ timeouts: { idle: 1000 } }));
+    expect((await resolveCLIConfigForMCP({ config: configFile }, emptyEnv)).timeouts.idle).toBe(1000);
+
+    expect((await resolveCLIConfigForMCP({ config: configFile }, { ...emptyEnv, PLAYWRIGHT_MCP_IDLE_TIMEOUT: '2000' })).timeouts.idle).toBe(2000);
   });
 
   test('cli timeout overrides config file timeout', async ({}, testInfo) => {

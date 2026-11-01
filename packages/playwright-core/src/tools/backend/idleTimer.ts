@@ -14,8 +14,25 @@
  * limitations under the License.
  */
 
-import jsxRuntime from './jsx-runtime.js';
+export const defaultIdleTimeout = 60 * 60 * 1000;
 
-export const jsx = jsxRuntime.jsx;
-export const jsxs = jsxRuntime.jsxs;
-export const Fragment = jsxRuntime.Fragment;
+export class IdleTimer {
+  private _timeout: number;
+  private _onIdle: () => void;
+  private _timer: NodeJS.Timeout | undefined;
+
+  constructor(timeout: number, onIdle: () => void) {
+    this._timeout = timeout;
+    this._onIdle = onIdle;
+  }
+
+  poke() {
+    this.dispose();
+    this._timer = setTimeout(this._onIdle, this._timeout);
+  }
+
+  dispose() {
+    clearTimeout(this._timer);
+    this._timer = undefined;
+  }
+}

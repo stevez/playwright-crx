@@ -21,11 +21,9 @@ import { eventsHelper } from '@utils/eventsHelper';
 import { isUnderTest } from '@utils/debug';
 import { assert } from '@isomorphic/assert';
 import { monotonicTime } from '@isomorphic/time';
-import { rewriteErrorMessage } from '@utils/stackTrace';
 import { ValidationError, createMetadataValidator, createWaitInfoValidator, findValidator, maybeFindValidator } from '@protocol/validator';
-import { AbortError, TargetClosedError, isTargetClosedError, serializeError } from '../errors';
+import { AbortError, TargetClosedError, rewriteErrorForClosedTarget, serializeError } from '../errors';
 import { createRootSdkObject, SdkObject } from '../instrumentation';
-import { isProtocolError } from '../protocolError';
 import { compressCallLog } from '../callLog';
 import { Progress, ProgressController } from '../progress';
 
@@ -297,7 +295,7 @@ export class DispatcherConnection {
   }
 
   async dispatch(message: object) {
-    const { id, guid, method, params, metadata } = message as any;
+    const { id, guid, method, params, metadata } = message as { id: string, guid: string, method: string, params: any, metadata: any };
     const dispatcher = this._dispatcherByGuid.get(guid);
     if (method === '__waitInfo__') {
       // Fire-and-forget: silently drop if the target is gone.
@@ -306,7 +304,7 @@ export class DispatcherConnection {
       return;
     }
     if (method === '__abort__') {
-      const entry = this._activeProgressControllers.get(`call@${params.id}`);
+      const entry = this._activeProgressControllers.get(params.id);
       if (!entry)
         return;
       entry.abortError = new AbortError(params.reason);
@@ -342,11 +340,10 @@ export class DispatcherConnection {
 
     const sdkObject = dispatcher._object;
     const callMetadata: CallMetadata = {
-      id: `call@${id}`,
+      id,
       location: validMetadata.location,
       title: validMetadata.title,
       internal: validMetadata.internal,
-      stepId: validMetadata.stepId,
       objectId: sdkObject.guid,
       startTime: monotonicTime(),
       endTime: 0,
@@ -358,7 +355,7 @@ export class DispatcherConnection {
     };
 
     const abortControllerEntry: { controller?: ProgressController, abortError?: Error } = {};
-    this._activeProgressControllers.set(callMetadata.id, abortControllerEntry);
+    this._activeProgressControllers.set(id, abortControllerEntry);
     const swapProgressController = () => {
       const controller = dispatcher.createProgressController(callMetadata, abortControllerEntry.abortError);
       abortControllerEntry.controller = controller;
@@ -380,16 +377,7 @@ export class DispatcherConnection {
       response.result = validator(result, '', this._validatorToWireContext());
       callMetadata.result = result;
     } catch (e) {
-      if (isTargetClosedError(e)) {
-        const reason = sdkObject.closeReason();
-        if (reason)
-          rewriteErrorMessage(e, reason);
-      } else if (isProtocolError(e)) {
-        if (e.type === 'closed')
-          e = new TargetClosedError(sdkObject.closeReason(), e.browserLogMessage());
-        else if (e.type === 'crashed')
-          rewriteErrorMessage(e, 'Target crashed ' + e.browserLogMessage());
-      }
+      e = rewriteErrorForClosedTarget(e, sdkObject.closeReason());
       response.error = serializeError(e);
       const detailsValidator = maybeFindValidator(dispatcher._type, method, 'ErrorDetails');
       if (detailsValidator)
@@ -403,7 +391,7 @@ export class DispatcherConnection {
       await afterController.run(progress => sdkObject.instrumentation.onAfterCall(progress, sdkObject), 3000).catch(() => {});
       if (metainfo?.slowMo)
         await this._doSlowMo(sdkObject);
-      this._activeProgressControllers.delete(callMetadata.id);
+      this._activeProgressControllers.delete(id);
     }
 
     if (response.error)
@@ -417,7 +405,7 @@ export class DispatcherConnection {
       await new Promise(f => setTimeout(f, slowMo));
   }
 
-  private async _dispatchWaitInfo(id: number, dispatcher: DispatcherScope, params: any, metadata: any) {
+  private async _dispatchWaitInfo(id: string, dispatcher: DispatcherScope, params: any, metadata: any) {
     // Fire-and-forget notification: never reply, never throw to the caller.
     let info: channels.WaitInfo;
     let validMetadata: channels.Metadata;
@@ -432,11 +420,10 @@ export class DispatcherConnection {
     const sdkObject = dispatcher._object;
     if (info.phase === 'before') {
       const callMetadata: CallMetadata = {
-        id: `call@${id}`,
+        id,
         location: validMetadata.location,
         title: validMetadata.title,
         internal: validMetadata.internal,
-        stepId: validMetadata.stepId,
         objectId: sdkObject.guid,
         startTime: monotonicTime(),
         endTime: 0,

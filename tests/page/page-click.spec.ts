@@ -1027,6 +1027,24 @@ it('should click in an iframe with border 2', async ({ page }) => {
   expect(await page.evaluate('window._clicked')).toBe(true);
 });
 
+it('should not retain removed iframe after clicking inside it', async ({ page, isAndroid }) => {
+  it.skip(isAndroid, 'requesting gc is not enough');
+
+  await page.setContent('<iframe srcdoc="<button>Click</button>"></iframe>');
+  const button = page.frameLocator('iframe').getByRole('button');
+  await button.waitFor();
+  await page.evaluate(() => {
+    (window as any).iframeRef = new WeakRef(document.querySelector('iframe')!);
+  });
+  await button.click();
+  await page.evaluate(() => document.querySelector('iframe')!.remove());
+  // Move the mouse away to release Chromium's own last-hovered-node retention.
+  await page.mouse.move(500, 500);
+  await page.requestGC();
+  const retained = await page.evaluate(() => Boolean((window as any).iframeRef.deref()));
+  expect(retained).toBe(false);
+});
+
 it('should click in a transformed iframe', async ({ page }) => {
   await page.setContent(`
     <style>
@@ -1332,33 +1350,6 @@ it('should click with tweened mouse movement', async ({ page, browserName, isAnd
     [180, 260],
     [200, 300]
   ]);
-});
-
-it('should not wait with noAutoWaiting', async ({ page }) => {
-  await page.setContent(`<button>click me</button>`);
-  const error = await page.locator('#target').click({ __testHookNoAutoWaiting: true } as any).catch(e => e);
-  expect(error.message).toContain('locator.click: Element(s) not found');
-});
-
-it('should not wait with noAutoWaiting 2', async ({ page }) => {
-  await page.setContent(`
-    <style>
-      div:hover button {
-        margin-left: 200px;
-      }
-    </style>
-    <div>
-      <button>click me</button>
-    </div>
-  `);
-  const error = await page.locator('button').click({ __testHookNoAutoWaiting: true } as any).catch(e => e);
-  expect(error.message).toContain('locator.click: <div>…</div> intercepts pointer events');
-});
-
-it('should not wait with noAutoWaiting 3', async ({ page }) => {
-  await page.setContent(`<button disabled>click me</button>`);
-  const error = await page.locator('button').click({ __testHookNoAutoWaiting: true } as any).catch(e => e);
-  expect(error.message).toContain('locator.click: Element is not enabled');
 });
 
 it('should abort via signal', async ({ page }) => {
