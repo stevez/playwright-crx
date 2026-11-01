@@ -56,7 +56,7 @@ import {
   Crx,
   CrxApplication,
 } from './crx';
-import { currentZone } from 'playwright-core/lib/utils';
+import { currentZone } from '@utils/index';
 
 type ApiTypeMap = {
   // 'android': Android,
@@ -114,7 +114,7 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
   // androidWebView: [AndroidWebView.prototype],
   // androidInput: [AndroidInput.prototype],
   // androidSocket: [AndroidSocket.prototype],
-  browser: [Browser.prototype, { newContext: true, newPage: true, newBrowserCDPSession: true, startTracing: true, stopTracing: true, close: true }],
+  browser: [Browser.prototype, { newContext: true, newPage: true, newBrowserCDPSession: true, startTracing: true, stopTracing: true, close: true, bind: false, unbind: false }],
   browserContext: [BrowserContext.prototype, {
     newPage: true,
     cookies: true,
@@ -136,6 +136,7 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
     unroute: true,
     waitForEvent: true,
     storageState: true,
+    setStorageState: true,
     newCDPSession: true,
     close: true
   }],
@@ -192,6 +193,9 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
     all: true,
     allInnerTexts: true,
     allTextContents: true,
+    normalize: true,
+    drop: true,
+    hideHighlight: true,
     waitFor: true,
   }],
   frameLocator: [FrameLocator.prototype, {}],
@@ -372,18 +376,27 @@ const apis: { [ApiK in keyof ApiTypeMap]: [ApiTypeMap[ApiK], { [K in KeysOfAsync
     waitForFunction: true,
     pause: true,
     pdf: true,
+    ariaSnapshot: true,
+    requests: true,
+    consoleMessages: true,
+    clearConsoleMessages: true,
+    pageErrors: true,
+    clearPageErrors: true,
+    pickLocator: true,
+    cancelPickLocator: true,
+    hideHighlight: true,
   }],
   selectors: [Selectors.prototype, { register: true }],
-  tracing: [Tracing.prototype, { group: true, groupEnd: true, start: true, startChunk: true, stop: true, stopChunk: true }],
+  tracing: [Tracing.prototype, { group: true, groupEnd: true, start: true, startChunk: true, stop: true, stopChunk: true, startHar: true, stopHar: true }],
   video: [Video.prototype, { delete: true, path: true, saveAs: true }],
-  worker: [Worker.prototype, { evaluate: true, evaluateHandle: true }],
+  worker: [Worker.prototype, { evaluate: true, evaluateHandle: true, waitForEvent: true }],
   session: [CDPSession.prototype, { send: true, detach: true }],
   playwright: [Playwright.prototype, { devices: false }],
   webError: [WebError.prototype, {}],
 
   // from crx
   crx: [Crx.prototype, { start: true, get: true }],
-  crxApplication: [CrxApplication.prototype, { attach: true, attachAll: true, close: true, detach: true, detachAll: true, newPage: true }],
+  crxApplication: [CrxApplication.prototype, { attach: true, attachAll: true, close: true, detach: true, detachAll: true, newPage: true, extendInjectedScript: true }],
 };
 
 const kCrxZoneWrapped = Symbol('crxZone');

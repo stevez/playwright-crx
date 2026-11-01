@@ -23,7 +23,7 @@
  * process.env, so we need a runtime setter.
  */
 
-export { debugMode } from '../../playwright/packages/playwright-core/src/server/utils/debug';
+export { debugMode } from '../../playwright/packages/utils/debug';
 
 let _isUnderTest = false;
 
