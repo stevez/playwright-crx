@@ -975,8 +975,10 @@ class FrameSession {
     void this._page.screencast.onScreencastFrame({
       buffer,
       frameSwapWallTime: payload.metadata.timestamp ? payload.metadata.timestamp * 1000 : Date.now(),
-      viewportWidth: payload.metadata.deviceWidth,
-      viewportHeight: payload.metadata.deviceHeight,
+      // CRX: headed Chrome reports fractional sizes at non-integer display scaling (e.g. 125%);
+      // the protocol validator wants integers and would drop every frame.
+      viewportWidth: Math.round(payload.metadata.deviceWidth),
+      viewportHeight: Math.round(payload.metadata.deviceHeight),
     }).then(() => {
       this._client._sendMayFail('Page.screencastFrameAck', { sessionId: payload.sessionId });
     });
