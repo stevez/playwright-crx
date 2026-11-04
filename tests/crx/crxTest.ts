@@ -29,6 +29,7 @@ export type CrxFixtureOptions = {
   extensionPath: string;
   enabledInIncognito: boolean;
   openDevTools: boolean;
+  extraArgs: string[];
 };
 
 type CrxServer = {
@@ -82,6 +83,8 @@ export const test = base.extend<CrxFixtureOptions & {
 
         openDevTools: [false, { option: true }],
 
+        extraArgs: [[], { option: true }],
+
         browserVersion: async ({ browser }, run) => {
           await run(browser.version());
         },
@@ -100,7 +103,7 @@ export const test = base.extend<CrxFixtureOptions & {
           await rimraf(dirs).catch(() => {});
         },
 
-        context: async ({ extensionPath, createUserDataDir }, use) => {
+        context: async ({ extensionPath, createUserDataDir, extraArgs }, use) => {
           const headless = !!process.env.HEADLESS;
           const context = await chromium.launchPersistentContext(createUserDataDir(), {
             channel: headless ? 'chromium' : undefined,
@@ -110,6 +113,7 @@ export const test = base.extend<CrxFixtureOptions & {
               `--load-extension=${extensionPath}`,
               '--no-first-run',
               '--no-default-browser-check',
+              ...extraArgs,
             ],
           });
           // prevents playwright from handling alerts, prompts, etc., and leave it to playwright-crx
