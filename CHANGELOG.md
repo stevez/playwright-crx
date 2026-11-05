@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.22.1
+
+### Bug Fixes
+
+- **`page.screencast` delivers frames at fractional display scaling** (#36): headed Chrome at non-integer scaling (e.g. 125% on Windows, or a browser zoom level) reports fractional frame sizes. Playwright's protocol validator rejected them and every frame was silently dropped, so `onFrame` never fired. The vendored `crPage.ts` now rounds `viewportWidth`/`viewportHeight` (a third CRX patch to re-check after Playwright upgrades).
+
+### Tests
+
+- New `tests/crx/screencast.spec.ts` runs a screencast with `--force-device-scale-factor=1.25`, using a new `extraArgs` option in `crxTest`.
+
 ## 1.22.0
 
 ### Breaking Changes
