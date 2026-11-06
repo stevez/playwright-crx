@@ -31,6 +31,8 @@ const reporters = () => {
   ];
   if (process.env.PWTEST_COVERAGE)
     result.push(['coverage', { outputDir: path.join(__dirname, '..', '..', 'coverage', 'html-reporter') }]);
+  if (process.env.PW_BUN)
+    result.push(['../config/expectationReporter', { expectationsFile: path.join(__dirname, 'bun-expectations.conf') }]);
   return result;
 };
 export default defineConfig({
@@ -40,6 +42,7 @@ export default defineConfig({
     trace: process.env.PWTEST_COVERAGE ? { mode: 'on', snapshots: false, screenshots: false, _coverage: true } as any : 'off',
   },
   forbidOnly: !!process.env.CI,
+  globalSetup: process.env.PW_BUN ? './current-test-runner/globalSetup.ts' : undefined,
   workers: undefined,
   snapshotPathTemplate: '__screenshots__/{testFilePath}/{arg}{ext}',
   projects: [
@@ -56,7 +59,5 @@ export default defineConfig({
   ],
   reporter: reporters(),
   tag: process.env.PW_TAG,
-  metadata: {
-    clock: process.env.PW_CLOCK ? 'clock-' + process.env.PW_CLOCK : undefined,
-  },
+  metadata: {},
 });

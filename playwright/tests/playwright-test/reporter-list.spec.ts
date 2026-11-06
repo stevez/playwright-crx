@@ -27,7 +27,7 @@ for (const useIntermediateMergeReport of [false, true] as const) {
     test('render each test with project name', async ({ runInlineTest }) => {
       const result = await runInlineTest({
         'playwright.config.ts': `
-          module.exports = { projects: [
+          export default { projects: [
             { name: 'foo' },
             { name: 'bar' },
           ] };
@@ -75,7 +75,7 @@ for (const useIntermediateMergeReport of [false, true] as const) {
       const lines = text.split('\n').filter(l => l.match(/^#.* :/)).map(l => l.replace(/[.\d]+m?s/, 'Xms'));
       lines.pop(); // Remove last item that contains [v] and time in ms.
       expect(lines).toEqual([
-        '#0 :      1 a.test.ts:3:15 › passes',
+        '#0 :      1 a.test.ts:3:11 › passes',
         '#1 :      1.1 passes › outer 1.0',
         '#2 :      1.2 passes › outer 1.0 › inner 1.1',
         '#2 :      1.2 passes › outer 1.0 › inner 1.1 (Xms)',
@@ -110,19 +110,19 @@ for (const useIntermediateMergeReport of [false, true] as const) {
       const lines = text.split('\n').filter(l => l.match(/^#.* :/)).map(l => l.replace(/[.\d]+m?s/, 'Xms'));
       lines.pop(); // Remove last item that contains [v] and time in ms.
       expect(lines).toEqual([
-        '#0 :      1 a.test.ts:3:11 › passes',
-        '#0 :      1 a.test.ts:3:11 › passes › outer 1.0',
-        '#0 :      1 a.test.ts:3:11 › passes › outer 1.0 › inner 1.1',
-        '#0 :      1 a.test.ts:3:11 › passes › outer 1.0',
-        '#0 :      1 a.test.ts:3:11 › passes › outer 1.0 › inner 1.2',
-        '#0 :      1 a.test.ts:3:11 › passes › outer 1.0',
-        '#0 :      1 a.test.ts:3:11 › passes',
-        '#0 :      1 a.test.ts:3:11 › passes › outer 2.0',
-        '#0 :      1 a.test.ts:3:11 › passes › outer 2.0 › inner 2.1',
-        '#0 :      1 a.test.ts:3:11 › passes › outer 2.0',
-        '#0 :      1 a.test.ts:3:11 › passes › outer 2.0 › inner 2.2',
-        '#0 :      1 a.test.ts:3:11 › passes › outer 2.0',
-        '#0 :      1 a.test.ts:3:11 › passes',
+        '#0 :      1 a.test.ts:3:7 › passes',
+        '#0 :      1 a.test.ts:3:7 › passes › outer 1.0',
+        '#0 :      1 a.test.ts:3:7 › passes › outer 1.0 › inner 1.1',
+        '#0 :      1 a.test.ts:3:7 › passes › outer 1.0',
+        '#0 :      1 a.test.ts:3:7 › passes › outer 1.0 › inner 1.2',
+        '#0 :      1 a.test.ts:3:7 › passes › outer 1.0',
+        '#0 :      1 a.test.ts:3:7 › passes',
+        '#0 :      1 a.test.ts:3:7 › passes › outer 2.0',
+        '#0 :      1 a.test.ts:3:7 › passes › outer 2.0 › inner 2.1',
+        '#0 :      1 a.test.ts:3:7 › passes › outer 2.0',
+        '#0 :      1 a.test.ts:3:7 › passes › outer 2.0 › inner 2.2',
+        '#0 :      1 a.test.ts:3:7 › passes › outer 2.0',
+        '#0 :      1 a.test.ts:3:7 › passes',
       ]);
     });
 
@@ -145,13 +145,13 @@ for (const useIntermediateMergeReport of [false, true] as const) {
       const text = result.output;
       const lines = text.split('\n').filter(l => l.match(/^#.* :/)).map(l => l.replace(/[.\d]+m?s/, 'Xms'));
       expect(lines).toEqual([
-        '#0 :      1.1 a.test.ts:3:15 › passes › outer 1.0 › inner 1.1 (Xms)',
-        '#1 :      1.2 a.test.ts:3:15 › passes › outer 1.0 › inner 1.2 (Xms)',
-        '#2 :      1.3 a.test.ts:3:15 › passes › outer 1.0 (Xms)',
-        '#3 :      1.4 a.test.ts:3:15 › passes › outer 2.0 › inner 2.1 (Xms)',
-        '#4 :      1.5 a.test.ts:3:15 › passes › outer 2.0 › inner 2.2 (Xms)',
-        '#5 :      1.6 a.test.ts:3:15 › passes › outer 2.0 (Xms)',
-        `#6 :   ${POSITIVE_STATUS_MARK} 1 a.test.ts:3:15 › passes (Xms)`,
+        '#0 :      1.1 a.test.ts:3:11 › passes › outer 1.0 › inner 1.1 (Xms)',
+        '#1 :      1.2 a.test.ts:3:11 › passes › outer 1.0 › inner 1.2 (Xms)',
+        '#2 :      1.3 a.test.ts:3:11 › passes › outer 1.0 (Xms)',
+        '#3 :      1.4 a.test.ts:3:11 › passes › outer 2.0 › inner 2.1 (Xms)',
+        '#4 :      1.5 a.test.ts:3:11 › passes › outer 2.0 › inner 2.2 (Xms)',
+        '#5 :      1.6 a.test.ts:3:11 › passes › outer 2.0 (Xms)',
+        `#6 :   ${POSITIVE_STATUS_MARK} 1 a.test.ts:3:11 › passes (Xms)`,
       ]);
     });
 
@@ -168,10 +168,10 @@ for (const useIntermediateMergeReport of [false, true] as const) {
 
       const renderedText = simpleAnsiRenderer(result.rawOutput, TTY_WIDTH);
       if (process.platform === 'win32')
-        expect(renderedText).toContain('  ok 1 a.test.ts:3:15 › passes');
+        expect(renderedText).toContain('  ok 1 a.test.ts:3:11 › passes');
       else
-        expect(renderedText).toContain('  ✓  1 a.test.ts:3:15 › passes');
-      expect(renderedText).not.toContain('     1 a.test.ts:3:15 › passes');
+        expect(renderedText).toContain('  ✓  1 a.test.ts:3:11 › passes');
+      expect(renderedText).not.toContain('     1 a.test.ts:3:11 › passes');
       expect(renderedText).toContain('a'.repeat(80) + '\n' + 'b'.repeat(20));
     });
 
@@ -188,17 +188,17 @@ for (const useIntermediateMergeReport of [false, true] as const) {
       const lines = text.split('\n').filter(l => l.startsWith('#0 :') || l.startsWith('#1 :')).map(l => l.replace(/\d+(\.\d+)?m?s/, 'XXms'));
 
       expect(lines).toEqual([
-        `#0 :      1 a.test.ts:3:15 › flaky`,
-        `#0 :   ${NEGATIVE_STATUS_MARK} 1 a.test.ts:3:15 › flaky (XXms)`,
-        `#1 :      2 a.test.ts:3:15 › flaky (retry #1)`,
-        `#1 :   ${POSITIVE_STATUS_MARK} 2 a.test.ts:3:15 › flaky (retry #1) (XXms)`,
+        `#0 :      1 a.test.ts:3:11 › flaky`,
+        `#0 :   ${NEGATIVE_STATUS_MARK} 1 a.test.ts:3:11 › flaky (XXms)`,
+        `#1 :      2 a.test.ts:3:11 › flaky (retry #1)`,
+        `#1 :   ${POSITIVE_STATUS_MARK} 2 a.test.ts:3:11 › flaky (retry #1) (XXms)`,
       ]);
     });
 
     test('should truncate long test names', async ({ runInlineTest }) => {
       const result = await runInlineTest({
         'playwright.config.ts': `
-          module.exports = { projects: [
+          export default { projects: [
             { name: 'foo' },
           ] };
         `,
@@ -220,20 +220,20 @@ for (const useIntermediateMergeReport of [false, true] as const) {
       const lines = result.rawOutput.split('\n').map(line => line.split('\x1B[22m\x1B[1E')).flat().map(line => stripAnsi(line)).filter(line => line.trim()).slice(1, 9);
       expect(lines.every(line => line.length <= 50)).toBe(true);
 
-      expect(lines[0]).toBe(`     1 …a.test.ts:3:15 › failure in very long name`);
+      expect(lines[0]).toBe(`     1 …a.test.ts:3:11 › failure in very long name`);
 
       expect(lines[1]).toContain(`${NEGATIVE_STATUS_MARK} 1 …`);
-      expect(lines[1]).toContain(`:3:15 › failure in very long name (`);
+      expect(lines[1]).toContain(`:3:11 › failure in very long name (`);
       expect(lines[1].length).toBe(50);
 
-      expect(lines[2]).toBe(`     2 [foo] › a.test.ts:6:15 › passes`);
+      expect(lines[2]).toBe(`     2 [foo] › a.test.ts:6:11 › passes`);
 
-      expect(lines[3]).toContain(`${POSITIVE_STATUS_MARK} 2 [foo] › a.test.ts:6:15 › passes (`);
+      expect(lines[3]).toContain(`${POSITIVE_STATUS_MARK} 2 [foo] › a.test.ts:6:11 › passes (`);
 
-      expect(lines[4]).toBe(`     3 [foo] › a.test.ts:8:15 › passes 2 long name`);
+      expect(lines[4]).toBe(`     3 [foo] › a.test.ts:8:11 › passes 2 long name`);
 
       expect(lines[5]).toContain(`${POSITIVE_STATUS_MARK} 3 …`);
-      expect(lines[5]).toContain(`test.ts:8:15 › passes 2 long name (`);
+      expect(lines[5]).toContain(`test.ts:8:11 › passes 2 long name (`);
       expect(lines[5].length).toBe(50);
 
       expect(lines[6]).toBe(`     4 …› a.test.ts:10:16 › skipped very long name`);
@@ -255,14 +255,14 @@ for (const useIntermediateMergeReport of [false, true] as const) {
         `,
       }, { reporter: 'list' });
       const text = result.output;
-      expect(text).toContain('1) a.test.ts:3:15 › passes › outer 1.0 › inner 1.1 ──');
+      expect(text).toContain('1) a.test.ts:3:11 › passes › outer 1.0 › inner 1.1 ──');
       expect(result.exitCode).toBe(1);
     });
 
     test('print failures inline with option', async ({ runInlineTest }) => {
       const result = await runInlineTest({
         'playwright.config.ts': `
-          module.exports = {
+          export default {
             reporter: [['list', { printFailuresInline: true }]],
             workers: 1,
           };
@@ -277,8 +277,8 @@ for (const useIntermediateMergeReport of [false, true] as const) {
         `,
       });
       const text = result.output;
-      const failureHeader = '1) a.test.ts:3:15 › fails early';
-      const laterTestStatus = `${POSITIVE_STATUS_MARK} 2 a.test.ts:6:15 › runs later`;
+      const failureHeader = '1) a.test.ts:3:11 › fails early';
+      const laterTestStatus = `${POSITIVE_STATUS_MARK} 2 a.test.ts:6:11 › runs later`;
       const failureIndex = text.indexOf(failureHeader);
       const laterTestIndex = text.indexOf(laterTestStatus);
       expect(failureIndex).toBeGreaterThan(-1);
@@ -293,7 +293,7 @@ for (const useIntermediateMergeReport of [false, true] as const) {
       // still print the failure inline, even though the retry budget is not exhausted.
       const result = await runInlineTest({
         'playwright.config.ts': `
-          module.exports = {
+          export default {
             reporter: [['list', { printFailuresInline: true }]],
             retries: 1,
             workers: 1,
@@ -307,7 +307,7 @@ for (const useIntermediateMergeReport of [false, true] as const) {
         `,
       });
       const text = result.output;
-      const failureHeader = '1) a.test.ts:3:15 › missing snapshot';
+      const failureHeader = '1) a.test.ts:3:11 › missing snapshot';
       const failureIndex = text.indexOf(failureHeader);
       expect(failureIndex, 'failure should be printed inline').not.toBe(-1);
       expect(text.indexOf(`A snapshot doesn't exist`, failureIndex)).toBeGreaterThan(failureIndex);
@@ -319,7 +319,7 @@ for (const useIntermediateMergeReport of [false, true] as const) {
     test('print failures inline with retries', async ({ runInlineTest }) => {
       const result = await runInlineTest({
         'playwright.config.ts': `
-          module.exports = {
+          export default {
             reporter: [['list', { printFailuresInline: true }]],
             retries: 2,
             workers: 1,
@@ -333,10 +333,10 @@ for (const useIntermediateMergeReport of [false, true] as const) {
         `,
       });
       const text = result.output;
-      const failureHeader = '1) a.test.ts:3:15 › fails';
+      const failureHeader = '1) a.test.ts:3:11 › fails';
       // Each attempt is printed once, under the same failure index.
       expect(text.split(failureHeader).length - 1).toBe(3);
-      expect(text).not.toContain('2) a.test.ts:3:15 › fails');
+      expect(text).not.toContain('2) a.test.ts:3:11 › fails');
       for (const attempt of ['attempt 0', 'attempt 1', 'attempt 2'])
         expect(text.split('Error: ' + attempt).length - 1).toBe(1);
       expect(text.split('Retry #1').length - 1).toBe(1);
@@ -350,7 +350,7 @@ for (const useIntermediateMergeReport of [false, true] as const) {
     test('print failures inline for a flaky test', async ({ runInlineTest }) => {
       const result = await runInlineTest({
         'playwright.config.ts': `
-          module.exports = {
+          export default {
             reporter: [['list', { printFailuresInline: true }]],
             retries: 1,
             workers: 1,
@@ -365,7 +365,7 @@ for (const useIntermediateMergeReport of [false, true] as const) {
         `,
       });
       const text = result.output;
-      const failureHeader = '1) a.test.ts:3:15 › flaky';
+      const failureHeader = '1) a.test.ts:3:11 › flaky';
       expect(text.split(failureHeader).length - 1).toBe(1);
       expect(text.split('Error: attempt 0').length - 1).toBe(1);
       expect(text).not.toContain('Retry #1');
@@ -398,18 +398,18 @@ for (const useIntermediateMergeReport of [false, true] as const) {
       expect(result.exitCode).toBe(0);
       expect(result.passed).toBe(4);
       const expected = [
-        '#0 :      1 a.test.ts:3:15 › passes',
+        '#0 :      1 a.test.ts:3:11 › passes',
         'line1line2',
-        `#0 :   ${POSITIVE_STATUS_MARK} 1 a.test.ts:3:15 › passes`,
+        `#0 :   ${POSITIVE_STATUS_MARK} 1 a.test.ts:3:11 › passes`,
         '',
-        '#3 :      2 a.test.ts:9:15 › passes 2',
-        `partial#3 :   ${POSITIVE_STATUS_MARK} 2 a.test.ts:9:15 › passes 2`,
+        '#3 :      2 a.test.ts:9:11 › passes 2',
+        `partial#3 :   ${POSITIVE_STATUS_MARK} 2 a.test.ts:9:11 › passes 2`,
         '',
-        '#5 :      3 a.test.ts:13:15 › passes 3',
+        '#5 :      3 a.test.ts:13:11 › passes 3',
         'full',
-        `#5 :   ${POSITIVE_STATUS_MARK} 3 a.test.ts:13:15 › passes 3`,
-        '#7 :      4 a.test.ts:17:15 › passes 4',
-        `#7 :   ${POSITIVE_STATUS_MARK} 4 a.test.ts:17:15 › passes 4`,
+        `#5 :   ${POSITIVE_STATUS_MARK} 3 a.test.ts:13:11 › passes 3`,
+        '#7 :      4 a.test.ts:17:11 › passes 4',
+        `#7 :   ${POSITIVE_STATUS_MARK} 4 a.test.ts:17:11 › passes 4`,
       ];
       const lines = result.output.split('\n');
       const firstIndex = lines.indexOf(expected[0]);
@@ -453,24 +453,24 @@ for (const useIntermediateMergeReport of [false, true] as const) {
       expect(result.exitCode).toBe(0);
       expect(result.passed).toBe(2);
       const expected = [
-        '#0 :      1 a.test.ts:3:15 › A',
+        '#0 :      1 a.test.ts:3:11 › A',
       ];
       for (let i = 0; i < 20; ++i)
         expected.push(`line ${i}`);
       // Update to initial test status row
-      expected.push(`#0 :   ${POSITIVE_STATUS_MARK} 1 a.test.ts:3:15 › A`);
-      expected.push(`#21 :      2 a.test.ts:9:15 › B`);
+      expected.push(`#0 :   ${POSITIVE_STATUS_MARK} 1 a.test.ts:3:11 › A`);
+      expected.push(`#21 :      2 a.test.ts:9:11 › B`);
       for (let i = 20; i < 60; ++i)
         expected.push(`line ${i}`);
-      expected.push(`#62 :      2 a.test.ts:9:15 › B › First step`);
+      expected.push(`#62 :      2 a.test.ts:9:11 › B › First step`);
       expected.push(`step 1`);
-      expected.push(`#62 :      2 a.test.ts:9:15 › B`);
+      expected.push(`#62 :      2 a.test.ts:9:11 › B`);
       for (let i = 60; i < 80; ++i)
         expected.push(`line ${i}`);
-      expected.push(`#62 :      2 a.test.ts:9:15 › B › Second step`);
+      expected.push(`#62 :      2 a.test.ts:9:11 › B › Second step`);
       expected.push(`step 2`);
-      expected.push(`#62 :      2 a.test.ts:9:15 › B`);
-      expected.push(`#62 :   ${POSITIVE_STATUS_MARK} 2 a.test.ts:9:15 › B`);
+      expected.push(`#62 :      2 a.test.ts:9:11 › B`);
+      expected.push(`#62 :   ${POSITIVE_STATUS_MARK} 2 a.test.ts:9:11 › B`);
       const lines = result.output.split('\n');
       const firstIndex = lines.indexOf(expected[0]);
       expect(firstIndex, 'first line should be there').not.toBe(-1);
@@ -507,20 +507,20 @@ for (const useIntermediateMergeReport of [false, true] as const) {
       expect(result.exitCode).toBe(0);
       expect(result.passed).toBe(1);
       const expected = [
-        '#0 :      1 a.test.ts:3:15 › A',
+        '#0 :      1 a.test.ts:3:11 › A',
       ];
       for (let i = 0; i < 60; ++i)
         expected.push(`line ${i}`);
       // Update to initial test status row
-      expected.push(`#0 :      1 a.test.ts:3:15 › A › First step`);
+      expected.push(`#0 :      1 a.test.ts:3:11 › A › First step`);
       expected.push(`step 1`);
-      expected.push(`#0 :      1 a.test.ts:3:15 › A`);
+      expected.push(`#0 :      1 a.test.ts:3:11 › A`);
       for (let i = 60; i < 120; ++i)
         expected.push(`line ${i}`);
-      expected.push(`#122 :      1 a.test.ts:3:15 › A › Second step`);
+      expected.push(`#122 :      1 a.test.ts:3:11 › A › Second step`);
       expected.push(`step 2`);
-      expected.push(`#122 :      1 a.test.ts:3:15 › A`);
-      expected.push(`#122 :   ${POSITIVE_STATUS_MARK} 1 a.test.ts:3:15 › A`);
+      expected.push(`#122 :      1 a.test.ts:3:11 › A`);
+      expected.push(`#122 :   ${POSITIVE_STATUS_MARK} 1 a.test.ts:3:11 › A`);
       const lines = result.output.split('\n');
       const firstIndex = lines.indexOf(expected[0]);
       expect(firstIndex, 'first line should be there').not.toBe(-1);
@@ -529,143 +529,6 @@ for (const useIntermediateMergeReport of [false, true] as const) {
     });
   });
 }
-
-test.describe('onTestPaused', () => {
-  test.skip(process.platform === 'win32', 'No SIGINT on windows');
-
-  test('pause at end', async ({ interactWithTestRunner }) => {
-    const runner = await interactWithTestRunner({
-      'a.test.ts': `
-        import { test, expect } from '@playwright/test';
-        test('foo', async ({}) => {
-        });
-
-        test.afterEach(() => {
-          console.log('Running teardown');
-        });
-      `,
-    }, { reporter: 'list' }, { PW_TEST_DEBUG_REPORTERS: '1', PWPAUSE: '1' });
-
-    await runner.waitForOutput('Paused at test end. Press Ctrl+C to end.');
-    const { exitCode } = await runner.kill('SIGINT');
-    expect(exitCode).toBe(130);
-
-    const output = stripAnsi(runner.output).replace(/\d+(\.\d+)?m?s/g, 'Xms');
-    expect(output).toEqual(`
-Running 1 test using 1 worker
-
-#0 :   ${POSITIVE_STATUS_MARK} 1 a.test.ts:3:13 › foo (Xms)
-#1 :        Paused at test end. Press Ctrl+C to end.
-Running teardown
-
-  1 interrupted
-    a.test.ts:3:13 › foo ───────────────────────────────────────────────────────────────────────────
-`);
-  });
-
-  test('pause at end - error in teardown', async ({ interactWithTestRunner }) => {
-    const runner = await interactWithTestRunner({
-      'a.test.ts': `
-        import { test, expect } from '@playwright/test';
-        test('foo', async ({}) => {
-        });
-
-        test.afterEach(() => {
-          throw new Error('teardown error');
-        });
-      `,
-    }, { reporter: 'list' }, { PW_TEST_DEBUG_REPORTERS: '1', PWPAUSE: '1' });
-
-    await runner.waitForOutput('Paused at test end. Press Ctrl+C to end.');
-    const { exitCode } = await runner.kill('SIGINT');
-    expect(exitCode).toBe(130);
-
-    const output = stripAnsi(runner.output).replace(/\d+(\.\d+)?m?s/g, 'Xms');
-    expect(output).toEqual(`
-Running 1 test using 1 worker
-
-#0 :   ${POSITIVE_STATUS_MARK} 1 a.test.ts:3:13 › foo (Xms)
-#1 :        Paused at test end. Press Ctrl+C to end.
-
-
-  1) a.test.ts:3:13 › foo ──────────────────────────────────────────────────────────────────────────
-
-    Test was interrupted.
-
-    Error: teardown error
-
-      5 |
-      6 |         test.afterEach(() => {
-    > 7 |           throw new Error('teardown error');
-        |                 ^
-      8 |         });
-      9 |       
-        at ${test.info().outputPath('a.test.ts')}:7:17
-
-    Error Context: test-results/a-foo/error-context.md
-
-  1 interrupted
-    a.test.ts:3:13 › foo ───────────────────────────────────────────────────────────────────────────
-`);
-  });
-
-  test('pause on error', async ({ interactWithTestRunner }) => {
-    const runner = await interactWithTestRunner({
-      'a.test.ts': `
-        import { test, expect } from '@playwright/test';
-        test('fails', async ({}) => {
-          expect.soft(2).toBe(3);
-          expect(3).toBe(4);
-        });
-      `,
-    }, { reporter: 'list' }, { PW_TEST_DEBUG_REPORTERS: '1', PWPAUSE: '1' });
-
-    await runner.waitForOutput('Paused on error. Press Ctrl+C to end.');
-    const { exitCode } = await runner.kill('SIGINT');
-    expect(exitCode).toBe(130);
-
-    const output = stripAnsi(runner.output).replace(/\d+(\.\d+)?m?s/g, 'Xms');
-    expect(output).toEqual(`
-Running 1 test using 1 worker
-
-#0 :   ${NEGATIVE_STATUS_MARK} 1 a.test.ts:3:13 › fails (Xms)
-
-    Error: expect(received).toBe(expected) // Object.is equality
-
-    Expected: 3
-    Received: 2
-
-      2 |         import { test, expect } from '@playwright/test';
-      3 |         test('fails', async ({}) => {
-    > 4 |           expect.soft(2).toBe(3);
-        |                          ^
-      5 |           expect(3).toBe(4);
-      6 |         });
-      7 |       
-        at ${test.info().outputPath('a.test.ts')}:4:26
-
-    Error: expect(received).toBe(expected) // Object.is equality
-
-    Expected: 4
-    Received: 3
-
-      3 |         test('fails', async ({}) => {
-      4 |           expect.soft(2).toBe(3);
-    > 5 |           expect(3).toBe(4);
-        |                     ^
-      6 |         });
-      7 |       
-        at ${test.info().outputPath('a.test.ts')}:5:21
-
-#1 :        Paused on error. Press Ctrl+C to end.
-
-
-
-  1 failed
-    a.test.ts:3:13 › fails ─────────────────────────────────────────────────────────────────────────
-`);
-  });
-});
 
 test('strips ansi from test stdout when FORCE_COLOR=0', async ({ runInlineTest }) => {
   const result = await runInlineTest({

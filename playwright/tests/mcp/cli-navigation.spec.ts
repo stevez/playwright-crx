@@ -46,9 +46,56 @@ test('reload with alert during load', async ({ cli, server }) => {
   expect(inlineSnapshot).toContain('button "Button"');
 });
 
+test('go-back with dialog during navigation', async ({ cli, server }) => {
+  server.setContent('/page1', `<title>Page 1</title><button>Button 1</button>`, 'text/html');
+  server.setContent('/page2', `<title>Page 2</title><button id="btn">Click me</button><script>
+    window.addEventListener('beforeunload', (e) => {
+      e.preventDefault();
+      e.returnValue = '';
+    });
+  </script>`, 'text/html');
+
+  await cli('open', server.PREFIX + '/page1');
+  await cli('goto', server.PREFIX + '/page2');
+  await cli('click', 'e2');
+  const { output } = await cli('go-back');
+  expect(output).toMatch(/\["beforeunload" dialog.*\]: can be handled by dialog-accept or dialog-dismiss/);
+  await cli('dialog-accept');
+  const { inlineSnapshot } = await cli('snapshot');
+  expect(inlineSnapshot).toContain('button "Button 1"');
+});
+
+test('go-forward with dialog during navigation', async ({ cli, server }) => {
+  server.setContent('/page1', `<title>Page 1</title><button id="btn1" onclick="window.addEventListener('beforeunload', (e) => {
+    e.preventDefault();
+    e.returnValue = '';
+  })">Button 1</button>`, 'text/html');
+  server.setContent('/page2', `<title>Page 2</title><button id="btn2">Button 2</button>`, 'text/html');
+
+  await cli('open', server.PREFIX + '/page1');
+  await cli('goto', server.PREFIX + '/page2');
+  await cli('go-back');
+  await cli('click', 'button');
+  const { output } = await cli('go-forward');
+  expect(output).toMatch(/\["beforeunload" dialog.*\]: can be handled by dialog-accept or dialog-dismiss/);
+  await cli('dialog-accept');
+  const { inlineSnapshot } = await cli('snapshot');
+  expect(inlineSnapshot).toContain('button "Button 2"');
+});
+
 test('open without url opens about:blank', async ({ cli }) => {
   const { output } = await cli('open');
   expect(output).toContain('- Page URL: about:blank');
+});
+
+test('open with bare 127.0.0.1 and port', async ({ cli, server }) => {
+  const { output } = await cli('open', '127.0.0.1:' + server.PORT);
+  expect(output).toContain(`- Page URL: http://127.0.0.1:${server.PORT}/`);
+});
+
+test('open with bare localhost and port', async ({ cli, server }) => {
+  const { output } = await cli('open', 'localhost:' + server.PORT);
+  expect(output).toContain(`- Page URL: http://localhost:${server.PORT}/`);
 });
 
 test('tab-new with url', async ({ cli, server }) => {

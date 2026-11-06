@@ -1,120 +1,100 @@
 ---
 name: playwright-triage
-description: Triage a Playwright bug report by reproducing it from the information in the issue. Use when asked to triage, reproduce, or verify a GitHub issue (a new bug report, or an existing report with a new comment).
-user_invocable: true
+description: Triage and fix one microsoft/playwright issue, or do a maintainer's task, unattended inside the Issue triage GitHub Actions workflow (.github/workflows/triage.yml), which a needs-triage, needs-triage-mac or needs-triage-win label starts, or a maintainer starts by hand with an issue, a task or both. Reproduces the issue on the runner, then leaves a verified fix proposal for the workflow to open as a draft PR, a test that covers a scenario that did not reproduce, an investigation note for it to post on the issue, or a browser bug report for it to file in microsoft/playwright-browsers or for a maintainer to file at crbug.com. Only for that workflow.
 ---
 
 # Playwright Issue Triage
 
-Triage a GitHub issue by working out what it actually is, then doing the right thing for that kind.
-The goal is **a clear, verified status, not a fix.**
+You run unattended in the [Issue triage](../../../.github/workflows/triage.yml) workflow of
+`microsoft/playwright`. First read the shared guide, `$AGENT_GUIDES_DIR/triage.md`, which is
+[.github/actions/run-agent/guides/triage.md](../../../.github/actions/run-agent/guides/triage.md) in
+this repo, and then [AGENTS.md](../../../AGENTS.md), both in full. The guide says how to triage an
+issue in any Playwright repo. AGENTS.md says how to build, test and lint this one. This file covers
+what neither has: the checkout, how to run a published version, the reports from the ports, and the
+outcome that this repo adds, a browser bug report.
 
-## First, classify the issue
+## The checkout
 
-Judge by the content, not the label — a "[Feature]" is often really a bug (something already
-*should* work), and a "[Bug]" is sometimes expected behaviour. Work out what it actually is:
+`$REPO_DIR` is the checkout of `microsoft/playwright` that the guide describes. Chromium, Firefox
+and WebKit are installed. The clone is shallow: run `git fetch --unshallow --tags origin` in it
+before you bisect or use `git tag --contains`.
 
-- **Bug** — reproduce it. The bulk of this skill.
-- **Feature request** — nothing to reproduce. Check it doesn't already exist (search docs/API,
-  maybe under another name), verify any source the reporter cites by reading it, and surface the
-  real design question. If it's small and well-scoped (like "fail loudly instead of
-  silently"), the ideal takeaway is an **acceptance test**: one self-contained spec asserting
-  *current* behaviour (passes today) with the *desired* behaviour alongside as a `fixme`/commented
-  assertion.
-- **Upstream / environment** — a genuinely external owner (the Node project, a browser engine, a
-  website's own server/cert config), not Playwright. Find the real owner, don't brute-force a repro,
-  verify any cited upstream issue and point at the real fix path. Note: the Playwright **family** —
-  `@playwright/mcp` (source lives here under `packages/playwright-core/src/tools/mcp/`),
-  `playwright-vscode`, `-python`, `-java`, `-dotnet` — is **not** "upstream"; it's us. Never tell a
-  reporter to refile within the project (see below).
-- **Question / usage** — answer it or point at the docs.
+## Published versions
 
-The rest of this skill is the **bug** path.
+To run a published version, for example to bisect, create `$SCRATCH_DIR/playwright-<n>/<version>/`
+and run `npm init -y && npm i -D @playwright/test@<version> && npx playwright install` there. Add a
+`playwright.config.ts` with one project, and run the same spec with `PLAYWRIGHT_HTML_OPEN=never`. To
+find the change between two releases, diff `node_modules/playwright-core/lib/` (or
+`playwright/lib/`) between them, and match it to commits in the checkout with
+`git log v<good>..v<bad> -- <path>`.
 
-## Reproducing a bug
+## Reports from the ports
 
-You're not in a hurry, so **be exhaustive before giving up.**
-If the user has provided a minimal repro, try it first. If it does not repro for you, play around with things they might have forgotten to mention:
-all three browsers, headed/headless, a few recent versions, and variations of the snippet or trigger.
-Report "cannot reproduce" only after you've genuinely explored — and say what you tried.
-If you have a hunch for what information would help, ask for it.
+The ports, `playwright-python`, `playwright-java` and `playwright-dotnet`, drive the same Node
+driver. For a report from a port, reproduce the same calls here directly. This repo is where the fix
+lands.
 
-Run across browsers, and watch for **divergence** — a bug that only reproduces in webkit, or
-everywhere *except* firefox, is a strong signal worth leading with. Plenty of bugs are
-browser-agnostic, though, and those are just as real: reproducing on every browser is a good
-result to report, not a non-finding.
+## Report a browser bug
 
-1. **Read the whole thread**, comments included — the missing repro or narrowed trigger is often there.
-2. **Pull the inputs**: version, browser(s), OS, repro repo/snippet, Expected-vs-Actual (your oracle).
-   If something's missing, guess and try anyway; note assumptions in the report.
-3. **Reproduce on tip-of-tree first**, in `~/tmp/issue-<number>/`: clone the linked repo, or
-   scaffold `npm install @playwright/test@next` with a single-project config (see
-   [bisect-published-versions.md](../playwright-dev/bisect-published-versions.md)). Use
-   `PLAYWRIGHT_HTML_OPEN=never`. If it reproduces on ToT, it's a **live bug** — record the exact
-   version/sha you tested, and if it looks like a regression, bisect it (see the guide).
-4. **If ToT doesn't reproduce it**, try the version the user reported. If it reproduces there but
-   not on ToT, it's **already fixed** — find the version/PR that fixed it (a cherry-pick may still
-   be worth it). If neither reproduces, it's incomplete or env-specific — say what you couldn't
-   match. (A version ending in `-next`, e.g. `1.62.0-next`, is **not** an npm version — it means
-   tip-of-tree, which is the `@next` build you already tried.)
-5. **If ToT does reproduce it** - search for related reports. Check the issue timeline for cross-references
-   first. Use GitHub MCP issue and pull request search tools, not `gh` in CI, and limit this to a handful
-   of searches. Search open and closed issues and PRs with queries such as `repo:microsoft/playwright
-   "exact error string"` and `repo:microsoft/playwright <API name> <trigger>`. Also search the relevant
-   family repos: `microsoft/playwright-python`, `microsoft/playwright-java`, `microsoft/playwright-dotnet`,
-   and `microsoft/playwright-vscode`. Read useful matches and linked changes, including maintainer decisions
-   and follow-up reports. Compare the API usage, trigger, versions, and behavior, not just titles. Check
-   whether an existing API or option actually meets the reporter's goal rather than avoiding the failing
-   operation. If the existing evidence establishes a duplicate or a shipped fix for the reporter's
-   conditions, report that status without repeating the reproduction.
+When the root cause is in Chromium, Firefox or WebKit, upstream or in the patches in
+`microsoft/playwright-browsers`, and the fix belongs there and not in this repo, write the bug
+report for the owner of the browser in `$OUTPUT_DIR/browser/report.md`: the body of the report, for
+an engineer of that browser who did not read the Playwright issue. Say what fails, expected versus
+actual, the browser version or build, the platform, the root cause when you found it, and a repro
+that they can run. A Chromium report goes upstream, so a repro without Playwright, a plain page or
+CDP commands, is worth the effort. A Firefox or WebKit report goes to our browser team: the
+condensed test from the checkout is the right repro. Say if the bug is upstream or in our patches
+when you know.
 
-To step through a test interactively, use the [playwright-cli](../../../packages/playwright-core/src/tools/skills/playwright-cli/SKILL.md) skill.
+The title names the browser and what fails, in at most 256 characters, for example
+`WebKit: route.fulfill() ignores the charset in Content-Type`.
 
-Reports sometimes target another part of the Playwright project — `@playwright/mcp` (its source is
-in this repo), `playwright-vscode`, `playwright-python`, `playwright-java`, `playwright-dotnet`.
-These are all **us**, so triage them like anything else: check out that repo and reproduce there in
-its own language/toolchain when needed. **Never** tell the reporter the issue belongs in a different
-Playwright repo or should be refiled there — that's an internal routing detail, not the reporter's
-problem.
+Where the report goes depends on the browser:
 
-## Condense the repro into a self-contained test
+- **Firefox and WebKit**: add an `issue` call for `microsoft/playwright-browsers`, typed `Issue` in
+  `$AGENT_GUIDES_DIR/calls.d.ts`. This is the only repo where this run allows an `issue` call.
 
-Big or app-specific repros are much more useful boiled down to a single self-contained spec,
-written **the way our tests are**: one `test(...)` using the `page` and `server` fixtures, tagged
-with the issue link. Crucially:
+  ```json
+  {
+    "call": "issue",
+    "repo": "microsoft/playwright-browsers",
+    "title": "WebKit: route.fulfill() ignores the charset in Content-Type",
+    "bodyFile": "browser/report.md",
+    "labels": ["browser-webkit", "platform-mac-15"],
+    "filedFor": "https://github.com/microsoft/playwright/issues/<n>"
+  }
+  ```
 
-- **No `test.beforeAll` / `afterAll`, no `http.createServer`, no manual setup/teardown.** The
-  fixtures already give you a page and a web server. Use `server.setRoute(...)`,
-  `server.setRedirect(...)`, `server.PREFIX`, `server.EMPTY_PAGE` instead of standing up your own.
-- Drive the page with `page.setContent(...)` or `page.goto(server.PREFIX + '/...')`.
-- Keep only what's needed to trigger the bug, and end on the assertion that fails.
+  The first label is `browser-firefox` or `browser-webkit`. Add a platform label only when the bug
+  shows on one platform only: one of `platform-ubuntu-22.04`, `platform-ubuntu-24.04`,
+  `platform-ubuntu-26.04`, `platform-debian-12`, `platform-debian-13`, `platform-mac-15`,
+  `platform-mac-26`, each also with an `-arm64` suffix, or `platform-win64`. The publish job drops a
+  label that the repo does not have. End `report.md` with the line
+  `Playwright issue: <issue url>` and the footer, and put the same URL in `filedFor`: when an open
+  issue there already has it, after an earlier run, the job uses that issue and files no new one.
+  Put `Blocked-by: {{issue}}` in your comment, before the footer.
+- **Chromium**: bugs go to crbug.com, where only a person can file. Put the report at the end of
+  your comment, for a maintainer to file, in this form:
 
-Drop it into the repo (`tests/page/`) and run it with `npm run ctest`.
+  `````markdown
+  Chromium bug report, for a maintainer to file at https://crbug.com/new:
 
-Mirror real self-contained tests, e.g.:
-- [`tests/page/page-network-request.spec.ts`](../../../tests/page/page-network-request.spec.ts) — `should return event source`: `server.setRoute` SSE endpoint, no lifecycle hooks
-- [`tests/page/selectors-css.spec.ts`](../../../tests/page/selectors-css.spec.ts) — `should use light DOM structure for child combinator with slotted content`: `page.setContent` with inline shadow DOM ([#37768](https://github.com/microsoft/playwright/issues/37768))
-- [`tests/page/workers.spec.ts`](../../../tests/page/workers.spec.ts) — `should report worker script as network request after redirect`: `server` fixture with routes/redirects + a browser-gap `fixme` ([#35678](https://github.com/microsoft/playwright/issues/35678))
+  **Title:** <title>
 
-## Verify related fixes
+  <details>
+  <summary>Body</summary>
 
-For a related PR, check whether it is open, closed without merging, or merged, and whether the fix
-has shipped and in which version. Run the condensed repro against the PR branch when available,
-recording the exact commit and result. If the fix has shipped, verify the repro on that release too.
-Report anything you could not verify rather than treating an open or merged PR as proof of a fix.
+  ````markdown
+  <the content of report.md>
+  ````
 
-## Report
+  </details>
+  `````
 
-Give a **status** that fits the issue type — for a bug: reproduced / fixed-on-latest /
-cannot-reproduce / not-a-bug / duplicate of #N; for a feature request or upstream/env issue: a short
-verdict (already-possible, valid request, upstream — owned by X) — plus the evidence. For bugs,
-include the condensed repro and be exhaustive about **what you ran** — the full matrix of browsers,
-versions, and variations you tried, not just the one that worked — so the reader can trust the
-verdict and skip re-checking. Call out any browser-specific divergence. Write it in the
-Playwright bot voice (`.github/workflows/bot-voice.md`, relative to the repo root) — maintainer voice, not AI-speak.
+Write the comment as the note: the verdict, the evidence, and that the bug is in the browser. Add
+the `issue` call when the report and the comment are done.
 
-## Watch out
+## PRs from third parties
 
-- Only run code you trust — skim a linked repo/snippet first; bail and report that in the issue
-  comment if it has postinstall scripts, obfuscated code, or random small libraries.
-- Triage ends at a reproduction and a status; don't jump to a fix.
+Do not run a PR that changes `package.json`, a lockfile, an install script, `utils/`, `.github/`,
+`browser_patches/`, or a `DEPS.list` file in a way that widens an import boundary.

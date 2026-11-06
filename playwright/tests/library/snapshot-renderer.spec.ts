@@ -36,11 +36,39 @@ function makeSnapshot(overrides: Partial<FrameSnapshot> = {}): FrameSnapshot {
   };
 }
 
+test('TV-136 snapshot renderer selects the nearest out-of-order screencast frame', {
+  annotation: [
+    { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43573' },
+    { type: 'issue', description: 'https://issues.chromium.org/issues/578117966' },
+  ],
+}, () => {
+  // Chromium encodes screencast frames in parallel and sends each one when
+  // its encoding finishes. Frame 3 was swapped before frame 2, but took
+  // longer to encode, so it was received later.
+  const frameSwapWallTimes = [1000, 1017, 1050, 1033, 1067];
+  const frames = frameSwapWallTimes.map((frameSwapWallTime, index) => ({
+    file: `${index}.jpeg`,
+    width: 1280,
+    height: 720,
+    timestamp: 1000 + index * 17,
+    frameSwapWallTime,
+  }));
+  const snapshots = [
+    makeSnapshot({ timestamp: 1030, wallTime: 1030 }),
+    makeSnapshot({ timestamp: 1070, wallTime: 1070 }),
+  ];
+  const renderer1 = new SnapshotRenderer(new LRUCache(1_000_000), [], snapshots, frames, 0);
+  expect(renderer1.closestScreenshot()).toBe('3.jpeg');
+  // Every later snapshot should not be stuck on the frame before the reversed pair.
+  const renderer2 = new SnapshotRenderer(new LRUCache(1_000_000), [], snapshots, frames, 1);
+  expect(renderer2.closestScreenshot()).toBe('4.jpeg');
+});
+
 for (const [name, overrides] of [
   ['callId', { callId: '</script><script>window.__pwned__=true;//' }],
   ['snapshotName', { callId: 'call-1', snapshotName: '</script><img src=x onerror=alert(1)>' }],
 ] as const) {
-  test(`snapshot renderer escapes attacker-controlled ${name} in script context`, () => {
+  test(`TV-123 snapshot renderer escapes attacker-controlled ${name} in script context`, () => {
     const renderer = new SnapshotRenderer(new LRUCache(1_000_000), [], [makeSnapshot(overrides)], [], 0);
     const { html } = renderer.render();
     expect(html.match(/<script[ >]/g)).toHaveLength(1);
@@ -48,7 +76,7 @@ for (const [name, overrides] of [
   });
 }
 
-test('snapshot renderer nonces the bootstrap script', () => {
+test('TV-124 snapshot renderer nonces the bootstrap script', () => {
   const renderer = new SnapshotRenderer(new LRUCache(1_000_000), [], [makeSnapshot()], [], 0);
   const { html, scriptNonce } = renderer.render();
   expect(scriptNonce).toMatch(/^[0-9a-f]{32}$/);
@@ -61,7 +89,7 @@ test('snapshot renderer nonces the bootstrap script', () => {
   expect(other.render().scriptNonce).not.toBe(scriptNonce);
 });
 
-test('snapshot renderer strips event handler attributes', () => {
+test('TV-125 snapshot renderer strips event handler attributes', () => {
   const renderer = new SnapshotRenderer(new LRUCache(1_000_000), [], [makeSnapshot({
     html: ['HTML', {}, ['BODY', {}, ['IMG', { 'onerror': 'alert(1)', 'src': 'x' }]]],
   })], [], 0);
@@ -70,7 +98,7 @@ test('snapshot renderer strips event handler attributes', () => {
   expect(html).toContain('src="x"');
 });
 
-test('snapshot renderer strips onclick attributes', () => {
+test('TV-126 snapshot renderer strips onclick attributes', () => {
   const renderer = new SnapshotRenderer(new LRUCache(1_000_000), [], [makeSnapshot({
     html: ['HTML', {}, ['BODY', {}, ['DIV', { 'onClick': 'alert(1)' }, 'click me']]],
   })], [], 0);
@@ -80,7 +108,7 @@ test('snapshot renderer strips onclick attributes', () => {
   expect(html).toContain('click me');
 });
 
-test('snapshot renderer neutralizes iframe srcdoc', () => {
+test('TV-127 snapshot renderer neutralizes iframe srcdoc', () => {
   const renderer = new SnapshotRenderer(new LRUCache(1_000_000), [], [makeSnapshot({
     html: ['HTML', {}, ['BODY', {}, ['IFRAME', { 'srcdoc': '<script>alert(1)</script>' }]]],
   })], [], 0);
@@ -89,7 +117,7 @@ test('snapshot renderer neutralizes iframe srcdoc', () => {
   expect(html).toContain('__playwright_srcdoc__');
 });
 
-test('snapshot renderer neutralizes iframe sandbox', () => {
+test('TV-128 snapshot renderer neutralizes iframe sandbox', () => {
   const renderer = new SnapshotRenderer(new LRUCache(1_000_000), [], [makeSnapshot({
     html: ['HTML', {}, ['BODY', {}, ['IFRAME', { 'sandbox': 'allow-scripts allow-top-navigation' }]]],
   })], [], 0);
@@ -98,7 +126,7 @@ test('snapshot renderer neutralizes iframe sandbox', () => {
   expect(html).toContain('__playwright_sandbox__');
 });
 
-test('snapshot renderer neutralizes object data attribute', () => {
+test('TV-129 snapshot renderer neutralizes object data attribute', () => {
   const renderer = new SnapshotRenderer(new LRUCache(1_000_000), [], [makeSnapshot({
     html: ['HTML', {}, ['BODY', {}, ['OBJECT', { 'data': '/sha1/malicious', 'type': 'text/html' }]]],
   })], [], 0);
@@ -107,7 +135,7 @@ test('snapshot renderer neutralizes object data attribute', () => {
   expect(html).toContain('__playwright_data__');
 });
 
-test('snapshot renderer neutralizes embed src attribute', () => {
+test('TV-130 snapshot renderer neutralizes embed src attribute', () => {
   const renderer = new SnapshotRenderer(new LRUCache(1_000_000), [], [makeSnapshot({
     html: ['HTML', {}, ['BODY', {}, ['EMBED', { 'src': '/sha1/malicious', 'type': 'text/html' }]]],
   })], [], 0);
@@ -116,7 +144,7 @@ test('snapshot renderer neutralizes embed src attribute', () => {
   expect(html).toContain('__playwright_src__');
 });
 
-test('snapshot renderer handles case-insensitive iframe tag names', () => {
+test('TV-131 snapshot renderer handles case-insensitive iframe tag names', () => {
   const renderer = new SnapshotRenderer(new LRUCache(1_000_000), [], [makeSnapshot({
     html: ['HTML', {}, ['BODY', {}, ['iframe', { 'srcdoc': '<script>alert(1)</script>', 'src': 'http://evil.com' }]]],
   })], [], 0);
@@ -126,7 +154,7 @@ test('snapshot renderer handles case-insensitive iframe tag names', () => {
   expect(html).toContain('__playwright_src__');
 });
 
-test('snapshot renderer drops unsafe tag names that smuggle attributes', () => {
+test('TV-132 snapshot renderer drops unsafe tag names that smuggle attributes', () => {
   const renderer = new SnapshotRenderer(new LRUCache(1_000_000), [], [makeSnapshot({
     html: ['HTML', {}, ['BODY', {}, ['img src=x onerror=alert(1)', {}], 'safe']],
   })], [], 0);
@@ -136,7 +164,7 @@ test('snapshot renderer drops unsafe tag names that smuggle attributes', () => {
   expect(html).toContain('safe');
 });
 
-test('snapshot renderer still renders ordinary custom elements', () => {
+test('TV-133 snapshot renderer still renders ordinary custom elements', () => {
   const renderer = new SnapshotRenderer(new LRUCache(1_000_000), [], [makeSnapshot({
     html: ['HTML', {}, ['BODY', {},
       ['MY-WIDGET', { 'id': 'w' }, 'hello'],
@@ -154,7 +182,7 @@ test('snapshot renderer still renders ordinary custom elements', () => {
   expect(html).toContain('<my-élément id="e">elem</my-élément>');
 });
 
-test('stripAnsiEscapes should not exhibit polynomial backtracking', () => {
+test('TV-134 stripAnsiEscapes should not exhibit polynomial backtracking', () => {
   // \x1b[ + 50000 semicolons + non-terminal character.
   // Before the fix this took >3 seconds due to O(n^2) backtracking.
   const payload = '\x1b[' + ';'.repeat(50000) + '!';
@@ -163,7 +191,7 @@ test('stripAnsiEscapes should not exhibit polynomial backtracking', () => {
   expect(result).toContain('!');
 });
 
-test('stripAnsiEscapes handles common ANSI sequences after fix', () => {
+test('TV-135 stripAnsiEscapes handles common ANSI sequences after fix', () => {
   expect(stripAnsiEscapes('\x1b[31mred\x1b[0m')).toBe('red');
   expect(stripAnsiEscapes('\x1b[0;31mbold red\x1b[0m')).toBe('bold red');
   expect(stripAnsiEscapes('\x1b[;H')).toBe('');

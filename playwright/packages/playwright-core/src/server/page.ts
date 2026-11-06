@@ -299,6 +299,7 @@ export class Page extends SdkObject<PageEventMap> {
     if (this.openScope.isClosed())
       return;
     this.frameManager.dispose(error);
+    this.clearWorkers(error);
     this.screencast.dispose();
     this.overlay.dispose();
     this.highlightController.dispose();
@@ -570,7 +571,7 @@ export class Page extends SdkObject<PageEventMap> {
 
   private async _performLocatorHandlersCheckpoint(progress: Progress) {
     // Do not run locator handlers from inside locator handler callbacks to avoid deadlocks.
-    if (this._locatorHandlerRunningCounter)
+    if (this._locatorHandlerRunningCounter || [...this._locatorHandlers.values()].some(handler => !!handler.resolved))
       return;
     for (const [uid, handler] of this._locatorHandlers) {
       if (!handler.resolved) {
@@ -880,9 +881,9 @@ export class Page extends SdkObject<PageEventMap> {
     this._workers.delete(workerId);
   }
 
-  clearWorkers() {
+  clearWorkers(error?: TargetClosedError) {
     for (const [workerId, worker] of this._workers) {
-      worker.didClose();
+      worker.didClose(error);
       this._workers.delete(workerId);
     }
   }
@@ -1025,19 +1026,24 @@ export class Worker extends SdkObject<WorkerEventMap> {
       this._executionContextPromise.resolve(this.existingExecutionContext);
   }
 
-  didClose() {
+  didClose(error?: TargetClosedError) {
     if (this.existingExecutionContext)
-      this.existingExecutionContext.contextDestroyed('Worker was closed');
+      this.existingExecutionContext.contextDestroyed(error?.message ?? 'Worker was closed');
     this.emit(Worker.Events.Close, this);
-    this.openScope.close(new Error('Worker closed'));
+    this.openScope.close(error ?? new TargetClosedError(this.closeReason()));
   }
 
   async evaluateExpression(progress: Progress, expression: string, isFunction: boolean | undefined, arg: any): Promise<any> {
-    return progress.race(js.evaluateExpression(await this._executionContextPromise, expression, { returnByValue: true, isFunction }, arg));
+    return progress.race(js.evaluateExpression(await this._executionContext(progress), expression, { returnByValue: true, isFunction }, arg));
   }
 
   async evaluateExpressionHandle(progress: Progress, expression: string, isFunction: boolean | undefined, arg: any): Promise<any> {
-    return progress.race(js.evaluateExpression(await this._executionContextPromise, expression, { returnByValue: false, isFunction }, arg));
+    return progress.race(js.evaluateExpression(await this._executionContext(progress), expression, { returnByValue: false, isFunction }, arg));
+  }
+
+  private async _executionContext(progress: Progress): Promise<js.ExecutionContext> {
+    // The worker may close before its execution context is ready.
+    return await progress.race(this.openScope.race(this._executionContextPromise));
   }
 
   async disconnect(progress: Progress, options: { reason?: string } = {}) {
@@ -1163,8 +1169,10 @@ export async function ariaSnapshotJSONForFrame(progress: Progress, frame: frames
       return;
     if (node.role === 'iframe' && typeof node.ref === 'string') {
       const childSnapshot = childSnapshots[renderedIframeRefs.indexOf(node.ref)];
-      if (childSnapshot?.length)
+      if (childSnapshot?.length) {
+        delete node.text;
         node.children = childSnapshot;
+      }
       return;
     }
     (node.children || []).forEach(mergeIframeChildren);

@@ -47,7 +47,7 @@ const lockedTest = (name: string, delay: number, lock?: string | string[]) => `
 test('should not run tests with the same lock at the same time', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     'playwright.config.ts': `
-      module.exports = { fullyParallel: true };
+      export default { fullyParallel: true };
     `,
     'a.test.ts': `
       import { test } from '@playwright/test';
@@ -63,10 +63,10 @@ test('should not run tests with the same lock at the same time', async ({ runInl
   expect(conflictingOverlaps(result.outputLines, [['test1', 'test2']])).toEqual([]);
 });
 
-test('should run tests with different locks at the same time', async ({ runInlineTest }) => {
+test('should run tests with different locks at the same time', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43797' } }, async ({ runInlineTest }) => {
   const result = await runInlineTest({
     'playwright.config.ts': `
-      module.exports = { fullyParallel: true };
+      export default { fullyParallel: true };
     `,
     'helper.ts': `
       import fs from 'fs';
@@ -81,7 +81,7 @@ test('should run tests with different locks at the same time', async ({ runInlin
     'a.test.ts': `
       import { test } from '@playwright/test';
       import { signalAndWait } from './helper';
-      test('test1', { lock: 'lock-a' }, async () => {
+      test('test1', { lock: 'exclusive' }, async () => {
         // Only finishes when both tests run at the same time.
         await signalAndWait('a.txt', 'b.txt');
       });
@@ -101,7 +101,7 @@ test('should run tests with different locks at the same time', async ({ runInlin
 test('should not run tests with the same lock from different projects at the same time', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     'playwright.config.ts': `
-      module.exports = {
+      export default {
         projects: [
           { name: 'project1' },
           { name: 'project2' },
@@ -125,7 +125,7 @@ test('should not run tests with the same lock from different projects at the sam
 test('should support locks declared and configured on describe groups', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     'playwright.config.ts': `
-      module.exports = { fullyParallel: true };
+      export default { fullyParallel: true };
     `,
     'a.test.ts': `
       import { test } from '@playwright/test';
@@ -147,7 +147,7 @@ test('should support locks declared and configured on describe groups', async ({
 test('should support multiple locks on a single test', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     'playwright.config.ts': `
-      module.exports = { fullyParallel: true };
+      export default { fullyParallel: true };
     `,
     'a.test.ts': `
       import { test } from '@playwright/test';
@@ -188,7 +188,7 @@ test('should hold the lock for the whole file group in default mode', async ({ r
 test('should respect locks on tests from a parallel suite with beforeAll hooks', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     'playwright.config.ts': `
-      module.exports = { fullyParallel: true };
+      export default { fullyParallel: true };
     `,
     'a.test.ts': `
       import { test } from '@playwright/test';
@@ -213,7 +213,7 @@ test('should respect locks on tests from a parallel suite with beforeAll hooks',
 test('should not count waiting for a lock towards the test timeout', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     'playwright.config.ts': `
-      module.exports = { timeout: 3000 };
+      export default { timeout: 3000 };
     `,
     'a.test.ts': `
       import { test } from '@playwright/test';
@@ -239,4 +239,51 @@ test('should validate lock in test details', async ({ runInlineTest }) => {
   });
   expect(result.exitCode).toBe(1);
   expect(result.output).toContain('details.lock');
+});
+
+test('should run tests with the exclusive lock in isolation', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43797' } }, async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'playwright.config.ts': `
+      export default { fullyParallel: true };
+    `,
+    'a.test.ts': `
+      import { test } from '@playwright/test';
+      ${lockedTest('test1', 500)}
+      ${lockedTest('test2', 500, '-exclusive-')}
+      ${lockedTest('test3', 500)}
+    `,
+    'b.test.ts': `
+      import { test } from '@playwright/test';
+      ${lockedTest('test4', 500, 'other')}
+      ${lockedTest('test5', 500)}
+    `,
+  }, { workers: 3 });
+  expect(result.exitCode).toBe(0);
+  expect(result.passed).toBe(5);
+  const others = ['test1', 'test3', 'test4', 'test5'];
+  expect(conflictingOverlaps(result.outputLines, others.map(name => ['test2', name]))).toEqual([]);
+});
+
+test('should retry tests with the exclusive lock in isolation', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43797' } }, async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'playwright.config.ts': `
+      export default { fullyParallel: true, retries: 1 };
+    `,
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+      test('test1', { lock: '-exclusive-' }, async ({}, testInfo) => {
+        console.log('\\n%%begin:test1-' + testInfo.retry);
+        await new Promise(f => setTimeout(f, 500));
+        console.log('\\n%%end:test1-' + testInfo.retry);
+        expect(testInfo.retry).toBe(1);
+      });
+      ${lockedTest('test2', 500)}
+      ${lockedTest('test3', 500)}
+    `,
+  }, { workers: 3 });
+  expect(result.exitCode).toBe(0);
+  expect(result.flaky).toBe(1);
+  expect(result.passed).toBe(2);
+  const conflicts: [string, string][] = [['test1-0', 'test2'], ['test1-0', 'test3'], ['test1-1', 'test2'], ['test1-1', 'test3']];
+  expect(conflictingOverlaps(result.outputLines, conflicts)).toEqual([]);
 });

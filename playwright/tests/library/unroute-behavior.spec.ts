@@ -20,7 +20,7 @@ import { iso } from '../../packages/playwright-core/lib/coreBundle';
 
 const { ManualPromise } = iso;
 
-it('context.unroute should not wait for pending handlers to complete', async ({ page, context, server }) => {
+it('RO-186 context.unroute should not wait for pending handlers to complete', async ({ page, context, server }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/23781' });
   let secondHandlerCalled = false;
   await context.route(/.*/, async route => {
@@ -45,7 +45,7 @@ it('context.unroute should not wait for pending handlers to complete', async ({ 
   expect(secondHandlerCalled).toBe(true);
 });
 
-it('context.unrouteAll removes all handlers', async ({ page, context, server }) => {
+it('RO-187 context.unrouteAll removes all handlers', async ({ page, context, server }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/23781' });
   await context.route('**/*', route => {
     void route.abort();
@@ -57,7 +57,7 @@ it('context.unrouteAll removes all handlers', async ({ page, context, server }) 
   await page.goto(server.EMPTY_PAGE);
 });
 
-it('context.unrouteAll should wait for pending handlers to complete', async ({ page, context, server }) => {
+it('RO-188 context.unrouteAll should wait for pending handlers to complete', async ({ page, context, server }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/23781' });
   let secondHandlerCalled = false;
   await context.route(/.*/, async route => {
@@ -87,7 +87,7 @@ it('context.unrouteAll should wait for pending handlers to complete', async ({ p
   expect(secondHandlerCalled).toBe(false);
 });
 
-it('context.unrouteAll should not wait for pending handlers to complete if behavior is ignoreErrors', async ({ page, context, server }) => {
+it('RO-189 context.unrouteAll should not wait for pending handlers to complete if behavior is ignoreErrors', async ({ page, context, server }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/23781' });
   let secondHandlerCalled = false;
   await context.route(/.*/, async route => {
@@ -117,7 +117,7 @@ it('context.unrouteAll should not wait for pending handlers to complete if behav
   expect(secondHandlerCalled).toBe(false);
 });
 
-it('page.close should not wait for active route handlers on the owning context', async ({ page, context, server }) => {
+it('RO-190 page.close should not wait for active route handlers on the owning context', async ({ page, context, server }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/23781' });
   let routeCallback;
   const routePromise = new Promise(f => routeCallback = f);
@@ -132,7 +132,7 @@ it('page.close should not wait for active route handlers on the owning context',
   await page.close();
 });
 
-it('context.close should not wait for active route handlers on the owned pages', async ({ page, context, server }) => {
+it('RO-191 context.close should not wait for active route handlers on the owned pages', async ({ page, context, server }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/23781' });
   let routeCallback;
   const routePromise = new Promise(f => routeCallback = f);
@@ -147,7 +147,7 @@ it('context.close should not wait for active route handlers on the owned pages',
   await context.close();
 });
 
-it('page.unroute should not wait for pending handlers to complete', async ({ page, server }) => {
+it('RO-192 page.unroute should not wait for pending handlers to complete', async ({ page, server }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/23781' });
   let secondHandlerCalled = false;
   await page.route(/.*/, async route => {
@@ -172,7 +172,7 @@ it('page.unroute should not wait for pending handlers to complete', async ({ pag
   expect(secondHandlerCalled).toBe(true);
 });
 
-it('page.unrouteAll removes all routes', async ({ page, server }) => {
+it('RO-193 page.unrouteAll removes all routes', async ({ page, server }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/23781' });
   await page.route('**/*', route => {
     void route.abort();
@@ -185,7 +185,7 @@ it('page.unrouteAll removes all routes', async ({ page, server }) => {
   expect(response.ok()).toBe(true);
 });
 
-it('page.unrouteAll should wait for pending handlers to complete', async ({ page, server }) => {
+it('RO-194 page.unrouteAll should wait for pending handlers to complete', async ({ page, server }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/23781' });
   let secondHandlerCalled = false;
   await page.route(/.*/, async route => {
@@ -215,7 +215,7 @@ it('page.unrouteAll should wait for pending handlers to complete', async ({ page
   expect(secondHandlerCalled).toBe(false);
 });
 
-it('page.unrouteAll should not wait for pending handlers to complete if behavior is ignoreErrors', async ({ page, server }) => {
+it('RO-195 page.unrouteAll should not wait for pending handlers to complete if behavior is ignoreErrors', async ({ page, server }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/23781' });
   let secondHandlerCalled = false;
   await page.route(/.*/, async route => {
@@ -245,7 +245,7 @@ it('page.unrouteAll should not wait for pending handlers to complete if behavior
   expect(secondHandlerCalled).toBe(false);
 });
 
-it('page.close does not wait for active route handlers', async ({ page, server }) => {
+it('RO-196 page.close does not wait for active route handlers', async ({ page, server }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/23781' });
   let secondHandlerCalled = false;
   await page.route(/.*/, () => secondHandlerCalled = true);
@@ -262,7 +262,7 @@ it('page.close does not wait for active route handlers', async ({ page, server }
   expect(secondHandlerCalled).toBe(false);
 });
 
-it('route.continue should not throw if page has been closed', async ({ page, server }) => {
+it('RO-197 route.continue should not throw if page has been closed', async ({ page, server }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/23781' });
   let routeCallback;
   const routePromise = new Promise<Route>(f => routeCallback = f);
@@ -276,7 +276,7 @@ it('route.continue should not throw if page has been closed', async ({ page, ser
   await route.continue();
 });
 
-it('route.fallback should not throw if page has been closed', async ({ page, server }) => {
+it('RO-198 route.fallback should not throw if page has been closed', async ({ page, server }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/23781' });
   let routeCallback;
   const routePromise = new Promise<Route>(f => routeCallback = f);
@@ -290,7 +290,7 @@ it('route.fallback should not throw if page has been closed', async ({ page, ser
   await route.fallback();
 });
 
-it('route.fulfill should not throw if page has been closed', async ({ page, server }) => {
+it('RO-199 route.fulfill should not throw if page has been closed', async ({ page, server }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/23781' });
   let routeCallback;
   const routePromise = new Promise<Route>(f => routeCallback = f);
@@ -304,30 +304,38 @@ it('route.fulfill should not throw if page has been closed', async ({ page, serv
   await route.fulfill();
 });
 
-it('should not continue requests in flight (page)', async ({ page, server }) => {
+it('RO-200 should not continue requests in flight (page)', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43878' } }, async ({ page, server }) => {
   const routePromise = new ManualPromise();
+  let started = 0;
   await page.goto(server.EMPTY_PAGE);
   await page.route('**/*', async route => {
-    routePromise.resolve();
-    await new Promise(f => setTimeout(f, 3000));
+    if (++started === 2)
+      routePromise.resolve();
+    await routePromise;
+    await new Promise(f => setTimeout(f, route.request().url().endsWith('/a') ? 100 : 1000));
     const response = await route.fetch();
-    await route.fulfill({ response });
+    await route.fulfill({ response, body: 'mocked' });
   });
-  void page.evaluate(() => fetch('/')).catch(() => {});
+  const fetchPromise = page.evaluate(() => Promise.all(['/a', '/b'].map(async path => (await fetch(path)).text())));
   await routePromise;
-  await page.unrouteAll({ behavior: 'wait' });
+  const [, bodies] = await Promise.all([page.unrouteAll({ behavior: 'wait' }), fetchPromise]);
+  expect(bodies).toEqual(['mocked', 'mocked']);
 });
 
-it('should not continue requests in flight (context)', async ({ page, context, server }) => {
+it('RO-201 should not continue requests in flight (context)', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43878' } }, async ({ page, context, server }) => {
   const routePromise = new ManualPromise();
+  let started = 0;
   await page.goto(server.EMPTY_PAGE);
   await context.route('**/*', async route => {
-    routePromise.resolve();
-    await new Promise(f => setTimeout(f, 3000));
+    if (++started === 2)
+      routePromise.resolve();
+    await routePromise;
+    await new Promise(f => setTimeout(f, route.request().url().endsWith('/a') ? 100 : 1000));
     const response = await route.fetch();
-    await route.fulfill({ response });
+    await route.fulfill({ response, body: 'mocked' });
   });
-  void page.evaluate(() => fetch('/')).catch(() => {});
+  const fetchPromise = page.evaluate(() => Promise.all(['/a', '/b'].map(async path => (await fetch(path)).text())));
   await routePromise;
-  await context.unrouteAll({ behavior: 'wait' });
+  const [, bodies] = await Promise.all([context.unrouteAll({ behavior: 'wait' }), fetchPromise]);
+  expect(bodies).toEqual(['mocked', 'mocked']);
 });

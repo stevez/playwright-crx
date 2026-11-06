@@ -189,3 +189,55 @@ test('empty secret value is ignored', async ({ startClient, server }) => {
     snapshot: expect.stringContaining(`<secret>X-PASSWORD</secret>`),
   });
 });
+
+test('redacts url parameter values', { annotation: [
+  { type: 'issue', description: 'https://github.com/microsoft/playwright-mcp/issues/1791' },
+  { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43799' },
+] }, async ({ startClient, server }) => {
+  const { client } = await startClient({
+    args: ['--redact-url-params=code,access_token'],
+  });
+
+  server.setRedirect('/login', '/app?code=abc123&state=s1#access_token=jwt.payload.sig&token_type=bearer');
+  server.setContent('/app?code=abc123&state=s1', `<title>App</title><a href="/next?code=def456">Next</a>`, 'text/html');
+
+  expect(await client.callTool({
+    name: 'browser_navigate',
+    arguments: { url: server.PREFIX + '/login' },
+  })).toHaveResponse({
+    page: `- Page URL: ${server.PREFIX}/app?code=<redacted>&state=s1#access_token=<redacted>&token_type=bearer
+- Page Title: App`,
+    snapshot: expect.stringContaining(`/url: /next?code=<redacted>`),
+  });
+
+  expect(await client.callTool({
+    name: 'browser_tabs',
+    arguments: { action: 'list' },
+  })).toHaveResponse({
+    result: `- 0: (current) [App](${server.PREFIX}/app?code=<redacted>&state=s1#access_token=<redacted>&token_type=bearer)`,
+  });
+
+  const network = await client.callTool({
+    name: 'browser_network_requests',
+    arguments: { static: true },
+  });
+  expect(network).toHaveResponse({
+    result: expect.stringContaining(`[GET] ${server.PREFIX}/app?code=<redacted>&state=s1 => [200] OK`),
+  });
+
+  const index = Number(parseResponse(network).result.match(/^(\d+)\. \[GET\] .*\/app\?/m)![1]);
+  expect(await client.callTool({
+    name: 'browser_network_request',
+    arguments: { index },
+  })).toHaveResponse({
+    result: expect.stringContaining(`#${index} [GET] ${server.PREFIX}/app?code=<redacted>&state=s1`),
+  });
+
+  await client.callTool({
+    name: 'browser_network_requests',
+    arguments: { static: true, filename: 'network.log' },
+  });
+  const networkLog = await fs.promises.readFile(test.info().outputPath('network.log'), 'utf-8');
+  expect(networkLog).toContain(`[GET] ${server.PREFIX}/app?code=<redacted>&state=s1 => [200] OK`);
+  expect(networkLog).not.toContain('abc123');
+});

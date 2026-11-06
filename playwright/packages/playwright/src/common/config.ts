@@ -108,7 +108,7 @@ export class FullConfigInternal {
       updateSnapshots: takeFirst(configCLIOverrides.updateSnapshots, userConfig.updateSnapshots, 'default'),
       updateSourceMethod: takeFirst(configCLIOverrides.updateSourceMethod, userConfig.updateSourceMethod, 'patch'),
       version: packageJSON.version,
-      workers: resolveWorkers(takeFirst((configCLIOverrides.debug || configCLIOverrides.pause) ? 1 : undefined, configCLIOverrides.workers, userConfig.workers, '50%')),
+      workers: resolveWorkers(takeFirst(configCLIOverrides.debug ? 1 : undefined, configCLIOverrides.workers, userConfig.workers, '50%')),
       webServer: null,
     };
     for (const key in userConfig) {
@@ -293,7 +293,7 @@ export function toReporters(reporters: BuiltInReporter | ReporterDescription[] |
   return reporters;
 }
 
-export const builtInReporters = ['list', 'line', 'dot', 'json', 'junit', 'null', 'github', 'html', 'blob', 'perfetto', 'coverage'] as const;
+export const builtInReporters = ['list', 'line', 'dot', 'failures', 'json', 'junit', 'null', 'github', 'html', 'blob', 'perfetto', 'coverage'] as const;
 export type BuiltInReporter = typeof builtInReporters[number];
 
 export type ContextReuseMode = 'none' | 'when-possible';

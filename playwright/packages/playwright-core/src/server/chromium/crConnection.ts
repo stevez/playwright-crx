@@ -89,7 +89,8 @@ export class CRConnection extends SdkObject {
     this._transport.onmessage = undefined;
     this._transport.onclose = undefined;
     this._browserDisconnectedLogs = helper.formatBrowserLogs(this._browserLogsCollector.recentLogs(), reason);
-    this.rootSession.dispose();
+    for (const session of [...this._sessions.values()])
+      session.dispose();
     Promise.resolve().then(() => this.emit(ConnectionEvents.Disconnected));
   }
 
@@ -189,6 +190,7 @@ export class CRSession extends SdkObject<Protocol.EventMap & ConnectionEventMap>
       throw new Error('Root session cannot be closed');
     // Ideally, detaching should resume any target, but there is a bug in the backend,
     // so we must Runtime.runIfWaitingForDebugger first.
+    // See https://issues.chromium.org/issues/578112291.
     await this._sendMayFail('Runtime.runIfWaitingForDebugger');
     await this._parentSession.send('Target.detachFromTarget', { sessionId: this._sessionId });
     this.dispose();

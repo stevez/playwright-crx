@@ -149,11 +149,11 @@ async function deleteStackSession(progress: Progress, stackSessions: Map<string,
 
 export async function harOpen(progress: Progress, harBackends: Map<string, HarBackend>, params: channels.LocalUtilsHarOpenParams): Promise<channels.LocalUtilsHarOpenResult> {
   let harBackend: HarBackend;
-  if (params.file.endsWith('.zip')) {
+  if (/\.zip$/i.test(params.file)) {
     const zipFile = new ZipFile(params.file);
     try {
       const entryNames = await progress.race(zipFile.entries());
-      const harEntryName = entryNames.find(e => e.endsWith('.har'));
+      const harEntryName = entryNames.find(e => /\.har$/i.test(e));
       if (!harEntryName)
         return { error: 'Specified archive does not have a .har file' };
       const har = await progress.race(zipFile.read(harEntryName));

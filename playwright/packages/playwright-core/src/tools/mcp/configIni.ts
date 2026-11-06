@@ -155,6 +155,8 @@ const longhandTypes: Record<string, LonghandType> = {
 
   // top-level
   'extension': 'boolean',
+  'tabGroup': 'boolean',
+  'background': 'boolean',
   'capabilities': 'string[]',
   'saveSession': 'boolean',
   'saveVideo': 'size',
@@ -164,6 +166,7 @@ const longhandTypes: Record<string, LonghandType> = {
   'imageResponses': 'string',
   'filePaths': 'string',
   'allowUnrestrictedFileAccess': 'boolean',
+  'ignoreRoots': 'boolean',
   'codegen': 'string',
   'testIdAttribute': 'string',
 

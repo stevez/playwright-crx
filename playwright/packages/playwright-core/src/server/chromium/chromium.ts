@@ -374,9 +374,6 @@ export class Chromium extends BrowserType {
       throw new Error('Arguments can not specify page to be opened');
     const chromeArguments = [...chromiumSwitches()];
 
-    // See https://issues.chromium.org/issues/40277080
-    chromeArguments.push('--enable-unsafe-swiftshader');
-
     if (options.headless) {
       chromeArguments.push('--headless');
 
@@ -490,11 +487,12 @@ async function resolveChannelEndpoint(progress: Progress, channel: string): Prom
         remoteDebuggingHint(channel));
   }
 
-  const port = parseInt(contents.trim(), 10);
+  const [portLine, wsPathLine] = contents.trim().split('\n');
+  const port = parseInt(portLine, 10);
   if (isNaN(port))
     throw new Error(`Could not connect to ${channel}: invalid DevToolsActivePort file at ${devToolsActivePortPath}.`);
 
-  const endpoint = `ws://localhost:${port}/devtools/browser`;
+  const endpoint = `ws://localhost:${port}${wsPathLine?.trim() || '/devtools/browser'}`;
   progress.log(`<ws preparing> resolved channel "${channel}" to ${endpoint}`);
   return endpoint;
 }

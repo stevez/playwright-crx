@@ -6,6 +6,149 @@ toc_max_heading_level: 2
 
 import LiteYouTube from '@site/src/components/LiteYouTube';
 
+## Version 1.65
+
+### 🧾 Locator code in Java
+
+A locator from [`method: Locator.normalize`] now converts to a string as Java code. Use it with [`method: Page.getByRef`] to turn an element that an agent picks from a [`method: Page.ariaSnapshot`] in the `"ai"` mode into code for your test:
+
+```java
+Locator normalized = page.getByRef("e2").normalize();
+System.out.println(normalized.toString());
+// getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("Submit"))
+```
+
+### New APIs
+
+- New option [`option: CDPSession.send.timeout`] in [`method: CDPSession.send`].
+
+### Breaking Changes ⚠️
+
+- Actions such as [`method: Locator.click`], [`method: Locator.check`], [`method: Locator.tap`], [`method: Locator.fill`], [`method: Locator.clear`] and [`method: Locator.selectOption`] now wait for the element to be [not inert](./actionability.md#not-inert). An action on an element with the `inert` attribute, or inside such an element, now times out if the element stays inert.
+
+- Cookie matching now follows RFC 6265. With a URL, [`method: BrowserContext.cookies`] and [`method: APIRequestContext.cookies`] no longer return host-only cookies for subdomains or `Path=/api` cookies for `/apiv2`, and a `Path=/foo/` cookie does not match `/foo`. [APIRequestContext] sends a cookie without a name as `Cookie: x` instead of `Cookie: =x`, and stores `Set-Cookie: token` as a cookie without a name.
+
+- Proxy credentials are no longer sent to websites. The credentials in the [`option: BrowserType.launch.proxy`] option now answer only proxy challenges. To authenticate on a website, use [`option: Browser.newContext.httpCredentials`].
+
+- Text that the browser does not render, such as text that is not assigned to a slot or text directly inside a closed `<details>`, is no longer part of accessible names and aria snapshots. This can change the results of [`method: Page.getByRole`] with a name, [`method: Locator.ariaSnapshot`] and [`method: LocatorAssertions.toMatchAriaSnapshot`].
+
+### Browser Versions
+
+- Chromium 158.0.8127.18
+- Mozilla Firefox 159.0
+- WebKit 27.2
+
+This version was also tested against the following stable channels:
+
+- Google Chrome 157
+- Microsoft Edge 156
+
+## Version 1.64
+
+### 🧰 WebMCP
+
+New [`property: Page.webmcp`] and [`property: Frame.webmcp`] give access to the tools that a page registers through
+the experimental [WebMCP](https://webmachinelearning.github.io/webmcp/) browser API, so you can test them like
+any other part of your app:
+
+```java
+Browser browser = chromium.launch(new BrowserType.LaunchOptions()
+    .setArgs(Arrays.asList("--enable-features=WebMCP")));
+Page page = browser.newPage();
+page.navigate("https://example.com");
+
+for (WebMCPTool tool : page.webmcp().tools())
+  System.out.println(tool.name + ": " + tool.description);
+
+Object result = page.webmcp().callTool("add", Map.of("a", 2, "b", 40));
+System.out.println(result); // {content=[{type=text, text=42}]}
+```
+
+[Playwright MCP](./getting-started-mcp.md) also supports WebMCP by default, with page-defined tools offered to the agent as `webmcp_<tool>`. Pass `--no-webmcp` to opt out.
+
+[`playwright-cli`](./getting-started-cli.md) exposes them as well:
+
+```bash
+playwright-cli webmcp-list
+playwright-cli webmcp-call search_catalog --params '{"query":"cats"}'
+```
+
+### 🎬 Better videos
+
+Videos can now be recorded at a custom frame rate, and the decorations for actions are styled with plain CSS:
+
+```java
+page.screencast().start(new Screencast.StartOptions()
+    .setPath(Paths.get("video.webm"))
+    .setSize(1920, 1080)
+    .setFps(60));
+page.screencast().showActions(new Screencast.ShowActionsOptions()
+    .setStyle(new ScreencastActionStyle()
+        .setPoint("width: 20px; height: 20px; border-radius: 50%; background: red")
+        .setHighlight("outline: 2px solid #333; background: rgba(0, 128, 255, .15)")
+        .setTitle("font-size: 16px")));
+```
+
+- New [`option: Browser.newContext.recordVideoFps`] option and new [`option: Screencast.start.fps`] option in
+  [`method: Screencast.start`]. Firefox and WebKit currently capture up to 25 frames per second.
+- New [`option: Screencast.showActions.style`] option takes CSS declarations for the `point` marker, the target
+  `highlight` and the action `title`. It replaces the `fontSize` option, which is now deprecated.
+- The cursor stays visible at the last action point, survives navigations and travels along a natural, eased path.
+- Videos are encoded with VP9 instead of VP8, which takes less CPU and produces smaller files of the same or better
+  quality.
+- All video options are also available in [Playwright MCP](./getting-started-mcp.md) and [`playwright-cli`](./getting-started-cli.md).
+
+### 🪆 Locator.within()
+
+New [`method: Locator.within`] combines two locators that you already have, reading in the natural order —
+"this button, within that dialog":
+
+```java
+Locator saveButton = page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("Save"));
+Locator dialog = page.getByTestId("settings-dialog");
+
+saveButton.within(dialog).click();
+```
+
+Relative locators such as [`method: Locator.nth`] or [`method: Locator.first`] are resolved inside each parent
+separately, which makes column-like queries straightforward:
+
+```java
+// The third cell of every row, not the third cell in the table.
+Locator thirdColumn = page.getByRole(AriaRole.CELL).nth(2).within(page.getByRole(AriaRole.ROW));
+assertThat(thirdColumn).hasText(new String[] {"Apple", "Banana", "Cherry"});
+```
+
+### New APIs
+
+- New [`method: Page.getByRef`] locates an element by its aria ref, such as `e2`, reported by [`method: Page.ariaSnapshot`] in the `"ai"` mode.
+- New option [`option: Page.content.includeShadow`] in [`method: Page.content`] and [`method: Frame.content`] serializes open shadow roots as [declarative shadow DOM](https://developer.mozilla.org/en-US/docs/Web/API/Web_components/Using_shadow_DOM#declaratively_with_html).
+- New option [`option: Credentials.create.signCount`] sets the initial signature counter of a virtual credential. [`method: Credentials.create`] and [`method: Credentials.get`] return the current `signCount`, and it is saved and restored together with the credentials in the storage state.
+- New [`method: APIRequestContext.addCookies`], [`method: APIRequestContext.cookies`] and [`method: APIRequestContext.clearCookies`] manage cookies of a request context, mirroring the [BrowserContext] methods:
+
+  ```java
+  request.addCookies(Arrays.asList(
+      new Cookie("session-id", "42").setUrl("https://example.com")));
+  System.out.println(request.cookies("https://example.com"));
+  request.clearCookies(new APIRequestContext.ClearCookiesOptions().setName("session-id"));
+  ```
+
+### Breaking Changes ⚠️
+
+- Elements inside hidden iframes are considered hidden. Elements inside an iframe that is not visible, for example with `visibility: hidden`, are now considered hidden by actions, [`method: Locator.isVisible`] and [`method: LocatorAssertions.toBeVisible`].
+
+### Browser Versions
+
+- Chromium 156.0.8078.4
+- Mozilla Firefox 157.0
+- WebKit 27.2
+
+This version was also tested against the following stable channels:
+
+- Google Chrome 155
+- Microsoft Edge 155
+
+
 ## Version 1.63
 
 ### 🪟 Locate across frames

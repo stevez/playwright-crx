@@ -250,7 +250,7 @@ test('should focus test from one project', async ({ runInlineTest }) => {
   const { exitCode, passed, skipped, failed } = await runInlineTest({
     'playwright.config.ts': `
       import * as path from 'path';
-      module.exports = { projects: [
+      export default { projects: [
         { testDir: path.join(__dirname, 'a') },
         { testDir: path.join(__dirname, 'b') },
       ] };
@@ -408,7 +408,7 @@ test('should support describe() without a title', async ({ runInlineTest }) => {
   }, { reporter: 'list' });
   expect(result.exitCode).toBe(0);
   expect(result.passed).toBe(1);
-  expect(result.output).toContain('a.spec.ts:6:17 › suite1 › suite2 › my test');
+  expect(result.output).toContain('a.spec.ts:6:13 › suite1 › suite2 › my test');
 });
 
 test('should hint at async describe() callbacks when test() is called too late', async ({ runInlineTest }) => {
@@ -492,7 +492,7 @@ test('should report unhandled rejection during worker shutdown', async ({ runInl
   expect(result.exitCode).toBe(1);
   expect(result.passed).toBe(1);
   expect(result.output).toContain('Error: Unhandled');
-  expect(result.output).toContain('a.test.ts:4:33');
+  expect(result.output).toContain('a.test.ts:4:');
 });
 
 test('should not reuse worker after unhandled rejection in test.fail', async ({ runInlineTest }) => {

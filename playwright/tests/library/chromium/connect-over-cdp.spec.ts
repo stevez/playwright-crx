@@ -25,24 +25,53 @@ import { suppressCertificateWarning } from '../../config/utils';
 const { WebSocketTransport, nullProgress } = coreServer;
 type Frame = coreServer.Frame;
 
-test('should connect to an existing cdp session', async ({ browserType, mode }, testInfo) => {
-  const port = 9339 + testInfo.workerIndex;
-  const browserServer = await browserType.launch({
-    args: ['--remote-debugging-port=' + port]
+test('CD-001 should connect to an existing cdp session', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43880' },
+}, async ({ browserType, createUserDataDir, childProcess }, testInfo) => {
+  const configHome = await createUserDataDir();
+  const userDataDir = path.join(configHome, 'google-chrome');
+  const browserServer = await browserType.launchPersistentContext(userDataDir, {
+    args: ['--remote-debugging-port=0']
   });
   try {
+    const [port] = (await fs.promises.readFile(path.join(userDataDir, 'DevToolsActivePort'), 'utf-8')).split('\n');
     const cdpBrowser = await browserType.connectOverCDP({
       endpointURL: `http://127.0.0.1:${port}/`,
     });
     const contexts = cdpBrowser.contexts();
     expect(contexts.length).toBe(1);
     await cdpBrowser.close();
+
+    if (process.platform === 'linux') {
+      for (const env of [
+        { CHROME_USER_DATA_DIR: '', CHROME_CONFIG_HOME: '', XDG_CONFIG_HOME: configHome },
+        { CHROME_USER_DATA_DIR: '', CHROME_CONFIG_HOME: configHome, XDG_CONFIG_HOME: testInfo.outputPath('unused-config') },
+        { CHROME_USER_DATA_DIR: userDataDir, CHROME_CONFIG_HOME: testInfo.outputPath('unused-config'), XDG_CONFIG_HOME: testInfo.outputPath('unused-xdg-config') },
+      ]) {
+        const child = childProcess({
+          command: [process.execPath, '-e', `
+            const { chromium } = require(${JSON.stringify(require.resolve('playwright-core'))});
+            (async () => {
+              const browser = await chromium.connectOverCDP('chrome');
+              console.log('contexts: ' + browser.contexts().length);
+              await browser.close();
+            })().catch(error => {
+              console.error(error);
+              process.exitCode = 1;
+            });
+          `],
+          env,
+        });
+        await child.cleanExit();
+        expect(child.stdout).toContain('contexts: 1');
+      }
+    }
   } finally {
     await browserServer.close();
   }
 });
 
-test('should connect when an existing page has no renderer', {
+test('CD-002 should connect when an existing page has no renderer', {
   annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41714' },
 }, async ({ browserType, server }, testInfo) => {
   const port = 9339 + testInfo.workerIndex;
@@ -77,7 +106,7 @@ test('should connect when an existing page has no renderer', {
   }
 });
 
-test('should connect when the opener of an existing page has no renderer', {
+test('CD-003 should connect when the opener of an existing page has no renderer', {
   annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41714' },
 }, async ({ browserType, server }, testInfo) => {
   const port = 9339 + testInfo.workerIndex;
@@ -114,7 +143,7 @@ test('should connect when the opener of an existing page has no renderer', {
   }
 });
 
-test('should connect when an existing page has been discarded', {
+test('CD-004 should connect when an existing page has been discarded', {
   annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41714' },
 }, async ({ browserType, createUserDataDir, server }, testInfo) => {
   const port = 9339 + testInfo.workerIndex;
@@ -160,7 +189,7 @@ test('should connect when an existing page has been discarded', {
   }
 });
 
-test('should cleanup artifacts dir after connectOverCDP disconnects due to ws close', async ({ browserType, toImpl, mode }, testInfo) => {
+test('CD-005 should cleanup artifacts dir after connectOverCDP disconnects due to ws close', async ({ browserType, toImpl, mode }, testInfo) => {
   const port = 9339 + testInfo.workerIndex;
   const browserServer = await browserType.launch({
     args: ['--remote-debugging-port=' + port]
@@ -179,7 +208,27 @@ test('should cleanup artifacts dir after connectOverCDP disconnects due to ws cl
   expect(exists2).toBe(false);
 });
 
-test('should write traces to provided artifactsDir on connectOverCDP', async ({ browserType, toImpl, trace }, testInfo) => {
+test('CD-006 should reject pending CDPSession calls when the browser is killed', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43200' },
+}, async ({ browserType, mode }, testInfo) => {
+  test.skip(mode !== 'default', 'launchServer is only available in-process');
+  const port = 9339 + testInfo.workerIndex;
+  const browserServer = await browserType.launchServer({
+    args: ['--remote-debugging-port=' + port]
+  });
+  const cdpBrowser = await browserType.connectOverCDP({
+    endpointURL: `http://127.0.0.1:${port}/`,
+  });
+  const context = cdpBrowser.contexts()[0];
+  const page = await context.newPage();
+  const session = await context.newCDPSession(page);
+  const sendPromise = session.send('Runtime.evaluate', { expression: 'new Promise(() => {})', awaitPromise: true }).catch(e => e);
+  await browserServer.kill();
+  const error = await sendPromise;
+  expect(error.message).toContain('Target page, context or browser has been closed');
+});
+
+test('CD-007 should write traces to provided artifactsDir on connectOverCDP', async ({ browserType, toImpl, trace }, testInfo) => {
   test.skip(trace === 'on');
 
   const port = 9339 + testInfo.workerIndex;
@@ -216,7 +265,7 @@ test('should write traces to provided artifactsDir on connectOverCDP', async ({ 
   }
 });
 
-test('should connectOverCDP and manage downloads in default context', async ({ browserType, mode, server }, testInfo) => {
+test('CD-008 should connectOverCDP and manage downloads in default context', async ({ browserType, mode, server }, testInfo) => {
   server.setRoute('/downloadWithFilename', (req, res) => {
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', 'attachment; filename=file.txt');
@@ -252,7 +301,7 @@ test('should connectOverCDP and manage downloads in default context', async ({ b
   }
 });
 
-test('should connect to an existing cdp session twice', async ({ browserType, mode, server }, testInfo) => {
+test('CD-009 should connect to an existing cdp session twice', async ({ browserType, mode, server }, testInfo) => {
   const port = 9339 + testInfo.workerIndex;
   const browserServer = await browserType.launch({
     args: ['--remote-debugging-port=' + port]
@@ -289,7 +338,7 @@ test('should connect to an existing cdp session twice', async ({ browserType, mo
   }
 });
 
-test('should connect to existing page with iframe and navigate', async ({ browserType, mode, server }, testInfo) => {
+test('CD-010 should connect to existing page with iframe and navigate', async ({ browserType, mode, server }, testInfo) => {
   const port = 9339 + testInfo.workerIndex;
   const browserServer = await browserType.launch({
     args: ['--remote-debugging-port=' + port]
@@ -310,7 +359,7 @@ test('should connect to existing page with iframe and navigate', async ({ browse
   }
 });
 
-test('should connect to existing service workers', async ({ browserType, mode, server }, testInfo) => {
+test('CD-011 should connect to existing service workers', async ({ browserType, mode, server }, testInfo) => {
   const port = 9339 + testInfo.workerIndex;
   const browserServer = await browserType.launch({
     args: ['--remote-debugging-port=' + port]
@@ -339,7 +388,7 @@ test('should connect to existing service workers', async ({ browserType, mode, s
   }
 });
 
-test('should connect over a ws endpoint', async ({ browserType, server }, testInfo) => {
+test('CD-012 should connect over a ws endpoint', async ({ browserType, server }, testInfo) => {
   const port = 9339 + testInfo.workerIndex;
   const browserServer = await browserType.launch({
     args: ['--remote-debugging-port=' + port]
@@ -371,7 +420,7 @@ test('should connect over a ws endpoint', async ({ browserType, server }, testIn
   }
 });
 
-test('should send extra headers with connect request', async ({ browserType, server }, testInfo) => {
+test('CD-013 should send extra headers with connect request', async ({ browserType, server }, testInfo) => {
   {
     const [request] = await Promise.all([
       server.waitForWebSocketConnectionRequest(),
@@ -404,7 +453,7 @@ test('should send extra headers with connect request', async ({ browserType, ser
   }
 });
 
-test('should keep URL parameters when adding json/version', {
+test('CD-014 should keep URL parameters when adding json/version', {
   annotation: {
     type: 'issue',
     description: 'https://github.com/microsoft/playwright/issues/36097'
@@ -416,7 +465,7 @@ test('should keep URL parameters when adding json/version', {
   ]);
 });
 
-test('should append /json/version with a slash if there isnt one', {
+test('CD-015 should append /json/version with a slash if there isnt one', {
   annotation: {
     type: 'issue',
     description: 'https://github.com/microsoft/playwright/issues/36378'
@@ -428,7 +477,7 @@ test('should append /json/version with a slash if there isnt one', {
   ]);
 });
 
-test('should send default User-Agent header with connect request', async ({ browserType, server }, testInfo) => {
+test('CD-016 should send default User-Agent header with connect request', async ({ browserType, server }, testInfo) => {
   {
     const [request] = await Promise.all([
       server.waitForWebSocketConnectionRequest(),
@@ -445,7 +494,7 @@ test('should send default User-Agent header with connect request', async ({ brow
   }
 });
 
-test('should report all pages in an existing browser', async ({ browserType }, testInfo) => {
+test('CD-017 should report all pages in an existing browser', async ({ browserType }, testInfo) => {
   const port = 9339 + testInfo.workerIndex;
   const browserServer = await browserType.launch({
     args: ['--remote-debugging-port=' + port]
@@ -471,7 +520,7 @@ test('should report all pages in an existing browser', async ({ browserType }, t
   }
 });
 
-test('should connect via https', async ({ browserType, httpsServer, mode }, testInfo) => {
+test('CD-018 should connect via https', async ({ browserType, httpsServer, mode }, testInfo) => {
   test.skip(mode !== 'default'); // Out of process transport does not allow us to set env vars dynamically.
 
   const port = 9339 + testInfo.workerIndex;
@@ -506,7 +555,7 @@ test('should connect via https', async ({ browserType, httpsServer, mode }, test
   }
 });
 
-test('should return valid browser from context.browser()', async ({ browserType }, testInfo) => {
+test('CD-019 should return valid browser from context.browser()', async ({ browserType }, testInfo) => {
   const port = 9339 + testInfo.workerIndex;
   const browserServer = await browserType.launch({
     args: ['--remote-debugging-port=' + port]
@@ -528,7 +577,7 @@ test('should return valid browser from context.browser()', async ({ browserType 
   }
 });
 
-test('should report an expected error when the endpointURL returns a non-expected status code', async ({ browserType, server }) => {
+test('CD-020 should report an expected error when the endpointURL returns a non-expected status code', async ({ browserType, server }) => {
   server.setRoute('/json/version/', (req, resp) => {
     resp.statusCode = 404;
     resp.end(JSON.stringify({
@@ -540,7 +589,7 @@ test('should report an expected error when the endpointURL returns a non-expecte
   })).rejects.toThrowError(`browserType.connectOverCDP: Unexpected status 404 when connecting to ${server.PREFIX}/json/version/`);
 });
 
-test('should report an expected error when the endpoint URL JSON webSocketDebuggerUrl is undefined', async ({ browserType, server }) => {
+test('CD-021 should report an expected error when the endpoint URL JSON webSocketDebuggerUrl is undefined', async ({ browserType, server }) => {
   server.setRoute('/json/version/', (req, resp) => {
     resp.end(JSON.stringify({
       webSocketDebuggerUrl: undefined,
@@ -551,7 +600,7 @@ test('should report an expected error when the endpoint URL JSON webSocketDebugg
   })).rejects.toThrowError('browserType.connectOverCDP: Invalid URL');
 });
 
-test('should connect to an existing cdp session when passed as a first argument', async ({ browserType }, testInfo) => {
+test('CD-022 should connect to an existing cdp session when passed as a first argument', async ({ browserType }, testInfo) => {
   const port = 9339 + testInfo.workerIndex;
   const browserServer = await browserType.launch({
     args: ['--remote-debugging-port=' + port]
@@ -566,7 +615,7 @@ test('should connect to an existing cdp session when passed as a first argument'
   }
 });
 
-test('should use proxy with connectOverCDP', async ({ browserType, server }, testInfo) => {
+test('CD-023 should use proxy with connectOverCDP', async ({ browserType, server }, testInfo) => {
   server.setRoute('/target.html', async (req, res) => {
     res.end('<html><title>Served by the proxy</title></html>');
   });
@@ -580,7 +629,7 @@ test('should use proxy with connectOverCDP', async ({ browserType, server }, tes
       proxy: { server: `localhost:${server.PORT}` }
     });
     const page = await context.newPage();
-    await page.goto('http://non-existent.com/target.html');
+    await page.goto('http://non-existent.test/target.html');
     expect(await page.title()).toBe('Served by the proxy');
     await cdpBrowser.close();
   } finally {
@@ -588,7 +637,7 @@ test('should use proxy with connectOverCDP', async ({ browserType, server }, tes
   }
 });
 
-test('should use env proxy with connectOverCDP discovery request', async ({ browserType, server, proxyServer, mode }) => {
+test('CD-024 should use env proxy with connectOverCDP discovery request', async ({ browserType, server, proxyServer, mode }) => {
   test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/40394' });
   test.skip(mode !== 'default'); // Out of process transport does not allow us to set env vars dynamically.
   proxyServer.forwardTo(server.PORT);
@@ -607,7 +656,7 @@ test('should use env proxy with connectOverCDP discovery request', async ({ brow
   }
 });
 
-test('should send target Host header when using env HTTP proxy with connectOverCDP', async ({ browserType, server, proxyServer, mode }) => {
+test('CD-025 should send target Host header when using env HTTP proxy with connectOverCDP', async ({ browserType, server, proxyServer, mode }) => {
   test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/40811' });
   test.skip(mode !== 'default'); // Out of process transport does not allow us to set env vars dynamically.
   proxyServer.forwardTo(server.PORT);
@@ -626,7 +675,7 @@ test('should send target Host header when using env HTTP proxy with connectOverC
   }
 });
 
-test('should be able to connect via localhost', async ({ browserType }, testInfo) => {
+test('CD-026 should be able to connect via localhost', async ({ browserType }, testInfo) => {
   const port = 9339 + testInfo.workerIndex;
   const browserServer = await browserType.launch({
     args: ['--remote-debugging-port=' + port]
@@ -641,7 +690,7 @@ test('should be able to connect via localhost', async ({ browserType }, testInfo
   }
 });
 
-test('emulate media should not be affected by second connectOverCDP with noDefaults', async ({ browserType }, testInfo) => {
+test('CD-027 emulate media should not be affected by second connectOverCDP with noDefaults', async ({ browserType }, testInfo) => {
   test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/24109' });
   const port = 9339 + testInfo.workerIndex;
   const browserServer = await browserType.launch({
@@ -668,7 +717,7 @@ test('emulate media should not be affected by second connectOverCDP with noDefau
   }
 });
 
-test('should allow tracing over cdp session', async ({ browserType, trace }, testInfo) => {
+test('CD-028 should allow tracing over cdp session', async ({ browserType, trace }, testInfo) => {
   test.skip(trace === 'on');
 
   const port = 9339 + testInfo.workerIndex;
@@ -692,7 +741,7 @@ test('should allow tracing over cdp session', async ({ browserType, trace }, tes
   }
 });
 
-test('setInputFiles should preserve lastModified timestamp', async ({ browserType, asset }) => {
+test('CD-029 setInputFiles should preserve lastModified timestamp', async ({ browserType, asset }) => {
   test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/27452' });
 
   const port = 9339 + test.info().workerIndex;
@@ -722,7 +771,7 @@ test('setInputFiles should preserve lastModified timestamp', async ({ browserTyp
   }
 });
 
-test('setInputFiles should use local path when isLocal is set', async ({ browserType, toImpl }) => {
+test('CD-030 setInputFiles should use local path when isLocal is set', async ({ browserType, toImpl }) => {
   const port = 9339 + test.info().workerIndex;
   const browserServer = await browserType.launch({
     args: ['--remote-debugging-port=' + port]
@@ -738,7 +787,7 @@ test('setInputFiles should use local path when isLocal is set', async ({ browser
   }
 });
 
-test('should print custom ws close error', async ({ browserType, server }) => {
+test('CD-031 should print custom ws close error', async ({ browserType, server }) => {
   server.onceWebSocketConnection((ws, request) => {
     ws.on('message', message => {
       ws.close(4123, 'Oh my!');
@@ -748,7 +797,7 @@ test('should print custom ws close error', async ({ browserType, server }) => {
   expect(error.message).toContain(`Browser logs:\n\nOh my!\n`);
 });
 
-test('should not reuse utility worlds between two clients', async ({ browserType, toImpl }, testInfo) => {
+test('CD-032 should not reuse utility worlds between two clients', async ({ browserType, toImpl }, testInfo) => {
   const port = 9339 + testInfo.workerIndex;
   const browserServer = await browserType.launch({
     args: ['--remote-debugging-port=' + port]
@@ -776,7 +825,7 @@ test('should not reuse utility worlds between two clients', async ({ browserType
   }
 });
 
-test('should get title and URL of existing page', async ({ browserType, mode, server }, testInfo) => {
+test('CD-033 should get title and URL of existing page', async ({ browserType, mode, server }, testInfo) => {
   const port = 9339 + testInfo.workerIndex;
   const browserServer = await browserType.launch({
     args: ['--remote-debugging-port=' + port]
@@ -813,7 +862,9 @@ test('should get title and URL of existing page', async ({ browserType, mode, se
   }
 });
 
-test('should skip default overrides with noDefaults', async ({ browserType, mode, server }, testInfo) => {
+test('CD-034 should skip default overrides with noDefaults', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43715' },
+}, async ({ browserType, mode, server }, testInfo) => {
   test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/40158' });
   const port = 9339 + testInfo.workerIndex;
   const browserServer = await browserType.launch({
@@ -846,7 +897,7 @@ test('should skip default overrides with noDefaults', async ({ browserType, mode
   }
 });
 
-test('noDefaults should not affect new contexts', async ({ browserType, mode, server }, testInfo) => {
+test('CD-035 noDefaults should not affect new contexts', async ({ browserType, mode, server }, testInfo) => {
   test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/40158' });
   const port = 9339 + testInfo.workerIndex;
   const browserServer = await browserType.launch({
@@ -871,7 +922,7 @@ test('noDefaults should not affect new contexts', async ({ browserType, mode, se
   }
 });
 
-test('should connect over CDP using a ConnectionTransport', async ({ browserType, mode, server }, testInfo) => {
+test('CD-036 should connect over CDP using a ConnectionTransport', async ({ browserType, mode, server }, testInfo) => {
   test.skip(mode !== 'default', 'Passing a transport to connectOverCDP is only available in-process');
 
   const port = 9339 + testInfo.workerIndex;
@@ -897,5 +948,45 @@ test('should connect over CDP using a ConnectionTransport', async ({ browserType
     await cdpBrowser.close();
   } finally {
     await browserServer.close();
+  }
+});
+
+test.fixme('CD-053 should connect when another client inspects a terminated shared worker', {
+  annotation: [
+    { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43638' },
+    { type: 'issue', description: 'https://issues.chromium.org/issues/578393908' },
+  ],
+}, async ({ browserType, server }, testInfo) => {
+  const port = 9339 + testInfo.workerIndex;
+  const browser = await browserType.launch({ args: ['--remote-debugging-port=' + port] });
+  try {
+    // Another client inspects the shared worker.
+    const page = await browser.newPage();
+    const inspector = await browser.newBrowserCDPSession();
+    const workerCreated = new Promise<string>(resolve => inspector.on('Target.targetCreated', event => {
+      if (event.targetInfo.type === 'shared_worker')
+        resolve(event.targetInfo.targetId);
+    }));
+    await inspector.send('Target.setDiscoverTargets', { discover: true });
+    await page.goto(server.PREFIX + '/shared-worker/shared-worker.html');
+    expect(await page.evaluate('window.sharedWorkerResponsePromise')).toBe('echo:hello');
+    const workerTargetId = await workerCreated;
+    await inspector.send('Target.attachToTarget', { targetId: workerTargetId, flatten: true });
+
+    // The last client of the shared worker goes away, so the worker is terminated.
+    // The inspector stays attached, so the worker target lingers without a browser context.
+    await page.close();
+    await expect.poll(async () => {
+      const { targetInfos } = await inspector.send('Target.getTargets');
+      return targetInfos.some(info => info.targetId === workerTargetId);
+    }).toBe(false);
+
+    // A new client auto-attaches to the lingering worker target.
+    const cdpBrowser = await browserType.connectOverCDP(`http://127.0.0.1:${port}/`);
+    const page2 = await cdpBrowser.contexts()[0].newPage();
+    expect(await page2.evaluate('1 + 1')).toBe(2);
+    await cdpBrowser.close();
+  } finally {
+    await browser.close();
   }
 });

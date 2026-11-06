@@ -19,14 +19,19 @@ import os from 'os';
 import path from 'path';
 
 import { TestResultsDb, fileSize, formatBytes } from './db.ts';
+import { cmdDownload } from './download.ts';
 import { GitHubClient, chunk, extractSingle } from './github.ts';
 
 const PARQUET_ARTIFACT_PREFIX = 'parquet-report-';
 
+// Completed runs are listed again only if they were updated after the previous
+// ingest. This margin covers the time between that ingest listing the runs and
+// stamping its rows, plus clock skew between GitHub and the runner.
+const RESCAN_MARGIN_MS = 6 * 60 * 60 * 1000;
+
 export type UpdateOptions = {
   lookbackDays: number;
   concurrency: number;
-  stopAfterSeen: number;
 };
 
 // Ingest the parquet artifacts that aren't in the database yet. Downloads run
@@ -34,6 +39,9 @@ export type UpdateOptions = {
 // then ingested serially on the single connection and its temp files removed,
 // so disk usage stays bounded to one batch.
 export async function cmdUpdate(dbPath: string, token: string, options: UpdateOptions): Promise<void> {
+  if (!fs.existsSync(dbPath))
+    await cmdDownload(dbPath, token);
+
   const github = new GitHubClient(token);
   const db = await TestResultsDb.open(dbPath);
   try {
@@ -41,12 +49,16 @@ export async function cmdUpdate(dbPath: string, token: string, options: UpdateOp
     console.log(`Test results database`);
     console.log(`  ${await db.rowCount()} rows from ${ingested.size} artifacts`);
 
-    const todo = await github.listArtifacts(PARQUET_ARTIFACT_PREFIX, {
+    const lastIngestedAt = await db.lastIngestedAt();
+    const scan = await github.listArtifacts(PARQUET_ARTIFACT_PREFIX, {
       ingested,
       lookbackDays: options.lookbackDays,
-      stopAfterSeen: options.stopAfterSeen,
+      rescanSince: lastIngestedAt - RESCAN_MARGIN_MS,
+      concurrency: options.concurrency,
     });
+    const todo = scan.artifacts;
     console.log(`\nScanning for new artifacts (last ${options.lookbackDays} days)`);
+    console.log(`  ${scan.runCount} runs in window, ${scan.listedRunCount} listed`);
     console.log(`  ${todo.length} new artifacts to import`);
 
     let imported = 0;

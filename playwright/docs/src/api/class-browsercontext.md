@@ -456,7 +456,7 @@ Script to be evaluated in all pages in the browser context.
 
 Optional argument to pass to [`param: script`] (only supported when passing a function).
 
-### param: BrowserContext.addInitScript.path
+### option: BrowserContext.addInitScript.path
 * since: v1.8
 * langs: python
 - `path` ?<[path]>
@@ -601,8 +601,7 @@ The default browser context cannot be closed.
 
 ## async method: BrowserContext.cookies
 * since: v1.8
-- returns: <[Array]<[Object]>>
-  * alias: Cookie
+- returns: "Cookie" <[Array]<[Object]>>
   * alias-csharp: BrowserContextCookiesResult
   - `name` <[string]>
   - `value` <[string]>
@@ -611,7 +610,7 @@ The default browser context cannot be closed.
   - `expires` <[float]> Unix time in seconds.
   - `httpOnly` <[boolean]>
   - `secure` <[boolean]>
-  - `sameSite` <[SameSiteAttribute]<"Strict"|"Lax"|"None">>
+  - `sameSite` "SameSiteAttribute" <"Strict"|"Lax"|"None">
   - `partitionKey` ?<[string]>
 
 If no URLs are specified, this method returns all cookies. If URLs are specified, only cookies that affect those URLs
@@ -760,8 +759,7 @@ Name of the function on the window object.
 
 ### param: BrowserContext.exposeBinding.callback
 * since: v1.8
-- `callback` <[function]>
-  * alias: BindingCallback
+- `callback` "BindingCallback" <[function]>
 
 Callback function that will be called in the Playwright's context.
 
@@ -952,8 +950,7 @@ Name of the function on the window object.
 
 ### param: BrowserContext.exposeFunction.callback
 * since: v1.8
-- `callback` <[function]>
-  * alias: FunctionCallback
+- `callback` "FunctionCallback" <[function]>
 
 Callback function that will be called in the Playwright's context.
 
@@ -1229,8 +1226,15 @@ A glob pattern, regex pattern, or predicate that receives a [URL] to match durin
 
 ### param: BrowserContext.route.handler
 * since: v1.8
-* langs: js, python
+* langs: js
 - `handler` <[function]\([Route], [Request]\): [Promise<any>|any]>
+
+handler function to route the request.
+
+### param: BrowserContext.route.handler
+* since: v1.8
+* langs: python
+- `handler` <[function]\([Route]\)|[function]\([Route], [Request]\)>
 
 handler function to route the request.
 
@@ -1262,7 +1266,7 @@ Path to a [HAR](http://www.softwareishard.com/blog/har-12-spec) file with prerec
 
 ### option: BrowserContext.routeFromHAR.notFound
 * since: v1.23
-- `notFound` ?<[HarNotFound]<"abort"|"fallback">>
+- `notFound` "HarNotFound" ?<"abort"|"fallback">
 * If set to 'abort' any request not found in the HAR file will be aborted.
 * If set to 'fallback' falls through to the next route handler in the handler chain.
 
@@ -1282,13 +1286,13 @@ A glob pattern, regular expression or predicate to match the request URL. Only r
 
 ### option: BrowserContext.routeFromHAR.updateMode
 * since: v1.32
-- `updateMode` <[HarMode]<"full"|"minimal">>
+- `updateMode` "HarMode" <"full"|"minimal">
 
 When set to `minimal`, only record information necessary for routing from HAR. This omits sizes, timing, page, cookies, security and other types of HAR information that are not used when replaying from HAR. Defaults to `minimal`.
 
 ### option: BrowserContext.routeFromHAR.updateContent
 * since: v1.32
-- `updateContent` <[RouteFromHarUpdateContentPolicy]<"embed"|"attach">>
+- `updateContent` "RouteFromHarUpdateContentPolicy" <"embed"|"attach">
 
 Optional setting to control resource content management. If `attach` is specified, resources are persisted as separate files or entries in the ZIP archive. If `embed` is specified, content is stored inline the HAR file.
 
@@ -1306,61 +1310,61 @@ Below is an example of a simple handler that blocks some websocket messages.
 See [WebSocketRoute] for more details and examples.
 
 ```js
-await context.routeWebSocket('/ws', async ws => {
-  ws.routeSend(message => {
+await context.routeWebSocket('/ws', ws => {
+  const server = ws.connectToServer();
+  ws.onMessage(message => {
     if (message === 'to-be-blocked')
       return;
-    ws.send(message);
+    server.send(message);
   });
-  await ws.connect();
 });
 ```
 
 ```java
 context.routeWebSocket("/ws", ws -> {
-  ws.routeSend(message -> {
-    if ("to-be-blocked".equals(message))
+  WebSocketRoute server = ws.connectToServer();
+  ws.onMessage(frame -> {
+    if ("to-be-blocked".equals(frame.text()))
       return;
-    ws.send(message);
+    server.send(frame.text());
   });
-  ws.connect();
 });
 ```
 
 ```python async
-def message_handler(ws: WebSocketRoute, message: Union[str, bytes]):
+def message_handler(server: WebSocketRoute, message: Union[str, bytes]):
   if message == "to-be-blocked":
     return
-  ws.send(message)
+  server.send(message)
 
-async def handler(ws: WebSocketRoute):
-  ws.route_send(lambda message: message_handler(ws, message))
-  await ws.connect()
+def handler(ws: WebSocketRoute):
+  server = ws.connect_to_server()
+  ws.on_message(lambda message: message_handler(server, message))
 
 await context.route_web_socket("/ws", handler)
 ```
 
 ```python sync
-def message_handler(ws: WebSocketRoute, message: Union[str, bytes]):
+def message_handler(server: WebSocketRoute, message: Union[str, bytes]):
   if message == "to-be-blocked":
     return
-  ws.send(message)
+  server.send(message)
 
 def handler(ws: WebSocketRoute):
-  ws.route_send(lambda message: message_handler(ws, message))
-  ws.connect()
+  server = ws.connect_to_server()
+  ws.on_message(lambda message: message_handler(server, message))
 
 context.route_web_socket("/ws", handler)
 ```
 
 ```csharp
-await context.RouteWebSocketAsync("/ws", async ws => {
-  ws.RouteSend(message => {
-    if (message == "to-be-blocked")
+await context.RouteWebSocketAsync("/ws", ws => {
+  var server = ws.ConnectToServer();
+  ws.OnMessage(frame => {
+    if (frame.Text == "to-be-blocked")
       return;
-    ws.Send(message);
+    server.Send(frame.Text);
   });
-  await ws.ConnectAsync();
 });
 ```
 
@@ -1489,8 +1493,7 @@ its geolocation.
 
 ### param: BrowserContext.setGeolocation.geolocation
 * since: v1.8
-- `geolocation` <[null]|[Object]>
-  * alias: Geolocation
+- `geolocation` "Geolocation" <[null]|[Object]>
   - `latitude` <[float]> Latitude between -90 and 90.
   - `longitude` <[float]> Longitude between -180 and 180.
   - `accuracy` ?<[float]> Non-negative accuracy value. Defaults to `0`.
@@ -1529,8 +1532,8 @@ Offline emulation only affects requests that go through the browser's regular ne
 
 ## async method: BrowserContext.storageState
 * since: v1.8
-- returns: <[Object]>
-  - `cookies` <[Array]<[Object]>>
+- returns: "StorageState" <[Object]>
+  - `cookies` "StorageStateCookie" <[Array]<[Object]>>
     - `name` <[string]>
     - `value` <[string]>
     - `domain` <[string]>
@@ -1538,10 +1541,10 @@ Offline emulation only affects requests that go through the browser's regular ne
     - `expires` <[float]> Unix time in seconds.
     - `httpOnly` <[boolean]>
     - `secure` <[boolean]>
-    - `sameSite` <[SameSiteAttribute]<"Strict"|"Lax"|"None">>
-  - `origins` <[Array]<[Object]>>
+    - `sameSite` "SameSiteAttribute" <"Strict"|"Lax"|"None">
+  - `origins` "OriginState" <[Array]<[Object]>>
     - `origin` <[string]>
-    - `localStorage` <[Array]<[Object]>>
+    - `localStorage` "LocalStorageEntry" <[Array]<[Object]>>
       - `name` <[string]>
       - `value` <[string]>
 
@@ -1574,7 +1577,7 @@ OPFS is currently not supported in ephemeral WebKit contexts.
 :::
 
 ### option: BrowserContext.storageState.credentials
-* since: v1.61
+* since: v1.62
 - `credentials` ?<boolean>
 
 Set to `true` to include the context's virtual WebAuthn [`property: BrowserContext.credentials`] (passkeys) in the storage
@@ -1660,8 +1663,15 @@ A glob pattern, regex pattern, or predicate receiving [URL] used to register a r
 
 ### param: BrowserContext.unroute.handler
 * since: v1.8
-* langs: js, python
+* langs: js
 - `handler` ?<[function]\([Route], [Request]\): [Promise<any>|any]>
+
+Optional handler function used to register a routing with [`method: BrowserContext.route`].
+
+### param: BrowserContext.unroute.handler
+* since: v1.8
+* langs: python
+- `handler` ?<[function]\([Route]\)|[function]\([Route], [Request]\)>
 
 Optional handler function used to register a routing with [`method: BrowserContext.route`].
 
