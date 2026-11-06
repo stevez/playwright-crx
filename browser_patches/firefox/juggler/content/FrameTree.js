@@ -32,6 +32,7 @@ export class FrameTree {
     this._frameIdToFrame = new Map();
     this._pageReady = false;
     this._javaScriptDisabled = false;
+    this._isolatedWorldExtendedPrincipal = false;
     for (const browsingContext of helper.collectAllBrowsingContexts(rootBrowsingContext))
       this._createFrame(browsingContext);
     this._mainFrame = this.frameForBrowsingContext(rootBrowsingContext);
@@ -57,7 +58,8 @@ export class FrameTree {
     const flags = Ci.nsIWebProgress.NOTIFY_STATE_DOCUMENT |
                   Ci.nsIWebProgress.NOTIFY_LOCATION;
     this._eventListeners = [
-      helper.addObserver((docShell, topic, loadIdentifier) => {
+      helper.addObserver((subject, topic, loadIdentifier) => {
+        const docShell = subject.QueryInterface(Ci.nsIDocShell);
         const frame = this.frameForDocShell(docShell);
         if (!frame)
           return;
@@ -65,7 +67,6 @@ export class FrameTree {
         this.emit(FrameTree.Events.NavigationStarted, frame);
       }, 'juggler-navigation-started-renderer'),
       helper.addObserver(this._onDOMWindowCreated.bind(this), 'content-document-global-created'),
-      helper.addObserver(this._onDOMWindowCreated.bind(this), 'juggler-dom-window-reused'),
       helper.addObserver((browsingContext, topic, why) => {
         this._onBrowsingContextAttached(browsingContext);
       }, 'browsing-context-attached'),
@@ -132,6 +133,10 @@ export class FrameTree {
     this._javaScriptDisabled = javaScriptDisabled;
     for (const frame of this.frames())
       frame._updateJavaScriptDisabled();
+  }
+
+  setIsolatedWorldExtendedPrincipal(extendedPrincipal) {
+    this._isolatedWorldExtendedPrincipal = extendedPrincipal;
   }
 
   _onWorkerCreated(workerDebugger) {
@@ -459,7 +464,7 @@ class Frame {
         // We don't use this event.
       },
 
-      webSocketClosed: (webSocketSerialID, wasClean, code, reason) => {
+      webSocketClosed: (webSocketSerialID, httpChannelId, wasClean, code, reason) => {
         this._webSocketInfos.delete(webSocketSerialID);
         let error = '';
         if (!wasClean) {
@@ -476,7 +481,7 @@ class Frame {
         });
       },
 
-      frameReceived: (webSocketSerialID, frame) => {
+      frameReceived: (webSocketSerialID, httpChannelId, frame) => {
         // Report only text and binary frames.
         if (frame.opCode !== 1 && frame.opCode !== 2)
           return;
@@ -487,7 +492,7 @@ class Frame {
           info.pendingIncomingFrames.push(frame);
       },
 
-      frameSent: (webSocketSerialID, frame) => {
+      frameSent: (webSocketSerialID, httpChannelId, frame) => {
         // Report only text and binary frames.
         if (frame.opCode !== 1 && frame.opCode !== 2)
           return;
@@ -503,7 +508,7 @@ class Frame {
   }
 
   _createIsolatedContext(name) {
-    const principal = [this.domWindow()]; // extended principal
+    const principal = this._frameTree._isolatedWorldExtendedPrincipal ? [this.domWindow()] : this.domWindow();
     const sandbox = Cu.Sandbox(principal, {
       sandboxPrototype: this.domWindow(),
       wantComponents: false,

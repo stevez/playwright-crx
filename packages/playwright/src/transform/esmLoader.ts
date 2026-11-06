@@ -17,9 +17,9 @@
 import fs from 'fs';
 import url from 'url';
 
-import { addToCompilationCache, currentFileDepsCollector, serializeCompilationCache, startCollectingFileDeps, stopCollectingFileDeps } from './compilationCache';
+import { addToCompilationCache, recordResolvedFile, serializeCompilationCache, startCollectingFileDeps, stopCollectingFileDeps } from './compilationCache';
 import { PortTransport } from './portTransport';
-import { resolveHook, setSingleTSConfig, setTransformConfig, shouldTransform, transformHook } from './transform';
+import { hasTransformedExtension, isStyleFile, resolveHook, setSingleTSConfig, setTransformConfig, shouldTransform, transformHook } from './transform';
 import { fileIsModule } from '../util';
 
 // Before each import of the ESM module, a preflight request with the .esm.preflight extension is issued.
@@ -39,8 +39,7 @@ async function resolve(originalSpecifier: string, context: { parentURL?: string 
   const result = await defaultResolve(specifier, context, defaultResolve);
   // Note: we collect dependencies here that will be sent to the main thread
   // (and optionally runner process) after the loading finishes.
-  if (result?.url && result.url.startsWith('file://'))
-    currentFileDepsCollector()?.add(url.fileURLToPath(result.url));
+  recordResolvedFile(result?.url, context.parentURL);
 
   if (originalSpecifier.endsWith(esmPreflightExtension))
     result.url = result.url + esmPreflightExtension;
@@ -73,12 +72,19 @@ async function load(moduleUrl: string, context: { format?: string }, defaultLoad
   const filename = url.fileURLToPath(moduleUrl);
   const isPreflight = moduleUrl.endsWith(esmPreflightExtension);
 
+  if (isStyleFile(filename))
+    return { format: 'commonjs', source: '', shortCircuit: true };
+
   // Bail for node_modules.
   if (!shouldTransform(filename))
     return defaultLoad(moduleUrl, context, defaultLoad);
 
   const originalModuleUrl = isPreflight ? moduleUrl.slice(0, -esmPreflightExtension.length) : moduleUrl;
   const originalFilename = isPreflight ? url.fileURLToPath(originalModuleUrl) : filename;
+
+  // Bail for files that registered loaders should handle.
+  if (!hasTransformedExtension(originalFilename))
+    return defaultLoad(moduleUrl, context, defaultLoad);
 
   const code = fs.readFileSync(originalFilename, 'utf-8');
   const transformed = transformHook(code, originalFilename, originalModuleUrl);
@@ -128,7 +134,7 @@ function createTransport(port: MessagePort) {
     }
 
     if (method === 'stopCollectingFileDeps') {
-      stopCollectingFileDeps(params.file);
+      stopCollectingFileDeps(params.file, params.dependencies);
       return;
     }
   });

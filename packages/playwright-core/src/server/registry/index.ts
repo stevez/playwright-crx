@@ -1005,6 +1005,8 @@ export class Registry {
           `<3 Playwright Team`,
         ].join('\n'), 1));
       } else {
+        if (!releaseLock && (e.code === 'EACCES' || e.code === 'EROFS'))
+          e.message += '\nSet PLAYWRIGHT_BROWSERS_PATH to a writable directory.';
         throw e;
       }
     } finally {
@@ -1037,8 +1039,18 @@ export class Registry {
       process.stderr.write('Skipping host requirements validation logic because `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS` env variable is set.\n');
       return;
     }
-    for (const executable of executables)
-      await this._validateHostRequirementsForExecutableIfNeeded(executable, sdkLanguage);
+    const errors: Error[] = [];
+    for (const executable of executables) {
+      try {
+        await this._validateHostRequirementsForExecutableIfNeeded(executable, sdkLanguage);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length === 1)
+      throw errors[0];
+    if (errors.length)
+      throw new Error(errors.map(error => error.message).join('\n'));
   }
 
   private async _validateHostRequirementsForExecutableIfNeeded(executable: Executable, sdkLanguage: string) {

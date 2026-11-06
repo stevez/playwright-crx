@@ -156,6 +156,25 @@ test('should not produce skipped tests for zero-sized shards', async ({ runInlin
   expect(result.outputLines).toEqual([]);
 });
 
+test('should fail when no tests match across all shards', async ({ runInlineTest }) => {
+  const result = await runInlineTest(tests, { shard: '1/2', grep: 'does-not-match' });
+  expect(result.exitCode).toBe(1);
+  expect(result.output).toContain('No tests found');
+});
+
+test('should fail when no test files match across all shards', async ({ runInlineTest }) => {
+  const result = await runInlineTest(tests, { shard: '1/2' }, {}, { additionalArgs: ['does-not-match'] });
+  expect(result.exitCode).toBe(1);
+  expect(result.output).toContain('No tests found');
+  expect(result.output).toContain('Make sure that arguments are regular expressions matching test files');
+});
+
+test('should pass with no tests across all shards and --pass-with-no-tests', async ({ runInlineTest }) => {
+  const result = await runInlineTest(tests, { 'shard': '1/2', 'grep': 'does-not-match', 'pass-with-no-tests': true });
+  expect(result.exitCode).toBe(0);
+  expect(result.passed).toBe(0);
+});
+
 test('should respect shard=1/2 in config', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     ...tests,
@@ -201,7 +220,7 @@ test('should work with workers=1 and --fully-parallel', async ({ runInlineTest }
 test('should skip dependency when project is sharded out', async ({ runInlineTest }) => {
   const tests = {
     'playwright.config.ts': `
-      module.exports = {
+      export default {
         projects: [
           { name: 'setup1', testMatch: /setup.ts/ },
           { name: 'tests1', dependencies: ['setup1'] },

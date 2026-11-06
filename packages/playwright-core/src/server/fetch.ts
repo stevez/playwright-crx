@@ -28,9 +28,9 @@ import { monotonicTime } from '@isomorphic/time';
 import { createProxyAgent, flattenAggregateError, happyEyeballsOptions } from '@utils/network';
 import { getUserAgent } from './userAgent';
 import { BrowserContext, findMatchingHttpCredentials, verifyClientCertificates } from './browserContext';
-import { Cookie, CookieStore, domainMatches, parseRawCookie } from './cookieStore';
+import { CookieStore, parseCookieNameValue, parseRawCookie, serializeCookieNameValue } from './cookieStore';
 import { MultipartFormData } from './formData';
-import { cookieMatchesClearFilter, filterCookies, rewriteCookies } from './network';
+import { cookieMatchesClearFilter, domainMatches, filterCookies, rewriteCookies } from './network';
 import { TargetClosedError } from './errors';
 import { SdkObject } from './instrumentation';
 import { isAbortError } from './progress';
@@ -213,7 +213,10 @@ export abstract class APIRequestContext extends SdkObject {
 
     const requestUrl = new URL(constructURLBasedOnBaseURL(defaults.baseURL, params.url));
     if (params.encodedParams) {
-      requestUrl.search = params.encodedParams;
+      // Append to the query that the URL already has, like the object form does.
+      const encodedParams = params.encodedParams.replace(/^\?/, '');
+      if (encodedParams)
+        requestUrl.search = requestUrl.search ? requestUrl.search + '&' + encodedParams : encodedParams;
     } else if (params.params) {
       for (const { name, value } of params.params)
         requestUrl.searchParams.append(name, value);
@@ -287,13 +290,9 @@ export abstract class APIRequestContext extends SdkObject {
   private async _updateRequestCookieHeader(progress: Progress, url: URL, headers: HeadersObject) {
     if (getHeader(headers, 'cookie') !== undefined)
       return;
-    const contextCookies = await this.cookies(progress, [url.toString()]);
-    // Browser context returns cookies with domain matching both .example.com and
-    // example.com. Those without leading dot are only sent when domain is strictly
-    // matching example.com, but not for sub.example.com.
-    const cookies = contextCookies.filter(c => new Cookie(c).matches(url));
+    const cookies = await this.cookies(progress, [url.toString()]);
     if (cookies.length) {
-      const valueArray = cookies.map(c => `${c.name}=${c.value}`);
+      const valueArray = cookies.map(serializeCookieNameValue);
       setHeader(headers, 'cookie', valueArray.join('; '));
     }
   }
@@ -333,12 +332,7 @@ export abstract class APIRequestContext extends SdkObject {
     };
     await this._updateRequestCookieHeader(progress, url, options.headers);
 
-    const requestCookies = getHeader(options.headers, 'cookie')?.split(';').map(p => {
-      const indexOfEquals = p.indexOf('=');
-      const name = indexOfEquals !== -1 ? p.substring(0, indexOfEquals).trim() : p.trim();
-      const value = indexOfEquals !== -1 ? p.substring(indexOfEquals + 1).trim() : '';
-      return { name, value };
-    }) || [];
+    const requestCookies = getHeader(options.headers, 'cookie')?.split(';').map(parseCookieNameValue) || [];
     const requestEvent: APIRequestEvent = {
       url,
       method: options.method!,
@@ -603,6 +597,10 @@ export abstract class APIRequestContext extends SdkObject {
           return;
         const protocol = socket.getProtocol() ?? undefined;
         const peerCertificate = socket.getPeerCertificate();
+        // getPeerCertificate() can return null for an already-destroyed socket.
+        // See https://github.com/microsoft/playwright/issues/43728.
+        if (!peerCertificate)
+          return;
         if (!peerCertificate.valid_from) {
           // A resumed TLS session returns an empty getPeerCertificate(), and we use the cached data.
           securityDetails = { ...this._certificateDetails.get(certificateCacheKey), protocol };

@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-import os from 'os';
-
 import { wrapInASCIIBox } from '@utils/ascii';
 import { RecentLogsCollector } from '@utils/debugLogger';
 import { BrowserType, kNoXServerRunningError } from '../browserType';
@@ -44,7 +42,9 @@ export class BidiChromium extends BrowserType {
     const bidiTransport = await bidiOverCdp.connectBidiOverCdp(transport);
     (transport as any)[kBidiOverCdpWrapper] = bidiTransport;
     try {
-      return BidiBrowser.connect(this.attribution.playwright, bidiTransport, options);
+      // Chromium rejects Proxy-Authorization as an unsafe header, so answer the proxy's
+      // auth challenge with the credentials instead, like the CDP-based Chromium does.
+      return BidiBrowser.connect(this.attribution.playwright, bidiTransport, options, { proxyAuthentication: 'credentials' });
     } catch (e) {
       const error = profileInUseError(browserLogsCollector.recentLogs());
       if (error)
@@ -112,11 +112,6 @@ export class BidiChromium extends BrowserType {
     if (args.find(arg => !arg.startsWith('-')))
       throw new Error('Arguments can not specify page to be opened');
     const chromeArguments = [...chromiumSwitches()];
-
-    if (os.platform() === 'darwin') {
-      // See https://issues.chromium.org/issues/40277080
-      chromeArguments.push('--enable-unsafe-swiftshader');
-    }
 
     if (options.headless) {
       chromeArguments.push('--headless');

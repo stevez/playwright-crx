@@ -21,7 +21,7 @@ import fs from 'fs';
 
 import type { BrowserContext } from 'playwright-core';
 
-it('should capture local storage', async ({ contextFactory }) => {
+it('ST-001 should capture local storage', async ({ contextFactory }) => {
   const context = await contextFactory();
   const page1 = await context.newPage();
   await page1.route('**/*', route => {
@@ -51,7 +51,7 @@ it('should capture local storage', async ({ contextFactory }) => {
   }]);
 });
 
-it('should set local storage', async ({ contextFactory, channel }) => {
+it('ST-002 should set local storage', async ({ contextFactory, channel }) => {
   it.fixme(channel?.startsWith('msedge'), 'Network.clearBrowserCache sometimes stalls');
 
   const context = await contextFactory({
@@ -97,7 +97,7 @@ it('should set local storage', async ({ contextFactory, channel }) => {
   await context.close();
 });
 
-it('should report good error if the url is not valid', async ({ contextFactory }) => {
+it('ST-003 should report good error if the url is not valid', async ({ contextFactory }) => {
   const error = await contextFactory({
     storageState: {
       cookies: [],
@@ -116,7 +116,7 @@ it('should report good error if the url is not valid', async ({ contextFactory }
   expect(error.message).toContain('foo');
 });
 
-it('should round-trip through the file', async ({ contextFactory, channel }, testInfo) => {
+it('ST-004 should round-trip through the file', async ({ contextFactory, channel }, testInfo) => {
   it.fixme(channel?.startsWith('msedge'), 'Network.clearBrowserCache sometimes stalls');
 
   const context = await contextFactory();
@@ -200,7 +200,7 @@ it('should round-trip through the file', async ({ contextFactory, channel }, tes
   await context3.close();
 });
 
-it('should round-trip OPFS', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41400' } }, async ({ browserName, contextFactory, page, server }, testInfo) => {
+it('ST-005 should round-trip OPFS', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/41400' } }, async ({ browserName, contextFactory, page, server }, testInfo) => {
   it.skip(browserName === 'webkit', 'OPFS is unavailable in non-persistent WebKit contexts');
 
   await page.goto(server.EMPTY_PAGE);
@@ -278,7 +278,7 @@ it('should round-trip OPFS', { annotation: { type: 'issue', description: 'https:
   await context3.close();
 });
 
-it('should capture cookies', async ({ server, context, page, contextFactory }) => {
+it('ST-006 should capture cookies', async ({ server, context, page, contextFactory }) => {
   server.setRoute('/setcookie.html', (req, res) => {
     res.setHeader('Set-Cookie', ['a=b', 'empty=']);
     res.end();
@@ -316,7 +316,7 @@ it('should capture cookies', async ({ server, context, page, contextFactory }) =
   ]);
 });
 
-it('should not emit events about internal page', async ({ contextFactory }) => {
+it('ST-007 should not emit events about internal page', async ({ contextFactory }) => {
   const context = await contextFactory();
   const page = await context.newPage();
   await page.route('**/*', route => {
@@ -337,7 +337,7 @@ it('should not emit events about internal page', async ({ contextFactory }) => {
   expect(events).toHaveLength(0);
 });
 
-it('should not restore localStorage twice', async ({ contextFactory }) => {
+it('ST-008 should not restore localStorage twice', async ({ contextFactory }) => {
   const context = await contextFactory({
     storageState: {
       cookies: [],
@@ -369,7 +369,7 @@ it('should not restore localStorage twice', async ({ contextFactory }) => {
   await context.close();
 });
 
-it('should handle missing file', async ({ contextFactory }, testInfo) => {
+it('ST-009 should handle missing file', async ({ contextFactory }, testInfo) => {
   const file = testInfo.outputPath('does-not-exist.json');
   const error = await contextFactory({
     storageState: file,
@@ -377,7 +377,7 @@ it('should handle missing file', async ({ contextFactory }, testInfo) => {
   expect(error.message).toContain(`Error reading storage state from ${file}:\nENOENT`);
 });
 
-it('should handle malformed file', async ({ contextFactory, nodeVersion }, testInfo) => {
+it('ST-010 should handle malformed file', async ({ contextFactory, nodeVersion }, testInfo) => {
   const file = testInfo.outputPath('state.json');
   fs.writeFileSync(file, 'not-json', 'utf-8');
   const error = await contextFactory({
@@ -389,7 +389,7 @@ it('should handle malformed file', async ({ contextFactory, nodeVersion }, testI
     expect(error.message).toContain(`Error reading storage state from ${file}:\nUnexpected token o in JSON at position 1`);
 });
 
-it('should serialize storageState with lone surrogates', async ({ page, context, server }) => {
+it('ST-011 should serialize storageState with lone surrogates', async ({ page, context, server }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright-dotnet/issues/2819' });
   await page.goto(server.EMPTY_PAGE);
   await page.evaluate(() => window.localStorage.setItem('foo', String.fromCharCode(55934)));
@@ -397,7 +397,7 @@ it('should serialize storageState with lone surrogates', async ({ page, context,
   expect(storageState.origins[0].localStorage[0].value).toBe(String.fromCharCode(55934));
 });
 
-it('should work when service worker is intefering', async ({ page, context, server, isAndroid, isElectron, electronMajorVersion }) => {
+it('ST-012 should work when service worker is intefering', async ({ page, context, server, isAndroid, isElectron, electronMajorVersion }) => {
   it.skip(isAndroid);
   it.skip(isElectron && electronMajorVersion < 30, 'error: Browser context management is not supported.');
 
@@ -450,7 +450,7 @@ it('should work when service worker is intefering', async ({ page, context, serv
   expect(storageState.origins[0].localStorage[0]).toEqual({ name: 'foo', value: 'bar' });
 });
 
-it('should work when service worker is intefering and the origin is not open', async ({ page, context, server, isAndroid, isElectron, electronMajorVersion }) => {
+it('ST-013 should work when service worker is intefering and the origin is not open', async ({ page, context, server, isAndroid, isElectron, electronMajorVersion }) => {
   it.skip(isAndroid);
   it.skip(isElectron && electronMajorVersion < 30, 'error: Browser context management is not supported.');
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/42656' });
@@ -502,7 +502,7 @@ it('should work when service worker is intefering and the origin is not open', a
   expect(storageState.origins[0].localStorage).toEqual([{ name: 'foo', value: 'bar' }]);
 });
 
-it('should set local storage in third-party context', async ({ contextFactory, server }) => {
+it('ST-014 should set local storage in third-party context', async ({ contextFactory, server }) => {
   const context = await contextFactory({
     storageState: {
       cookies: [],
@@ -526,7 +526,7 @@ it('should set local storage in third-party context', async ({ contextFactory, s
   await context.close();
 });
 
-it('should roundtrip local storage in third-party context', async ({ page, contextFactory, server }) => {
+it('ST-015 should roundtrip local storage in third-party context', async ({ page, contextFactory, server }) => {
   await page.goto(server.EMPTY_PAGE);
   const frame = await attachFrame(page, 'frame1', server.CROSS_PROCESS_PREFIX + '/empty.html');
   await frame.evaluate(() => window.localStorage.setItem('name1', 'value1'));
@@ -542,7 +542,7 @@ it('should roundtrip local storage in third-party context', async ({ page, conte
   await context2.close();
 });
 
-it('should support IndexedDB', async ({ page, server, contextFactory }) => {
+it('ST-016 should support IndexedDB', async ({ page, server, contextFactory }) => {
   await page.goto(server.PREFIX + '/to-do-notifications/index.html');
 
   await expect(page.locator('#notifications')).toMatchAriaSnapshot(`
@@ -649,7 +649,12 @@ it('should support IndexedDB', async ({ page, server, contextFactory }) => {
 });
 
 for (const restore of ['newContext', 'setStorageState'] as const) {
-  it(`should roundtrip IndexedDB Map and Set with ${restore}`, { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/42703' } }, async ({ page, server, contextFactory }, testInfo) => {
+  it(`ST-017 should roundtrip IndexedDB values and keys with ${restore}`, {
+    annotation: [
+      { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/42703' },
+      { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43418' },
+    ],
+  }, async ({ page, server, contextFactory }, testInfo) => {
     await page.goto(server.EMPTY_PAGE);
     await page.evaluate(() => new Promise<void>((resolve, reject) => {
       const request = indexedDB.open('collections', 1);
@@ -661,6 +666,13 @@ for (const restore of ['newContext', 'setStorageState'] as const) {
         const store = transaction.objectStore('store');
         store.put(new Map([['mk', 'mv']]), 'map');
         store.put(new Set([1, 2]), 'set');
+        store.put(0, 'zero');
+        store.put(false, 'false');
+        store.put('', 'empty');
+        store.put(null, 'null');
+        store.put(Infinity, 'infinity');
+        store.put('first', 0);
+        store.put('second', '');
         transaction.oncomplete = () => {
           db.close();
           resolve();
@@ -678,7 +690,7 @@ for (const restore of ['newContext', 'setStorageState'] as const) {
 
     const restoredPage = await context.newPage();
     await restoredPage.goto(server.EMPTY_PAGE);
-    const values = await restoredPage.evaluate(async () => {
+    const entries = await restoredPage.evaluate(async () => {
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         const request = indexedDB.open('collections', 1);
         request.onerror = () => reject(request.error);
@@ -687,28 +699,34 @@ for (const restore of ['newContext', 'setStorageState'] as const) {
       const transaction = db.transaction('store', 'readonly');
       const store = transaction.objectStore('store');
       transaction.oncomplete = () => db.close();
-      const [map, set] = await Promise.all(['map', 'set'].map(key => new Promise<any>((resolve, reject) => {
-        const request = store.get(key);
+      const [keys, values] = await Promise.all([store.getAllKeys(), store.getAll()].map(request => new Promise<any[]>((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       })));
-      return {
-        isMap: map instanceof Map,
-        map: [...map],
-        isSet: set instanceof Set,
-        set: [...set],
-      };
+      return keys.map((key, i) => {
+        const value = values[i];
+        if (value instanceof Map)
+          return [key, { map: [...value] }];
+        if (value instanceof Set)
+          return [key, { set: [...value] }];
+        return [key, value];
+      });
     });
-    expect(values).toEqual({
-      isMap: true,
-      map: [['mk', 'mv']],
-      isSet: true,
-      set: [1, 2],
-    });
+    expect(entries).toEqual([
+      [0, 'first'],
+      ['', 'second'],
+      ['empty', ''],
+      ['false', false],
+      ['infinity', Infinity],
+      ['map', { map: [['mk', 'mv']] }],
+      ['null', null],
+      ['set', { set: [1, 2] }],
+      ['zero', 0],
+    ]);
   });
 }
 
-it('should support empty indexedDB', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/35760' } }, async ({ page, server, contextFactory }) => {
+it('ST-018 should support empty indexedDB', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/35760' } }, async ({ page, server, contextFactory }) => {
   await page.goto(server.EMPTY_PAGE);
   await page.evaluate(() => new Promise<void>(resolve => {
     const openRequest = indexedDB.open('unused-db');
@@ -730,7 +748,7 @@ it('should support empty indexedDB', { annotation: { type: 'issue', description:
   expect(await context.storageState({ indexedDB: true })).toEqual(storageState);
 });
 
-it('should not leave IndexedDB connections open', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/42258' } }, async ({ contextFactory, server }) => {
+it('ST-019 should not leave IndexedDB connections open', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/42258' } }, async ({ contextFactory, server }) => {
   const context = await contextFactory();
   const page = await context.newPage();
   await page.goto(server.EMPTY_PAGE);
@@ -765,7 +783,7 @@ it('should not leave IndexedDB connections open', { annotation: { type: 'issue',
   expect(await context.storageState({ indexedDB: true })).toEqual(state);
 });
 
-it('should round-trip WebAuthn credentials with storageState', async ({ contextFactory, server }) => {
+it('ST-020 should round-trip WebAuthn credentials with storageState', async ({ contextFactory, server }) => {
   const context = await contextFactory();
   const credential = await context.credentials.create(server.HOSTNAME);
 
@@ -781,7 +799,7 @@ it('should round-trip WebAuthn credentials with storageState', async ({ contextF
   expect(await context2.storageState({ credentials: true })).toEqual(storageState);
 });
 
-it('setStorageState should replace credentials', async ({ contextFactory }) => {
+it('ST-021 setStorageState should replace credentials', async ({ contextFactory }) => {
   const ctxA = await contextFactory();
   const credA = await ctxA.credentials.create('a.example.com');
   const stateA = await ctxA.storageState({ credentials: true });
@@ -806,7 +824,7 @@ it('setStorageState should replace credentials', async ({ contextFactory }) => {
   expect(await context.credentials.get()).toEqual([credA]);
 });
 
-it('setStorageState should handle missing file', async ({ contextFactory }, testInfo) => {
+it('ST-022 setStorageState should handle missing file', async ({ contextFactory }, testInfo) => {
   const context = await contextFactory();
   const file = testInfo.outputPath('does-not-exist.json');
   const error = await context.setStorageState(file).catch(e => e);

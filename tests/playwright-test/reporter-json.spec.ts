@@ -73,7 +73,7 @@ test('should not report skipped due to sharding', async ({ runInlineTest }) => {
 test('should report projects and stats', async ({ runInlineTest }, testInfo) => {
   const result = await runInlineTest({
     'playwright.config.ts': `
-      module.exports = {
+      export default {
         retries: 2,
         projects: [
           {
@@ -117,6 +117,35 @@ test('should report projects and stats', async ({ runInlineTest }, testInfo) => 
 
   expect(new Date(result.report.stats.startTime).valueOf()).not.toBeNaN();
   expect(result.report.stats.duration).toEqual(expect.any(Number));
+});
+
+test('should merge specs from all projects when testDir is not cwd', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'playwright.config.ts': `
+      export default {
+        testDir: 'tests',
+        projects: [{ name: 'p1' }, { name: 'p2' }],
+      };
+    `,
+    'tests/a.test.js': `
+      import { test, expect } from '@playwright/test';
+      test('math works!', async ({}) => {
+        expect(1 + 1).toBe(2);
+      });
+      test.describe('suite', () => {
+        test('nested math works!', async ({}) => {
+          expect(1 + 1).toBe(2);
+        });
+      });
+    `
+  });
+  expect(result.exitCode).toBe(0);
+  const fileSuite = result.report.suites[0];
+  expect(fileSuite.specs.length).toBe(1);
+  expect(fileSuite.specs[0].tests.map(t => t.projectName)).toEqual(['p1', 'p2']);
+  expect(fileSuite.suites!.length).toBe(1);
+  expect(fileSuite.suites![0].specs.length).toBe(1);
+  expect(fileSuite.suites![0].specs[0].tests.map(t => t.projectName)).toEqual(['p1', 'p2']);
 });
 
 test('should show steps', async ({ runInlineTest }) => {
@@ -207,7 +236,7 @@ test('should have error position in results', async ({
 test('should add dot in addition to file json with CI', async ({ runInlineTest }, testInfo) => {
   const result = await runInlineTest({
     'playwright.config.ts': `
-      module.exports = { reporter: [['json', { outputFile: 'a.json' }]] };
+      export default { reporter: [['json', { outputFile: 'a.json' }]] };
     `,
     'a.test.js': `
       import { test, expect } from '@playwright/test';
@@ -224,7 +253,7 @@ test('should add dot in addition to file json with CI', async ({ runInlineTest }
 test('should add line in addition to file json without CI', async ({ runInlineTest }, testInfo) => {
   const result = await runInlineTest({
     'playwright.config.ts': `
-      module.exports = { reporter: [['json', { outputFile: 'a.json' }]] };
+      export default { reporter: [['json', { outputFile: 'a.json' }]] };
     `,
     'a.test.js': `
       const { test, expect } = require('@playwright/test');
@@ -255,7 +284,7 @@ test.describe('report location', () => {
   test('with config should create report relative to config', async ({ runInlineTest }, testInfo) => {
     const result = await runInlineTest({
       'nested/project/playwright.config.ts': `
-        module.exports = { reporter: [['json', { outputFile: '../my-report/a.json' }]] };
+        export default { reporter: [['json', { outputFile: '../my-report/a.json' }]] };
       `,
       'nested/project/a.test.js': `
         import { test, expect } from '@playwright/test';

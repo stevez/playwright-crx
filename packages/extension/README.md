@@ -42,6 +42,8 @@ When the LLM interacts with the browser for the first time, it will load a page 
 
 Several clients can be connected at the same time. Each one gets its own tab group, named after the client and colored apart from the other groups, and only sees the tabs in that group — a tab can belong to a single client at a time. Drag tabs in and out of a group to change what a client can reach, and use the extension's status page to see every connection and disconnect them individually.
 
+To disable automatic grouping, pass `--no-tab-group` alongside `--extension`, or set `PLAYWRIGHT_MCP_NO_TAB_GROUP=1`. Grouping stays enabled by default. With grouping disabled, the selected tab and tabs opened by the client stay in their existing groups, if any. This does not grant access to all existing tabs or change connection approval; each controlled tab still belongs to only one client. Use the status page to see controlled tabs and disconnect clients.
+
 ### Bypassing the Connection Approval Dialog
 
 By default, you'll need to approve each connection when the MCP server tries to connect to your browser. To bypass this approval dialog and allow automatic connections, you can use an authentication token.
@@ -71,6 +73,10 @@ By default, you'll need to approve each connection when the MCP server tries to 
 
 This token is unique to your browser profile and provides secure authentication between the MCP server and the extension. Once configured, you won't need to manually approve connections each time.
 
+#### Working in the Background
+
+By default, the connected tab becomes active and the browser window is focused. To keep the browser behind the app you are working in, pass `--background` alongside `--extension`, or set `PLAYWRIGHT_MCP_BACKGROUND=1`. This mode requires the extension version 0.5.0 or later. In this mode, the extension does not activate the connected tab or focus its window, and tabs that the client opens are created in the background. Together with the authentication token, the connect page is also opened in the background (Chrome 158.0.8127.2 or later). This works only when the browser is already running; if it is not, the browser starts with a new focused window. Note that Chrome throttles timers and animation frames in background tabs.
+
 ### Selecting a Chrome Profile
 
 If the extension is installed in several Chrome profiles, the connection is made to the one you used last. To always connect to a specific profile, pass the name of its directory, the last component of "Profile Path" at `chrome://version`, via `--profile-dir-name`:
@@ -93,4 +99,6 @@ If the extension is installed in several Chrome profiles, the connection is made
 
 The `PLAYWRIGHT_MCP_PROFILE_DIR_NAME` environment variable can be used instead of the option. The authentication token is specific to the profile, so use the one displayed in that profile.
 
+## Troubleshooting
 
+Chrome does not allow extensions to debug a page that contains a frame with a restricted URL, for example a page of another extension (`chrome-extension://`), a `chrome://` page, or a URL with a custom scheme. When such a frame loads, Chrome detaches the Playwright debugger. If the frame stays in the page, the tab is no longer available to the client. This often happens when another extension adds its own frame to every page. Disable that extension on the sites you automate, set its **Site access** to **On click**, or use a profile without it. Then navigate again.

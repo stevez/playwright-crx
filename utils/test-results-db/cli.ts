@@ -30,11 +30,9 @@ Commands:
   download                 Fetch the latest maintained database artifact.
                            Starts a fresh database if none exists yet.
   update [options]         Ingest parquet artifacts that aren't in the database yet.
+                           Downloads the latest database artifact first if there is none locally.
     --lookback-days <n>    How many days back to scan (default 7).
-    --concurrency <n>      Parallel downloads per batch (default 16).
-    --stop-after-seen <n>  Stop after this many consecutive already-ingested
-                           artifacts (default 100). The list is newest-first, so
-                           this short-circuits the scan once caught up.
+    --concurrency <n>      Parallel downloads and listings per batch (default 16).
   truncate --max-runs <n>  Keep only the newest <n> runs, delete the rest, compact.
 
 Environment:
@@ -50,7 +48,6 @@ function defaultDbPath(): string {
 const UPDATE_OPTIONS = {
   'lookback-days': { type: 'string' },
   'concurrency': { type: 'string' },
-  'stop-after-seen': { type: 'string' },
 } as const;
 
 const TRUNCATE_OPTIONS = {
@@ -90,7 +87,6 @@ async function main(): Promise<void> {
       await cmdUpdate(dbPath, requireToken(), {
         lookbackDays: intFlag(values, 'lookback-days', 7),
         concurrency: intFlag(values, 'concurrency', 16),
-        stopAfterSeen: intFlag(values, 'stop-after-seen', 100),
       });
       break;
     }

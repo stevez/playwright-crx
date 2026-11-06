@@ -18,7 +18,7 @@ import { Option as ProgramOption } from 'commander';
 import * as mcpServer from '../utils/mcp/server';
 import { commaSeparatedList, defaultCodegenLanguage, dotenvFileLoader, enumParser, headerParser, numberParser, resolutionParser, resolveCLIConfigForMCP, semicolonSeparatedList } from './config';
 import { setupExitWatchdog } from './watchdog';
-import { connectToBrowserEndpoint, createBrowserWithInfo } from './browserFactory';
+import { connectToBrowserEndpoint, createBrowserWithInfo, createIdleTimer } from './browserFactory';
 import { BrowserBackend } from '../backend/browserBackend';
 import { filteredTools } from '../backend/tools';
 import { testDebug } from './log';
@@ -57,11 +57,14 @@ export function decorateMCPCommand(command: Command) {
       .option('--host <host>', 'host to bind server to. Default is localhost. Use 0.0.0.0 to bind to all interfaces.')
       .option('--idle-timeout <timeout>', 'close the browser after this many milliseconds without a completed tool call, the next tool call relaunches it. Defaults to one hour for headless browsers, never for headed ones, 0 disables.', numberParser)
       .option('--ignore-https-errors', 'ignore https errors')
+      .option('--ignore-roots', 'do not ask the client for its workspace roots, use the current working directory as the workspace root instead. Use this with clients that advertise roots, but can not answer the roots request.')
       .option('--init-page <path...>', 'path to TypeScript file to evaluate on Playwright page object')
       .option('--init-script <path...>', 'path to JavaScript file to add as an initialization script. The script will be evaluated in every page before any of the page\'s scripts. Can be specified multiple times.')
       .option('--isolated', 'keep the browser profile in memory, do not save it to disk.')
       .option('--image-responses <mode>', 'whether to send image responses to the client. Can be "allow", "omit" or "only". With "only", a response that carries an image consists of the image parts alone, without the text part. Defaults to "allow".', enumParser.bind(null, '--image-responses', ['allow', 'omit', 'only']))
       .option('--no-sandbox', 'disable the sandbox for all process types that are normally sandboxed.')
+      .option('--background', 'do not activate controlled tabs or focus the browser window when using --extension.')
+      .option('--no-tab-group', 'do not group controlled tabs when using --extension.')
       .option('--no-webmcp', 'do not collect or expose the tools that a page registers through the WebMCP API.')
       .option('--output-dir <path>', 'path to the directory for automatically named output files, for example a screenshot taken without an explicit file name. Files with an explicit name are resolved against the workspace root instead and are not affected by this option.')
       .option('--output-max-size <bytes>', 'Threshold for evicting old output files, in bytes.', numberParser)
@@ -69,6 +72,7 @@ export function decorateMCPCommand(command: Command) {
       .option('--profile-dir-name <name>', 'name of the profile directory in the user data dir to connect to with --extension, for example "Profile 1". Defaults to the last used profile that has the extension installed.')
       .option('--proxy-bypass <bypass>', 'comma-separated domains to bypass proxy, for example ".com,chromium.org,.domain.com"')
       .option('--proxy-server <proxy>', 'specify proxy server, for example "http://myproxy:3128", "http://user:password@myproxy:3128" or "socks5://myproxy:8080"')
+      .option('--redact-url-params <names>', 'comma-separated list of URL query and fragment parameter names, for example "access_token,code", whose values are replaced with <redacted> in the tool responses.', commaSeparatedList)
       .addOption(new ProgramOption('--remote-header <headers...>', 'headers to send with the remote endpoint connect request, multiple can be specified.').argParser(headerParser).hideHelp())
       .option('--sandbox', 'enable the sandbox for all process types that are normally not sandboxed.')
       .option('--save-session', 'Whether to save the Playwright MCP session into the output directory.')
@@ -110,6 +114,7 @@ export function decorateMCPCommand(command: Command) {
           nameInConfig: 'playwright',
           version,
           toolSchemas: tools.map(tool => tool.schema),
+          ignoreRoots: config.ignoreRoots,
           create: async (clientInfo: ClientInfo) => {
             if (useSharedBrowser && !sharedBrowserPromise) {
               const promise = createBrowserWithInfo(config, clientInfo, options, { title: clientInfo.clientName, workspaceDir: clientInfo.cwd }).then(shared => {
@@ -159,9 +164,14 @@ export function decorateMCPCommand(command: Command) {
               throw error;
             }
 
+            // Each isolated client owns a context in the shared browser, so it has its own idle timer.
+            // Otherwise an idle client keeps its context open while other clients are active.
+            const clientIdleTimer = shared && config.browser.isolated ? createIdleTimer(config, shared.ownership, () => browserContext.close().catch(() => { })) : undefined;
+
             return new BrowserBackend(config, browserContext, tools, {
-              idleTimer: info.idleTimer,
+              idleTimer: clientIdleTimer ?? info.idleTimer,
               dispose: async () => {
+                clientIdleTimer?.dispose();
                 clientCount--;
                 const last = !shared || !clientCount;
                 if (last && sharedBrowserPromise === promise)

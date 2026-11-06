@@ -29,20 +29,22 @@ import type { LaunchServerOptions } from '../client/types';
 
 export function runDriver() {
   const dispatcherConnection = new DispatcherConnection();
-  new RootDispatcher(dispatcherConnection, async (rootScope, { sdkLanguage }) => {
+  // Certain Language Binding JSON parsers (e.g. .NET) do not like strings with lone surrogates.
+  // The client tells us whether it supports them when it initializes.
+  let replacer: ((key: string, value: any) => any) | undefined;
+  new RootDispatcher(dispatcherConnection, async (rootScope, { sdkLanguage, supportsLoneSurrogates }) => {
+    if (!supportsLoneSurrogates)
+      replacer = (key, value) => typeof value === 'string' ? value.toWellFormed() : value;
     const playwright = createPlaywright({ sdkLanguage, isClientCollocatedWithServer: true });
     return new PlaywrightDispatcher(rootScope, playwright);
   });
   // eslint-disable-next-line no-restricted-properties
   const transport = new PipeTransport(process.stdout, process.stdin);
+  // The client may exit while messages are still in flight. Ignore the EPIPE so the
+  // driver keeps running until stdin closes, and then closes the browsers gracefully.
+  // eslint-disable-next-line no-restricted-properties
+  process.stdout.on('error', () => {});
   transport.onmessage = (message: string) => dispatcherConnection.dispatch(JSON.parse(message));
-  // Certain Language Binding JSON parsers (e.g. .NET) do not like strings with lone surrogates.
-  const isJavaScriptLanguageBinding = !process.env.PW_LANG_NAME || process.env.PW_LANG_NAME === 'javascript';
-  const replacer = !isJavaScriptLanguageBinding && (String.prototype as any).toWellFormed ? (key: string, value: any): any => {
-    if (typeof value === 'string')
-      return value.toWellFormed();
-    return value;
-  } : undefined;
   dispatcherConnection.onmessage = message => transport.send(JSON.stringify(message, replacer));
   transport.onclose = () => {
     // Drop any messages during shutdown on the floor.

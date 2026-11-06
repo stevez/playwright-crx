@@ -56,6 +56,7 @@ export type CLIOptions = {
   headless?: boolean;
   host?: string;
   ignoreHttpsErrors?: boolean;
+  ignoreRoots?: boolean;
   initScript?: string[];
   initPage?: string[];
   isolated?: boolean;
@@ -69,6 +70,7 @@ export type CLIOptions = {
   profileDirName?: string;
   proxyBypass?: string;
   proxyServer?: string;
+  redactUrlParams?: string[];
   remoteHeader?: Record<string, string>;
   saveSession?: boolean;
   secrets?: Record<string, string>;
@@ -76,6 +78,8 @@ export type CLIOptions = {
   snapshotBoxes?: boolean;
   snapshotMode?: 'full' | 'none';
   storageState?: string;
+  tabGroup?: boolean;
+  background?: boolean;
   testIdAttribute?: string;
   timeoutAction?: number;
   timeoutNavigation?: number;
@@ -371,6 +375,8 @@ function configFromCLIOptions(cliOptions: CLIOptions): Config & { configFile?: s
       remoteEndpoint: cliOptions.endpoint,
     },
     extension: cliOptions.extension,
+    tabGroup: cliOptions.tabGroup === false ? false : undefined,
+    background: cliOptions.background,
     server: {
       port: cliOptions.port,
       host: cliOptions.host,
@@ -385,9 +391,11 @@ function configFromCLIOptions(cliOptions: CLIOptions): Config & { configFile?: s
       blockedOrigins: cliOptions.blockedOrigins,
     },
     allowUnrestrictedFileAccess: cliOptions.allowUnrestrictedFileAccess,
+    ignoreRoots: cliOptions.ignoreRoots,
     codegen: cliOptions.codegen,
     saveSession: cliOptions.saveSession,
     secrets: cliOptions.secrets,
+    redactUrlParams: cliOptions.redactUrlParams,
     sharedBrowserContext: cliOptions.sharedBrowserContext,
     snapshot: cliOptions.snapshotMode || cliOptions.snapshotBoxes !== undefined ? { mode: cliOptions.snapshotMode, boxes: cliOptions.snapshotBoxes } : undefined,
     outputDir: cliOptions.outputDir,
@@ -421,6 +429,7 @@ export function configFromEnv(env?: NodeJS.ProcessEnv): Config & { configFile?: 
   options.allowedHosts = commaSeparatedList(e.PLAYWRIGHT_MCP_ALLOWED_HOSTS);
   options.allowedOrigins = semicolonSeparatedList(e.PLAYWRIGHT_MCP_ALLOWED_ORIGINS);
   options.allowUnrestrictedFileAccess = envToBoolean(e.PLAYWRIGHT_MCP_ALLOW_UNRESTRICTED_FILE_ACCESS);
+  options.background = envToBoolean(e.PLAYWRIGHT_MCP_BACKGROUND);
   options.blockedOrigins = semicolonSeparatedList(e.PLAYWRIGHT_MCP_BLOCKED_ORIGINS);
   options.blockServiceWorkers = envToBoolean(e.PLAYWRIGHT_MCP_BLOCK_SERVICE_WORKERS);
   options.browser = envToString(e.PLAYWRIGHT_MCP_BROWSER);
@@ -442,6 +451,7 @@ export function configFromEnv(env?: NodeJS.ProcessEnv): Config & { configFile?: 
   options.headless = envToBoolean(e.PLAYWRIGHT_MCP_HEADLESS);
   options.host = envToString(e.PLAYWRIGHT_MCP_HOST);
   options.ignoreHttpsErrors = envToBoolean(e.PLAYWRIGHT_MCP_IGNORE_HTTPS_ERRORS);
+  options.ignoreRoots = envToBoolean(e.PLAYWRIGHT_MCP_IGNORE_ROOTS);
   const initPage = envToString(e.PLAYWRIGHT_MCP_INIT_PAGE);
   if (initPage)
     options.initPage = [initPage];
@@ -458,6 +468,7 @@ export function configFromEnv(env?: NodeJS.ProcessEnv): Config & { configFile?: 
   options.port = numberParser(e.PLAYWRIGHT_MCP_PORT);
   options.proxyBypass = envToString(e.PLAYWRIGHT_MCP_PROXY_BYPASS);
   options.proxyServer = envToString(e.PLAYWRIGHT_MCP_PROXY_SERVER);
+  options.redactUrlParams = commaSeparatedList(e.PLAYWRIGHT_MCP_REDACT_URL_PARAMS);
   options.remoteHeader = headerParser(envToString(e.PLAYWRIGHT_MCP_REMOTE_HEADERS));
   options.secrets = dotenvFileLoader(e.PLAYWRIGHT_MCP_SECRETS_FILE);
   options.storageState = envToString(e.PLAYWRIGHT_MCP_STORAGE_STATE);
@@ -470,7 +481,11 @@ export function configFromEnv(env?: NodeJS.ProcessEnv): Config & { configFile?: 
   options.webmcp = envToBoolean(e.PLAYWRIGHT_MCP_WEBMCP);
   options.userDataDir = envToString(e.PLAYWRIGHT_MCP_USER_DATA_DIR);
   options.viewportSize = resolutionParser('--viewport-size', e.PLAYWRIGHT_MCP_VIEWPORT_SIZE);
-  return configFromCLIOptions(options);
+  const config = configFromCLIOptions(options);
+  const noTabGroup = envToBoolean(e.PLAYWRIGHT_MCP_NO_TAB_GROUP);
+  if (noTabGroup !== undefined)
+    config.tabGroup = !noTabGroup;
+  return config;
 }
 
 export async function loadConfig(configFile: string | undefined): Promise<Config> {
