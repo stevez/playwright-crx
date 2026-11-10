@@ -45,6 +45,7 @@ interface Embedder {
   performanceNow(): EmbedderTicks;
   setTimeout(task: () => void, timeout?: number): () => void;
   setInterval(task: () => void, delay: number): () => void;
+  postTask(task: () => void): void;
 }
 
 type Ticks = number & { readonly __brand: 'Ticks' };
@@ -242,10 +243,16 @@ export class ClockController {
       callAt,
       promise: undefined,
       cancel: this._embedder.setTimeout(() => {
+        // Apply the log before the real time moves the clock.
+        this._replayLogOnce();
+        if (this._currentRealTimeTimer !== realTimeTimer)
+          return;
         this._syncRealTime();
         // eslint-disable-next-line no-console
         realTimeTimer.promise = this._runTo(this._now.ticks).catch(e => console.error(e));
         void realTimeTimer.promise.then(() => {
+          if (this._currentRealTimeTimer !== realTimeTimer)
+            return;
           this._currentRealTimeTimer = undefined;
           if (this._realTime)
             this._updateRealTimeTimer();
@@ -277,7 +284,7 @@ export class ClockController {
   async fastForward(ticks: number) {
     this._replayLogOnce();
     await this._runWithDisabledRealTimeSync(async () => {
-      await this._innerFastForwardTo(shiftTicks(this._now.ticks, ticks | 0));
+      await this._innerFastForwardTo(shiftTicks(this._now.ticks, Math.trunc(ticks)));
     });
   }
 
@@ -370,7 +377,7 @@ export class ClockController {
         } catch (e) {
           error = e;
         }
-        await new Promise<void>(f => this._embedder.setTimeout(f));
+        await new Promise<void>(f => this._embedder.postTask(f));
         return { timerFound: true, error };
       }
 
@@ -386,7 +393,7 @@ export class ClockController {
       } catch (e) {
         error = e;
       }
-      await new Promise<void>(f => this._embedder.setTimeout(f));
+      await new Promise<void>(f => this._embedder.postTask(f));
       return { timerFound: true, error };
     } finally {
       this._duringTick = false;
@@ -441,7 +448,9 @@ export class ClockController {
       return;
 
     let lastLogTime = -1;
-    let isPaused = false;
+    // The log can be replayed in parts, when an init script reads the time
+    // in between the clock's init scripts. Continue from the current state.
+    let isPaused = !this._realTime;
 
     for (const { type, time, param } of this._log) {
       if (!isPaused && lastLogTime !== -1)
@@ -470,6 +479,10 @@ export class ClockController {
       this._innerResume();
     } else {
       this._realTime = undefined;
+      if (!this._currentRealTimeTimer?.promise) {
+        this._currentRealTimeTimer?.cancel();
+        this._currentRealTimeTimer = undefined;
+      }
     }
 
     this._log.length = 0;
@@ -555,22 +568,32 @@ function createIntl(clock: ClockController, NativeIntl: Builtins['Intl']): Built
   for (const key of Object.getOwnPropertyNames(NativeIntl) as (keyof Builtins['Intl'])[])
     ClockIntl[key] = NativeIntl[key];
 
+  // Formatters are native instances with a prototype that has the same own members as
+  // the native one, except that format() and formatToParts() default to the clock time.
+  const nativePrototype = NativeIntl.DateTimeFormat.prototype;
+  const nativeFormat = Object.getOwnPropertyDescriptor(nativePrototype, 'format')!.get!;
+  const nativeFormatToParts = nativePrototype.formatToParts;
   ClockIntl.DateTimeFormat = function(...args: any[]) {
-    const realFormatter = new NativeIntl.DateTimeFormat(...args);
-    const formatter: Intl.DateTimeFormat = {
-      formatRange: realFormatter.formatRange.bind(realFormatter),
-      formatRangeToParts: realFormatter.formatRangeToParts.bind(realFormatter),
-      resolvedOptions: realFormatter.resolvedOptions.bind(realFormatter),
-      format: date => realFormatter.format(date || clock.now()),
-      formatToParts: date => realFormatter.formatToParts(date || clock.now()),
-    };
-
-    return formatter;
+    return Reflect.construct(NativeIntl.DateTimeFormat, args, new.target ?? ClockIntl.DateTimeFormat);
   };
-
-  ClockIntl.DateTimeFormat.prototype = Object.create(
-      NativeIntl.DateTimeFormat.prototype,
-  );
+  ClockIntl.DateTimeFormat.prototype = Object.create(nativePrototype, {
+    ...Object.getOwnPropertyDescriptors(nativePrototype),
+    constructor: { value: ClockIntl.DateTimeFormat, writable: true, configurable: true },
+    format: {
+      get(this: Intl.DateTimeFormat) {
+        const format = nativeFormat.call(this);
+        return (date?: Date | number) => format(date === undefined ? clock.now() : date);
+      },
+      configurable: true,
+    },
+    formatToParts: {
+      value(this: Intl.DateTimeFormat, date?: Date | number) {
+        return nativeFormatToParts.call(this, date === undefined ? clock.now() : date);
+      },
+      writable: true,
+      configurable: true,
+    },
+  });
 
   ClockIntl.DateTimeFormat.supportedLocalesOf =
     NativeIntl.DateTimeFormat.supportedLocalesOf;
@@ -794,6 +817,10 @@ function fakeAbortSignal(clock: ClockController, abortSignal: Builtins['AbortSig
 
 export function createClock(globalObject: WindowOrWorkerGlobalScope, config: InstallConfig = {}): { clock: ClockController, api: Builtins, originals: Builtins } {
   const originals = platformOriginals(globalObject);
+  // Nested setTimeout(fn, 0) is clamped to 4ms, which adds up when many timers
+  // are due. A MessageChannel task is not clamped, so yield through one instead.
+  const tasks: (() => void)[] = [];
+  let channel: MessageChannel | undefined;
   const embedder: Embedder = {
     dateNow: () => originals.raw.Date.now(),
     performanceNow: () => Math.ceil(originals.raw.performance!.now()) as EmbedderTicks,
@@ -804,6 +831,14 @@ export function createClock(globalObject: WindowOrWorkerGlobalScope, config: Ins
     setInterval: (task: () => void, delay: number) => {
       const intervalId = originals.bound.setInterval(task, delay);
       return () => originals.bound.clearInterval(intervalId);
+    },
+    postTask: (task: () => void) => {
+      if (!channel) {
+        channel = new (globalObject as any).MessageChannel() as MessageChannel;
+        channel.port1.onmessage = () => tasks.shift()!();
+      }
+      tasks.push(task);
+      channel.port2.postMessage(undefined);
     },
   };
 

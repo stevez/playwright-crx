@@ -145,8 +145,14 @@ export class CRPage implements PageDelegate {
     // Frame id equals target id.
     while (!this._sessions.has(frame._id)) {
       const parent = frame.parentFrame();
-      if (!parent)
+      if (!parent) {
+        // patch(playwright-crx): the main frame id can differ from targetId when attaching
+        // to an existing tab via chrome.debugger.attach. The main frame session is stored
+        // under targetId, not under the actual frame id.
+        if (this._sessions.has(this._targetId))
+          return this._sessions.get(this._targetId)!;
         throw new Error(`Frame has been detached.`);
+      }
       frame = parent;
     }
     return this._sessions.get(frame._id)!;
@@ -197,7 +203,7 @@ export class CRPage implements PageDelegate {
   }
 
   async updateHttpCredentials(): Promise<void> {
-    await this._networkManager.authenticate(this._browserContext._options.httpCredentials || null);
+    await this._networkManager.authenticate(this._browserContext._options.httpCredentials, this._browserContext.proxyCredentials());
   }
 
   async updateEmulatedViewportSize(preserveWindowBoundaries?: boolean): Promise<void> {
@@ -567,7 +573,7 @@ class FrameSession {
         promises.push(emulateLocale(this._client, options.locale));
       if (options.timezoneId)
         promises.push(emulateTimezone(this._client, options.timezoneId));
-      if (!browserOptions.headful)
+      if (!browserOptions.headful && !skipDefaultOverrides)
         promises.push(this._setDefaultFontFamilies(this._client));
       promises.push(this._updateGeolocation(true));
       if (!skipDefaultOverrides)
@@ -689,6 +695,8 @@ class FrameSession {
   _onFrameNavigated(framePayload: Protocol.Page.Frame, initial: boolean) {
     if (this._eventBelongsToStaleFrame(framePayload.id))
       return;
+    const frame = this._page.frameManager.frame(framePayload.id)!;
+    frame._failInflightRequests(new Set([framePayload.loaderId, frame.pendingDocument()?.documentId]));
     this._page.frameManager.frameCommittedNewDocumentNavigation(framePayload.id, framePayload.url + (framePayload.urlFragment || ''), framePayload.name || '', framePayload.loaderId, initial);
     if (!initial)
       this._firstNonInitialNavigationCommittedFulfill();
@@ -787,11 +795,24 @@ class FrameSession {
       return;
     }
 
+    if (event.targetInfo.type === 'service_worker') {
+      // Detaching releases the service worker's main script fetch throttle. Resuming first would race
+      // with the browser-level session's Network.enable and lose the main script's Network.responseReceived.
+      // See https://issues.chromium.org/issues/578112291.
+      // TODO: remove this whole workaround block once the upstream issue is fixed.
+      parentSession._sendMayFail('Target.detachFromTarget', { sessionId: event.sessionId });
+      return;
+    }
+
     if (event.targetInfo.type !== 'worker') {
       session.detach().catch(() => {});
       return;
     }
 
+    this._initializeWorker(session, event);
+  }
+
+  private _initializeWorker(session: CRSession, event: Protocol.Target.attachedToTargetPayload) {
     const url = event.targetInfo.url;
     const worker = new Worker(this._page, url);
     this._page.addWorker(event.sessionId, worker);
@@ -805,6 +826,11 @@ class FrameSession {
       worker.workerScriptLoaded();
     // This might fail if the target is closed before we initialize.
     session._sendMayFail('Runtime.enable');
+    // Dedicated workers inherit the user agent, but not the Accept-Language and
+    // navigator.languages that the page's user agent override sets from the locale.
+    const options = this._crPage._browserContext._options;
+    if (options.userAgent || options.locale)
+      this._updateUserAgent(session).catch(() => {});
     this._crPage._networkManager.addSession(session, this._page.frameManager.frame(event.targetInfo.parentFrameId ?? this._targetId) ?? undefined).catch(() => {});
     session._sendMayFail('Runtime.runIfWaitingForDebugger');
     session._sendMayFail('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
@@ -1076,9 +1102,9 @@ class FrameSession {
     await this._client.send('Emulation.setEmulatedMedia', { media, features });
   }
 
-  async _updateUserAgent(): Promise<void> {
+  async _updateUserAgent(session: CRSession = this._client): Promise<void> {
     const options = this._crPage._browserContext._options;
-    await this._client.send('Emulation.setUserAgentOverride', {
+    await session.send('Emulation.setUserAgentOverride', {
       userAgent: options.userAgent || '',
       acceptLanguage: options.locale,
       userAgentMetadata: calculateUserAgentMetadata(options),

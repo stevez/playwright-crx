@@ -22,6 +22,7 @@ import { BlobReporter } from '../reporters/blob';
 import CoverageReporter from '../reporters/coverage';
 import DotReporter from '../reporters/dot';
 import EmptyReporter from '../reporters/empty';
+import FailuresReporter from '../reporters/failures';
 import GitHubReporter from '../reporters/github';
 import HtmlReporter from '../reporters/html';
 import JSONReporter from '../reporters/json';
@@ -44,6 +45,7 @@ export async function createReporters(config: FullConfigInternal, mode: 'list' |
     'blob': BlobReporter,
     'perfetto': PerfettoReporter,
     'dot': mode === 'list' ? ListModeReporter : DotReporter,
+    'failures': mode === 'list' ? ListModeReporter : FailuresReporter,
     'line': mode === 'list' ? ListModeReporter : LineReporter,
     'list': mode === 'list' ? ListModeReporter : ListReporter,
     'github': GitHubReporter,
@@ -59,8 +61,10 @@ export async function createReporters(config: FullConfigInternal, mode: 'list' |
   for (const r of descriptions) {
     const [name, arg] = r;
     const options = { ...reportOptions, ...arg };
+    if (mode === 'list')
+      options.onlyFailures = false;
     if (name in defaultReporters) {
-      reporters.push(new defaultReporters[name as keyof typeof defaultReporters](options));
+      reporters.push(new defaultReporters[name as commonConfig.BuiltInReporter](options));
     } else {
       const reporterConstructor = await loadReporter(config, name);
       reporters.push(wrapReporterAsV2(new reporterConstructor(options)));
@@ -69,7 +73,7 @@ export async function createReporters(config: FullConfigInternal, mode: 'list' |
   if (process.env.PW_TEST_REPORTER) {
     const name = process.env.PW_TEST_REPORTER;
     if (name in defaultReporters) {
-      reporters.push(new defaultReporters[name as keyof typeof defaultReporters](reportOptions));
+      reporters.push(new defaultReporters[name as commonConfig.BuiltInReporter](reportOptions));
     } else {
       const reporterConstructor = await loadReporter(config, name);
       reporters.push(wrapReporterAsV2(new reporterConstructor(reportOptions)));

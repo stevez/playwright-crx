@@ -196,7 +196,7 @@ For Docker and GitHub Codespaces environments, you can view and generate tests u
 
 ```json
 {
-  "image": "mcr.microsoft.com/playwright:v1.57.0",
+  "image": "mcr.microsoft.com/playwright:v%%VERSION%%-noble",
   "forwardPorts": [6080],
   "features": {
     "desktop-lite": {
@@ -248,7 +248,7 @@ curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --install-dir /
 To run Playwright inside Docker, you need to have Node.js, [Playwright browsers](./browsers.md#install-browsers) and [browser system dependencies](./browsers.md#install-system-dependencies) installed. See the following Dockerfile:
 
 ```Dockerfile
-FROM node:20-bookworm
+FROM node:26-bookworm
 
 RUN npx -y playwright@%%VERSION%% install --with-deps
 ```

@@ -57,6 +57,15 @@ test('browser_cookie_set and browser_cookie_get', async ({ startClient, server }
     config: { capabilities: ['storage'] },
   });
 
+  // A blank page has no host to take the cookie domain from.
+  expect(await client.callTool({
+    name: 'browser_cookie_set',
+    arguments: { name: 'testCookie', value: 'testValue' },
+  })).toHaveResponse({
+    isError: true,
+    error: expect.stringContaining(`Cannot infer the cookie domain from the page URL "about:blank", specify "domain".`),
+  });
+
   await client.callTool({
     name: 'browser_navigate',
     arguments: { url: server.EMPTY_PAGE },
@@ -144,6 +153,59 @@ test('browser_cookie_list filters by domain', async ({ startClient, server }) =>
 
   expect(noResult).toHaveResponse({
     result: 'No cookies found',
+  });
+
+  // The domain matches itself and its subdomains, not other domains that end with it.
+  for (const [name, domain] of [['apex', 'example.com'], ['sub', 'sub.example.com'], ['other', 'my-example.com']]) {
+    await client.callTool({
+      name: 'browser_cookie_set',
+      arguments: { name, value: 'value', domain },
+    });
+  }
+  const exampleResult = await client.callTool({
+    name: 'browser_cookie_list',
+    arguments: { domain: 'example.com' },
+  });
+  expect(exampleResult).toHaveResponse({
+    result: expect.stringContaining('apex=value'),
+  });
+  expect(exampleResult).toHaveResponse({
+    result: expect.stringContaining('sub=value'),
+  });
+  expect(exampleResult).toHaveResponse({
+    result: expect.not.stringContaining('other=value'),
+  });
+});
+
+test('browser_cookie_list filters by path', async ({ startClient, server }) => {
+  const { client } = await startClient({
+    config: { capabilities: ['storage'] },
+  });
+
+  await client.callTool({
+    name: 'browser_navigate',
+    arguments: { url: server.EMPTY_PAGE },
+  });
+
+  // The path matches itself and its sub-paths, not other paths that start with it.
+  for (const [name, path] of [['exact', '/api'], ['sub', '/api/users'], ['other', '/apikeys']]) {
+    await client.callTool({
+      name: 'browser_cookie_set',
+      arguments: { name, value: 'value', path },
+    });
+  }
+  const apiResult = await client.callTool({
+    name: 'browser_cookie_list',
+    arguments: { path: '/api' },
+  });
+  expect(apiResult).toHaveResponse({
+    result: expect.stringContaining('exact=value'),
+  });
+  expect(apiResult).toHaveResponse({
+    result: expect.stringContaining('sub=value'),
+  });
+  expect(apiResult).toHaveResponse({
+    result: expect.not.stringContaining('other=value'),
   });
 });
 
@@ -251,6 +313,26 @@ test('browser_cookie_delete removes cookie', async ({ startClient, server }) => 
 
   expect(afterDelete).toHaveResponse({
     result: expect.stringContaining('not found'),
+  });
+
+  // Domain and path narrow it down to one of the same-named cookies.
+  for (const domain of ['a.example', 'b.example']) {
+    await client.callTool({
+      name: 'browser_cookie_set',
+      arguments: { name: 'session', value: domain, domain },
+    });
+  }
+  expect(await client.callTool({
+    name: 'browser_cookie_delete',
+    arguments: { name: 'session', domain: 'a.example', path: '/' },
+  })).toHaveResponse({
+    code: `await page.context().clearCookies({ name: 'session', domain: 'a.example', path: '/' });`,
+  });
+  expect(await client.callTool({
+    name: 'browser_cookie_get',
+    arguments: { name: 'session' },
+  })).toHaveResponse({
+    result: expect.stringContaining('session=b.example (domain: b.example'),
   });
 });
 

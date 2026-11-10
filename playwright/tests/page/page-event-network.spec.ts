@@ -18,7 +18,7 @@
 import type { ServerResponse } from 'http';
 import { test as it, expect } from './pageTest';
 
-it('Page.Events.Request @smoke', async ({ page, server }) => {
+it('NE-084 Page.Events.Request @smoke', async ({ page, server }) => {
   const requests = [];
   page.on('request', request => requests.push(request));
   await page.goto(server.EMPTY_PAGE);
@@ -31,7 +31,7 @@ it('Page.Events.Request @smoke', async ({ page, server }) => {
   expect(requests[0].frame().url()).toBe(server.EMPTY_PAGE);
 });
 
-it('Page.Events.Response @smoke', async ({ page, server }) => {
+it('NE-085 Page.Events.Response @smoke', async ({ page, server }) => {
   const responses = [];
   page.on('response', response => responses.push(response));
   await page.goto(server.EMPTY_PAGE);
@@ -42,7 +42,7 @@ it('Page.Events.Response @smoke', async ({ page, server }) => {
   expect(responses[0].request()).toBeTruthy();
 });
 
-it('Page.Events.RequestFailed @smoke', async ({ page, server, browserName, platform, channel }) => {
+it('NE-086 Page.Events.RequestFailed @smoke', async ({ page, server, browserName, platform, channel }) => {
   server.setRoute('/one-style.css', (req, res) => {
     res.setHeader('Content-Type', 'text/css');
     res.connection.destroy();
@@ -69,7 +69,7 @@ it('Page.Events.RequestFailed @smoke', async ({ page, server, browserName, platf
   expect(failedRequests[0].frame()).toBeTruthy();
 });
 
-it('Page.Events.RequestFinished @smoke', async ({ page, server }) => {
+it('NE-087 Page.Events.RequestFinished @smoke', async ({ page, server }) => {
   const [response] = await Promise.all([
     page.goto(server.EMPTY_PAGE),
     page.waitForEvent('requestfinished')
@@ -82,7 +82,7 @@ it('Page.Events.RequestFinished @smoke', async ({ page, server }) => {
   expect(request.failure()).toBe(null);
 });
 
-it('should fire events in proper order', async ({ page, server }) => {
+it('NE-088 should fire events in proper order', async ({ page, server }) => {
   const events = [];
   page.on('request', request => events.push('request'));
   page.on('response', response => events.push('response'));
@@ -92,7 +92,7 @@ it('should fire events in proper order', async ({ page, server }) => {
   expect(events).toEqual(['request', 'response', 'requestfinished']);
 });
 
-it('should support redirects', async ({ page, server }) => {
+it('NE-089 should support redirects', async ({ page, server }) => {
   const FOO_URL = server.PREFIX + '/foo.html';
   const events = {};
   events[server.EMPTY_PAGE] = [];
@@ -116,8 +116,9 @@ it('should support redirects', async ({ page, server }) => {
   expect(redirectedFrom.redirectedTo()).toBe(response.request());
 });
 
-it('should resolve responses after a navigation', async ({ page, server, browserName }) => {
-  it.fixme(browserName === 'chromium');
+it('NE-090 should resolve responses after a cross-process navigation', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43508' },
+}, async ({ page, server, browserName }) => {
   const responseFromServerPromise = new Promise<ServerResponse>(resolve => {
     server.setRoute('/foo', (message, response) => {
       resolve(response);
@@ -130,10 +131,55 @@ it('should resolve responses after a navigation', async ({ page, server, browser
   const responseFromServer = await responseFromServerPromise;
   const request = await requestPromise;
   const responsePromise = request.response();
+  const failedPromise = page.waitForEvent('requestfailed');
   // navigate, which should cancel the request
   await page.goto(server.CROSS_PROCESS_PREFIX);
   // make sure we aren't stalling this request on the server
   responseFromServer.end('done');
   // the response should resolve to null, because the page navigated.
   expect(await responsePromise).toBe(null);
+  // the request should fail with the browser's "canceled" error.
+  expect(await failedPromise).toBe(request);
+  expect(request.failure().errorText).toContain({ chromium: 'net::ERR_ABORTED', firefox: 'NS_BINDING_ABORTED', webkit: 'cancelled' }[browserName]);
+});
+
+it('NE-143 should resolve responses after a same-process navigation', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43508' },
+}, async ({ page, server, browserName }) => {
+  const responseFromServerPromise = new Promise<ServerResponse>(resolve => {
+    server.setRoute('/foo', (message, response) => {
+      resolve(response);
+    });
+  });
+  server.setRoute('/streaming', (message, response) => {
+    response.writeHead(200, { 'Content-Type': 'text/plain' });
+    response.write('partial body');
+  });
+  await page.goto(server.EMPTY_PAGE);
+  const requestPromise = page.waitForRequest(server.PREFIX + '/foo');
+  const streamingResponsePromise = page.waitForResponse(server.PREFIX + '/streaming');
+  // start a long running request and wait until it hits the server
+  await page.evaluate(url => void fetch(url), server.PREFIX + '/foo');
+  // start a request that never finishes streaming its body
+  await page.evaluate(url => void fetch(url), server.PREFIX + '/streaming');
+  const responseFromServer = await responseFromServerPromise;
+  const request = await requestPromise;
+  const responsePromise = request.response();
+  const streamingResponse = await streamingResponsePromise;
+  const streamingTextPromise = streamingResponse.text().catch(e => e);
+  const failedRequests = [];
+  page.on('requestfailed', request => failedRequests.push(request));
+  // navigate within the same process, which should cancel the requests
+  await page.goto(server.PREFIX + '/title.html');
+  // make sure we aren't stalling this request on the server
+  responseFromServer.end('done');
+  // the response should resolve to null, because the page navigated.
+  expect(await responsePromise).toBe(null);
+  // both requests should fail with the browser's "canceled" error.
+  const errorText = { chromium: 'net::ERR_ABORTED', firefox: 'NS_BINDING_ABORTED', webkit: 'cancelled' }[browserName];
+  expect(failedRequests.map(r => r.url()).sort()).toEqual([server.PREFIX + '/foo', server.PREFIX + '/streaming']);
+  expect(request.failure().errorText).toContain(errorText);
+  expect(streamingResponse.request().failure().errorText).toContain(errorText);
+  // the partial body should not be available anymore.
+  expect((await streamingTextPromise).message).toContain('navigated away');
 });

@@ -16,7 +16,7 @@
 
 import { test, expect } from './pageTest';
 
-test('should detect roles', async ({ page }) => {
+test('SE-050 should detect roles', async ({ page }) => {
   await page.setContent(`
     <button>Hello</button>
     <select multiple="" size="2"></select>
@@ -49,7 +49,7 @@ test('should detect roles', async ({ page }) => {
   ]);
 });
 
-test('should support selected', async ({ page }) => {
+test('SE-051 should support selected', async ({ page }) => {
   await page.setContent(`
     <select>
       <option>Hi</option>
@@ -84,7 +84,7 @@ test('should support selected', async ({ page }) => {
   ]);
 });
 
-test('should support checked', async ({ page }) => {
+test('SE-052 should support checked', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43662' } }, async ({ page }) => {
   await page.setContent(`
     <input type=checkbox>
     <input type=checkbox checked>
@@ -130,9 +130,37 @@ test('should support checked', async ({ page }) => {
     `<div role="checkbox" aria-checked="false">Hello</div>`,
     `<div role="checkbox">Unknown</div>`,
   ]);
+
+  await page.setContent(`
+    <div role="checkbox" aria-checked="True" aria-readonly="True"
+      onclick="this.setAttribute('aria-checked', String(this.getAttribute('aria-checked').toLowerCase() !== 'true'))">Remember me</div>
+    <button aria-pressed="True">Bold</button>
+    <button aria-expanded="True">Menu</button>
+    <div role="Button" tabindex="0">Save</div>
+  `);
+  const checkbox = page.getByRole('checkbox');
+  expect(await page.getByRole('checkbox', { checked: true }).count()).toBe(1);
+  expect(await page.getByRole('button', { pressed: true }).count()).toBe(1);
+  expect(await page.getByRole('button', { expanded: true }).count()).toBe(1);
+  expect(await page.getByRole('button', { name: 'Save' }).count()).toBe(1);
+  await expect(checkbox).toBeChecked();
+  await expect(checkbox).not.toBeEditable();
+  await expect(page.locator('body')).toMatchAriaSnapshot(`
+    - checkbox "Remember me" [checked]
+    - button "Bold" [pressed]
+    - button "Menu" [expanded]
+    - button "Save"
+  `);
+  await checkbox.check();
+  await expect(checkbox).toHaveAttribute('aria-checked', 'True');
+
+  await checkbox.evaluate(element => element.setAttribute('aria-checked', 'Mixed'));
+  await page.getByRole('button', { name: 'Bold' }).evaluate(element => element.setAttribute('aria-pressed', 'Mixed'));
+  expect(await page.locator('role=checkbox[checked=mixed]').count()).toBe(1);
+  expect(await page.locator('role=button[pressed=mixed]').count()).toBe(1);
 });
 
-test('should support pressed', async ({ page }) => {
+test('SE-053 should support pressed', async ({ page }) => {
   await page.setContent(`
     <button>Hi</button>
     <button aria-pressed="true">Hello</button>
@@ -167,7 +195,7 @@ test('should support pressed', async ({ page }) => {
   ]);
 });
 
-test('should support expanded', async ({ page }) => {
+test('SE-054 should support expanded', async ({ page }) => {
   await page.setContent(`
     <div role="treeitem">Hi</div>
     <div role="treeitem" aria-expanded="true">Hello</div>
@@ -208,7 +236,7 @@ test('should support expanded', async ({ page }) => {
   ]);
 });
 
-test('should support disabled', async ({ page }) => {
+test('SE-055 should support disabled', async ({ page }) => {
   await page.setContent(`
     <button>Hi</button>
     <button disabled>Bye</button>
@@ -264,7 +292,7 @@ test('should support disabled', async ({ page }) => {
   ]);
 });
 
-test('should inherit disabled from the ancestor', async ({ page }) => {
+test('SE-056 should inherit disabled from the ancestor', async ({ page }) => {
   await page.setContent(`
     <span aria-disabled="true">
       <button>Click me!</button>
@@ -280,7 +308,7 @@ test('should inherit disabled from the ancestor', async ({ page }) => {
   await expect(page.locator('h1')).not.toBeDisabled();
 });
 
-test('should support disabled fieldset', async ({ page }) => {
+test('SE-057 should support disabled fieldset', async ({ page }) => {
   await page.setContent(`
     <fieldset disabled>
       <input></input>
@@ -322,7 +350,7 @@ test('should support disabled fieldset', async ({ page }) => {
   await expect.soft(page.getByTestId('deep-button')).toBeDisabled();
 });
 
-test('should support level', async ({ page }) => {
+test('SE-058 should support level', async ({ page }) => {
   await page.setContent(`
     <h1>Hello</h1>
     <h3>Hi</h3>
@@ -345,7 +373,7 @@ test('should support level', async ({ page }) => {
   ]);
 });
 
-test('should filter hidden, unless explicitly asked for', async ({ page }) => {
+test('SE-059 should filter hidden, unless explicitly asked for', async ({ page }) => {
   await page.setContent(`
     <button>Hi</button>
     <button hidden>Hello</button>
@@ -433,14 +461,23 @@ test('should filter hidden, unless explicitly asked for', async ({ page }) => {
   ]);
 });
 
-test('should support name', async ({ page }) => {
+test('SE-060 should support name', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43549' },
+}, async ({ page, browserName, browserMajorVersion }) => {
   await page.setContent(`
     <div role="button" aria-label=" Hello "></div>
     <div role="button" aria-label="Hallo"></div>
     <div role="button" aria-label="Hello" aria-hidden="true"></div>
     <div role="button" aria-label="123" aria-hidden="true"></div>
     <div role="button" aria-label='foo"bar' aria-hidden="true"></div>
+
+    <span id="title">Chosen name</span>
+    <div role="group" aria-labelledby="title"></div>
   `);
+
+  const group = page.getByRole('group');
+  await expect(group).toHaveAccessibleName('Chosen name');
+
   expect(await page.locator(`role=button[name="Hello"]`).evaluateAll(els => els.map(e => e.outerHTML))).toEqual([
     `<div role="button" aria-label=" Hello "></div>`,
   ]);
@@ -495,9 +532,20 @@ test('should support name', async ({ page }) => {
   expect(await page.getByRole('button', { name: '123', includeHidden: true }).evaluateAll(els => els.map(e => e.outerHTML))).toEqual([
     `<div role="button" aria-label="123" aria-hidden="true"></div>`,
   ]);
+
+  // Old electron/android do not have this API.
+  const isMissingAriaLabelledByElements = browserName === 'chromium' && browserMajorVersion < 135;
+  if (!isMissingAriaLabelledByElements) {
+    await group.evaluate(element => {
+      element.ariaLabelledByElements = [document.querySelector('#title')!];
+    });
+    expect(await page.getByRole('group', { name: 'Chosen name', exact: true }).evaluateAll(els => els.map(e => e.outerHTML))).toEqual([
+      `<div role="group" aria-labelledby=""></div>`,
+    ]);
+  }
 });
 
-test('should support option name with html whitespace', async ({ page }) => {
+test('SE-061 should support option name with html whitespace', async ({ page }) => {
   await page.setContent(`
     <select>
       <option value="html">&nbsp;HTML</option>
@@ -506,7 +554,7 @@ test('should support option name with html whitespace', async ({ page }) => {
   await expect(page.getByRole('option', { name: 'HTML' })).toHaveCount(1);
 });
 
-test('errors', async ({ page }) => {
+test('SE-062 errors', async ({ page }) => {
   const e0 = await page.$('role=[bar]').catch(e => e);
   expect(e0.message).toContain(`Role must not be empty`);
 
@@ -535,7 +583,7 @@ test('errors', async ({ page }) => {
   expect(e8.message).toContain(`"expanded" must be one of true, false`);
 });
 
-test('hidden with shadow dom slots', async ({ page }) => {
+test('SE-063 hidden with shadow dom slots', async ({ page }) => {
   await page.setContent(`
     <div make-hidden>
       <button>hidden1</button>
@@ -568,12 +616,12 @@ test('hidden with shadow dom slots', async ({ page }) => {
   ]);
 });
 
-test('should support output accessible name', async ({ page }) => {
+test('SE-064 should support output accessible name', async ({ page }) => {
   await page.setContent(`<label>Output1<output>output</output></label>`);
   await expect(page.getByRole('status', { name: 'Output1' })).toBeVisible();
 });
 
-test('should not match scope by default', async ({ page }) => {
+test('SE-065 should not match scope by default', async ({ page }) => {
   await page.setContent(`
     <ul>
       <li aria-label="Parent list">

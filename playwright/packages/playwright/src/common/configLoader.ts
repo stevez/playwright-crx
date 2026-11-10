@@ -94,8 +94,8 @@ export async function deserializeConfig(data: SerializedConfig): Promise<FullCon
 
 async function loadUserConfig(location: ConfigLocation): Promise<Config> {
   let object = location.resolvedConfigFile ? await requireOrImport(location.resolvedConfigFile) : {};
-  if (object && typeof object === 'object' && ('default' in object))
-    object = object['default'];
+  if (object && typeof object === 'object')
+    object = ('default' in object) ? object['default'] : { ...object };
   return object as Config;
 }
 
@@ -366,7 +366,7 @@ export async function loadConfigFromFile(configFile: string | undefined, overrid
   return await loadConfig(resolveConfigLocation(configFile), overrides, ignoreDeps);
 }
 
-export async function loadEmptyConfigForMergeReports() {
+export async function loadEmptyConfigForMergeReports(overrides?: ConfigCLIOverrides) {
   // Merge reports is "different" for no good reason. It should not pick up local config from the cwd.
-  return await loadConfig({ configDir: process.cwd() });
+  return await loadConfig({ configDir: process.cwd() }, overrides);
 }

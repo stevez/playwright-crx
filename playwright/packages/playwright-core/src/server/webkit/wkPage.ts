@@ -760,7 +760,7 @@ export class WKPage implements PageDelegate {
 
   async updateHttpCredentials() {
     const credentials = (this._browserContext._options.httpCredentials || []).map(c => ({ username: c.username, password: c.password, origin: c.origin }));
-    await this._pageProxySession.send('Emulation.setAuthCredentials', { credentials });
+    await this._pageProxySession.send('Emulation.setAuthCredentials', { credentials, proxyCredentials: this._browserContext.proxyCredentials() });
   }
 
   async updateFileChooserInterception() {
@@ -822,16 +822,19 @@ export class WKPage implements PageDelegate {
        * We polyfill the subset that's used for feature detection, so that login flows that'd work in Safari don't crash with "PublicKeyCredential is not defined" in CI.
        * https://developer.mozilla.org/en-US/docs/Web/API/PublicKeyCredential
        */
-      window.PublicKeyCredential ??= {
-        async getClientCapabilities() {
+      window.PublicKeyCredential ??= class PublicKeyCredential {
+        constructor() {
+          throw new TypeError('Illegal constructor');
+        }
+        static async getClientCapabilities() {
           return {};
-        },
-        async isConditionalMediationAvailable() {
+        }
+        static async isConditionalMediationAvailable() {
           return false;
-        },
-        async isUserVerifyingPlatformAuthenticatorAvailable() {
+        }
+        static async isUserVerifyingPlatformAuthenticatorAvailable() {
           return false;
-        },
+        }
       } as any;
     }
     return `(${polyfill.toString()})();`;
@@ -972,7 +975,7 @@ export class WKPage implements PageDelegate {
   }
 
   rafCountForStablePosition(): number {
-    return process.platform === 'win32' ? 5 : 1;
+    return process.env.PLAYWRIGHT_WEBKIT_RAF_COUNT_FIX ? 5 : 1;
   }
 
   async getContentQuads(handle: dom.ElementHandle): Promise<types.Quad[] | null> {

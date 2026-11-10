@@ -110,6 +110,21 @@ export async function resolveSymlinks(filePath: string): Promise<string> {
   }
 }
 
+// Like isPathInside, but follows symlinks. Unresolvable tails are compared as is.
+export function isRealPathInside(root: string, candidate: string): boolean {
+  return isPathInside(realPathOrSelf(root), realPathOrSelf(candidate));
+}
+
+function realPathOrSelf(filePath: string): string {
+  const resolved = path.resolve(filePath);
+  try {
+    return fs.realpathSync(resolved);
+  } catch {
+    const parent = path.dirname(resolved);
+    return parent === resolved ? resolved : path.join(realPathOrSelf(parent), path.basename(resolved));
+  }
+}
+
 export function resolveWithinRoot(root: string, fileName: string): string | null {
   if (path.isAbsolute(fileName))
     return null;
@@ -138,7 +153,21 @@ export function makeSocketPath(domain: string, name: string): string {
     const suffix = socketsDir ? `-${calculateSha1(socketsDir).slice(0, 8)}` : '';
     return `\\\\.\\pipe\\pw-${userNameHash}-${domain}-${name}${suffix}`;
   }
-  const baseDir = process.env.PWTEST_SOCKETS_DIR || path.join(os.tmpdir(), `pw-${userNameHash}`);
+  if (process.env.PWTEST_SOCKETS_DIR)
+    return makeSocketPathIn(process.env.PWTEST_SOCKETS_DIR, domain, name);
+  // Unlike a shared /tmp, the runtime directory is private to the user.
+  const runtimeDir = process.env.XDG_RUNTIME_DIR;
+  if (runtimeDir && path.isAbsolute(runtimeDir)) {
+    try {
+      return makeSocketPathIn(path.join(runtimeDir, 'playwright'), domain, name);
+    } catch {
+      // The variable can point to a directory that does not exist or belongs to another user.
+    }
+  }
+  return makeSocketPathIn(path.join(os.tmpdir(), `pw-${userNameHash}`), domain, name);
+}
+
+function makeSocketPathIn(baseDir: string, domain: string, name: string): string {
   const dir = path.join(baseDir, domain);
   let result = path.join(dir, sanitizeForFilePath(name) + '.sock');
   if (Buffer.byteLength(result) > UNIX_SOCKET_PATH_MAX)

@@ -195,6 +195,8 @@ var page = defaultContext.Pages[0];
 
 A CDP websocket endpoint or http url to connect to. For example `http://localhost:9222/` or `ws://127.0.0.1:9222/devtools/browser/387adf4c-243f-4051-a181-46798f4a46f4`.
 
+Alternatively, a browser channel name such as `chrome` or `msedge` to connect to a browser with remote debugging enabled in its default user data directory. On Linux, Playwright uses `CHROME_USER_DATA_DIR` when set. Otherwise, it uses `CHROME_CONFIG_HOME`, then `XDG_CONFIG_HOME`, then `~/.config` to locate that directory.
+
 ### option: BrowserType.connectOverCDP.endpointURL
 * since: v1.14
 * langs: js
@@ -233,8 +235,8 @@ Maximum time in milliseconds to wait for the connection to be established. Defau
 - `noDefaults` <[boolean]>
 
 When true, Playwright will not apply its default overrides to the existing default browser context.
-Specifically, [`option: Browser.newContext.acceptDownloads`] is left at the browser's setting, focus
-emulation is not enabled, and media emulation options (such as [`option: Browser.newContext.colorScheme`],
+Specifically, [`option: Browser.newContext.acceptDownloads`] and font families are left at the browser's
+settings, focus emulation is not enabled, and media emulation options (such as [`option: Browser.newContext.colorScheme`],
 [`option: Browser.newContext.reducedMotion`], [`option: Browser.newContext.forcedColors`], and
 [`option: Browser.newContext.contrast`]) are not applied. Useful when attaching to a user's daily-driver
 browser where these overrides would interfere with existing browser state. New contexts created via

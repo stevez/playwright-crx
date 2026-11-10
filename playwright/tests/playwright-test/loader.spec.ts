@@ -31,7 +31,7 @@ test('should return the location of a syntax error', async ({ runInlineTest }) =
   expect(result.passed).toBe(0);
   expect(result.failed).toBe(0);
   expect(result.output).toContain('error.spec.js');
-  expect(result.output).toContain('(3:18)');
+  expect(result.output).toContain(`> 3 |         foo: 'bar';\n    |                   ^`);
 });
 
 test('should return the location of a syntax error with deep stack', async ({ runInlineTest }) => {
@@ -63,6 +63,7 @@ test('should return the location of a syntax error with deep stack', async ({ ru
     `,
   });
   expect(result.exitCode).toBe(1);
+  expect(result.output).toContain('at error.ts:3');
   expect(result.output).toContain('qux.ts:2:7');
   expect(result.output).toContain('baz.ts:2:7');
   expect(result.output).toContain('bar.ts:2:7');
@@ -80,6 +81,21 @@ test('should print an improper error', async ({ runInlineTest }) => {
   expect(result.passed).toBe(0);
   expect(result.failed).toBe(0);
   expect(result.output).toContain('123');
+});
+
+test('should spread AggregateError sub-errors', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'error.spec.js': `
+      throw new AggregateError([
+        new AggregateError([new Error('a'), new Error('b')], 'inner'),
+        new Error('c'),
+      ], 'outer');
+    `
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.output).toContain('Error: a');
+  expect(result.output).toContain('Error: b');
+  expect(result.output).toContain('Error: c');
 });
 
 test('should print a null error', async ({ runInlineTest }) => {
@@ -1120,18 +1136,16 @@ test('should complain when one test file imports another', async ({ runInlineTes
 test('should support dynamic imports and requires of js, ts from js, ts and cjs', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     'helper.ts': `
-      const foo: string = 'foo';
-      module.exports.foo = foo;
+      export const foo: string = 'foo';
     `,
     'helper2.ts': `
-      module.exports.bar = 'bar';
+      export const bar = 'bar';
     `,
     'helper3.js': `
       module.exports.baz = 'baz';
     `,
     'helper4.ts': `
-      const foo: string = 'foo';
-      module.exports.foo = foo;
+      export const foo: string = 'foo';
     `,
     'passthrough.cjs': `
       module.exports.load = () => import('./helper2');
@@ -1226,8 +1240,11 @@ test('should allow test.extend.ts and test.ts files', async ({ runInlineTest }) 
   expect(result.passed).toBe(1);
 });
 
-test('should remove import css', async ({ runInlineTest }) => {
+test('should load css imports as empty modules', async ({ runInlineTest }) => {
   const result = await runInlineTest({
+    'index.css': `
+      body { color: red; }
+    `,
     'a.test.ts': `
       import './index.css';
       import foo from './index.css';
@@ -1235,6 +1252,44 @@ test('should remove import css', async ({ runInlineTest }) => {
 
       import { test, expect } from '@playwright/test';
       test('pass', async () => {});
+    `,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.passed).toBe(1);
+});
+
+test('should load css imports as empty modules in esm', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43295' },
+}, async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'package.json': `{ "type": "module" }`,
+    'index.css': `
+      body { color: red; }
+    `,
+    // Extensions Playwright does not transform are left to the loaders registered in the config.
+    'playwright.config.ts': `
+      import { register } from 'node:module';
+      register('./txt-loader.mjs', import.meta.url);
+      export default {};
+    `,
+    'txt-loader.mjs': `
+      export async function load(url, context, nextLoad) {
+        if (!url.endsWith('.txt'))
+          return nextLoad(url, context);
+        return { format: 'module', source: 'export default "hello"', shortCircuit: true };
+      }
+    `,
+    'hello.txt': `hello`,
+    'a.test.ts': `
+      import './index.css';
+      import styles from './index.css';
+      import text from './hello.txt';
+
+      import { test, expect } from '@playwright/test';
+      test('pass', async () => {
+        expect(styles).toEqual({});
+        expect(text).toBe('hello');
+      });
     `,
   });
   expect(result.exitCode).toBe(0);

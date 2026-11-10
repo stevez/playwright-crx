@@ -51,6 +51,34 @@ class WorkerData {
   }
 }
 
+// Scrolls the node into view, or, when it has no layout object (e.g. display: contents),
+// the first of its flattened descendants that has one. Returns false when there is none.
+function scrollNodeIntoViewIfNeeded(node, rect) {
+  // Only Element, Text and Document have scrollRectIntoViewIfNeeded (see GeometryUtils.webidl).
+  if (node.scrollRectIntoViewIfNeeded) {
+    try {
+      node.scrollRectIntoViewIfNeeded(rect.x, rect.y, rect.width, rect.height);
+      return true;
+    } catch (e) {
+      // nsINode::ScrollRectIntoViewIfNeeded (dom/base/nsINode.cpp in bootstrap.diff)
+      // throws a NotFoundError DOMException when the node has no primary frame.
+      // Anything else is unexpected.
+      if (e.name !== 'NotFoundError')
+        throw e;
+    }
+  }
+  let flatTreeChildren = node.childNodes;
+  if (node.openOrClosedShadowRoot)
+    flatTreeChildren = node.openOrClosedShadowRoot.childNodes;
+  else if (node.localName === 'slot' && node.assignedNodes && node.assignedNodes().length)
+    flatTreeChildren = node.assignedNodes();
+  for (const child of flatTreeChildren) {
+    if (scrollNodeIntoViewIfNeeded(child, rect))
+      return true;
+  }
+  return false;
+}
+
 export class PageAgent {
   constructor(browserChannel, frameTree) {
     this._browserChannel = browserChannel;
@@ -59,6 +87,7 @@ export class PageAgent {
     this._runtime = frameTree.runtime();
 
     this._workerData = new Map();
+    this._interceptFileChooserDialog = false;
 
     const docShell = frameTree.mainFrame().docShell();
     this._docShell = docShell;
@@ -97,8 +126,7 @@ export class PageAgent {
     this._eventListeners = [
       helper.addObserver(this._linkClicked.bind(this, false), 'juggler-link-click'),
       helper.addObserver(this._linkClicked.bind(this, true), 'juggler-link-click-sync'),
-      helper.addObserver(this._onWindowOpenInNewContext.bind(this), 'juggler-window-open-in-new-context'),
-      helper.addObserver(this._filePickerShown.bind(this), 'juggler-file-picker-shown'),
+      helper.addObserver(this._filePickerShown.bind(this), 'file-input-picker-opening'),
       helper.addObserver(this._onDocumentOpenLoad.bind(this), 'juggler-document-open-loaded'),
       helper.on(this._frameTree, 'frameattached', this._onFrameAttached.bind(this)),
       helper.on(this._frameTree, 'framedetached', this._onFrameDetached.bind(this)),
@@ -223,15 +251,16 @@ export class PageAgent {
     this._browserPage.emit('pageLinkClicked', { phase: sync ? 'after' : 'before' });
   }
 
-  _onWindowOpenInNewContext(docShell) {
-    // TODO: unify this with _onWindowOpen if possible.
-    const frame = this._frameTree.frameForDocShell(docShell);
-    if (!frame)
-      return;
-    this._browserPage.emit('pageWillOpenNewWindowAsynchronously');
+  setInterceptFileChooserDialog(enabled) {
+    this._interceptFileChooserDialog = enabled;
   }
 
   _filePickerShown(inputElement) {
+    // Fired by HTMLInputElement::InitFilePicker right before the native picker is opened.
+    // When intercepting, the parent process replaces the native picker with one that
+    // cancels immediately (see FilePickerOverride in TargetRegistry.js).
+    if (!this._interceptFileChooserDialog)
+      return;
     const frame = this._findFrameForNode(inputElement);
     if (!frame)
       return;
@@ -439,9 +468,7 @@ export class PageAgent {
       throw new Error('Node is detached from document');
     if (!rect)
       rect = { x: -1, y: -1, width: -1, height: -1};
-    if (unsafeObject.scrollRectIntoViewIfNeeded)
-      unsafeObject.scrollRectIntoViewIfNeeded(rect.x, rect.y, rect.width, rect.height);
-    else
+    if (!scrollNodeIntoViewIfNeeded(unsafeObject, rect))
       throw new Error('Node does not have a layout object');
   }
 

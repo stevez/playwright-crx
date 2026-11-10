@@ -21,7 +21,7 @@ import realColors from 'colors/safe';
 import { noColors } from '@isomorphic/colors';
 import { msToString } from '@isomorphic/formatUtils';
 import { parseErrorStack } from '@utils/stackTrace';
-import { getPackageManagerExecCommand } from '@utils/env';
+import { getAsBooleanFromENV, getPackageManagerExecCommand } from '@utils/env';
 import { fitToWidth } from '@utils/stringWidth';
 
 import { resolveReporterOutputPath, stripAnsiEscapes } from '../util';
@@ -51,6 +51,7 @@ type TestSummary = {
 
 export type CommonReporterOptions = {
   configDir: string,
+  onlyFailures?: boolean,
   _mode?: 'list' | 'test' | 'merge',
   _commandHash?: string,
 };
@@ -389,6 +390,31 @@ export class TerminalReporter implements ReporterV2 {
   }
 }
 
+export function isFailure(test: TestCase): boolean {
+  const outcome = test.outcome();
+  return outcome === 'unexpected' || outcome === 'flaky' || test.results.some(result => result.status === 'interrupted');
+}
+
+export type TestFilter = (test: TestCase) => boolean;
+
+export function createTestFilter(options: CommonReporterOptions, reporterName: 'HTML' | 'JSON' | 'JUNIT'): TestFilter | undefined {
+  const onlyFailures = options._mode !== 'list' && getAsBooleanFromENV(`PLAYWRIGHT_${reporterName}_ONLY_FAILURES`, !!options.onlyFailures);
+  return onlyFailures ? isFailure : undefined;
+}
+
+export function* visitTests(suite: Suite, filter?: TestFilter): Generator<TestCase> {
+  for (const entry of suite.entries()) {
+    if (entry.type !== 'test')
+      yield* visitTests(entry, filter);
+    else if (!filter || filter(entry))
+      yield entry;
+  }
+}
+
+export function filterTests<T extends Suite | TestCase>(entries: T[], filter?: TestFilter): T[] {
+  return filter ? entries.filter(entry => entry.type === 'test' ? filter(entry) : !visitTests(entry, filter).next().done) : entries;
+}
+
 function formatResultErrors(screen: Screen, test: TestCase, result: TestResult): string {
   const lines: string[] = [];
   if (test.outcome() === 'unexpected') {
@@ -497,12 +523,6 @@ function quotePathIfNeeded(path: string): string {
   return path;
 }
 
-const kReportedSymbol = Symbol('reported');
-
-export function markErrorsAsReported(result: TestResult) {
-  (result as any)[kReportedSymbol] = result.errors.length;
-}
-
 export function formatResultFailure(screen: Screen, test: TestCase, result: TestResult, initialIndent: string): ErrorDetails[] {
   const errorDetails: ErrorDetails[] = [];
 
@@ -517,8 +537,7 @@ export function formatResultFailure(screen: Screen, test: TestCase, result: Test
     });
   }
 
-  const reportedIndex = (result as any)[kReportedSymbol] || 0;
-  for (const error of result.errors.slice(reportedIndex)) {
+  for (const error of result.errors) {
     const formattedError = formatError(screen, error);
     errorDetails.push({
       message: indent(formattedError.message, initialIndent),

@@ -1,3 +1,3 @@
 REMOTE_URL="https://github.com/mozilla-firefox/firefox"
 BASE_BRANCH="release"
-BASE_REVISION="fdd757a2e09c9471cddf383e64e631e4ce178499"
+BASE_REVISION="9a2dc53c369c7ae5172018b35988e1d2ffeff402"

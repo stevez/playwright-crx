@@ -100,6 +100,8 @@ test('update user settings', {
 });
 ```
 
+The built-in `-exclusive-` lock runs the test only when no other tests are running.
+
 Learn more about [test locks](../test-parallel.md#test-locks).
 
 ### param: Test.(call).title
@@ -575,7 +577,7 @@ Additional named locks for all tests in the enclosing scope, including nested gr
 
 ### option: Test.describe.configure.mode
 * since: v1.10
-- `mode` <[TestMode]<"default"|"parallel"|"serial">>
+- `mode` "TestMode" <"default"|"parallel"|"serial">
 
 Execution mode. Learn more about the execution modes [here](../test-parallel.md).
 
@@ -1137,6 +1139,7 @@ To annotate test as "failing" at runtime:
 * `test.fail(condition, description)`
 * `test.fail(callback, description)`
 * `test.fail()`
+* `test.fail(description)`
 
 **Usage**
 
@@ -1176,7 +1179,7 @@ test('fail in WebKit 2', async ({ page }) => {
 });
 ```
 
-You can also call `test.fail()` without arguments inside the test body to always mark the test as failed. We recommend declaring a failing test with `test.fail(title, body)` instead.
+You can also call `test.fail()` without a condition inside the test body to always mark the test as failed, optionally with a `description`. We recommend declaring a failing test with `test.fail(title, body)` instead.
 
 ```js
 import { test, expect } from '@playwright/test';
@@ -1293,6 +1296,7 @@ To annotate test as "fixme" at runtime:
 * `test.fixme(condition, description)`
 * `test.fixme(callback, description)`
 * `test.fixme()`
+* `test.fixme(description)`
 
 **Usage**
 
@@ -1332,7 +1336,7 @@ test('to be fixed in Safari 2', async ({ page }) => {
 });
 ```
 
-You can also call `test.fixme()` without arguments inside the test body to always mark the test as failed. We recommend using `test.fixme(title, body)` instead.
+You can also call `test.fixme()` without a condition inside the test body to always mark the test as "fixme", optionally with a `description`. We recommend using `test.fixme(title, body)` instead.
 
 ```js
 import { test, expect } from '@playwright/test';
@@ -1515,6 +1519,7 @@ To skip a test at runtime:
 * `test.skip(condition, description)`
 * `test.skip(callback, description)`
 * `test.skip()`
+* `test.skip(description)`
 
 **Usage**
 
@@ -1554,13 +1559,13 @@ test('Safari-only test 2', async ({ page }) => {
 });
 ```
 
-You can also call `test.skip()` without arguments inside the test body to always skip the test. However, we recommend using `test.skip(title, body)` instead.
+You can also call `test.skip()` without a condition inside the test body to always skip the test, optionally with a `description`. However, we recommend using `test.skip(title, body)` instead.
 
 ```js
 import { test, expect } from '@playwright/test';
 
 test('less readable', async ({ page }) => {
-  test.skip();
+  test.skip('Not implemented yet');
   // ...
 });
 ```
@@ -1617,6 +1622,7 @@ Marks a test as "slow". Slow test will be given triple the default timeout.
 Note that [`method: Test.slow`] cannot be used in a `beforeAll` or `afterAll` hook. Use [`method: Test.setTimeout`] instead.
 
 * `test.slow()`
+* `test.slow(description)`
 * `test.slow(condition, description)`
 * `test.slow(callback, description)`
 
@@ -1985,5 +1991,4 @@ test('test with locale', async ({ page }) => {
 - `options` <[TestOptions]>
 
 An object with local options.
-
 

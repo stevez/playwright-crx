@@ -713,13 +713,17 @@ const cookieSet = declareCommand({
 
 const cookieDelete = declareCommand({
   name: 'cookie-delete',
-  description: 'Delete a specific cookie',
+  description: 'Delete a specific cookie (optionally only on a given domain/path)',
   category: 'storage',
   args: z.object({
     name: z.string().describe('Cookie name'),
   }),
+  options: z.object({
+    domain: z.string().optional().describe('Only delete the cookie on this domain'),
+    path: z.string().optional().describe('Only delete the cookie on this path'),
+  }),
   toolName: 'browser_cookie_delete',
-  toolParams: ({ name }) => ({ name }),
+  toolParams: ({ name, domain, path }) => ({ name, domain, path }),
 });
 
 const cookieClear = declareCommand({
@@ -943,10 +947,11 @@ const consoleList = declareCommand({
     ['min-level']: z.string().optional().describe('Level of the console messages to return. Each level includes the messages of more severe levels. Defaults to "info".'),
   }),
   options: z.object({
+    all: z.boolean().optional().describe('Whether to return all console messages since the beginning of the session, not just since the last navigation'),
     clear: z.boolean().optional().describe('Whether to clear the console list'),
   }),
   toolName: ({ clear }) => clear ? 'browser_console_clear' : 'browser_console_messages',
-  toolParams: ({ ['min-level']: level, clear }) => clear ? ({}) : ({ level }),
+  toolParams: ({ ['min-level']: level, all, clear }) => clear ? ({}) : ({ level, all }),
 });
 
 const networkRequests = declareCommand({
@@ -957,10 +962,11 @@ const networkRequests = declareCommand({
   options: z.object({
     static: z.boolean().optional().describe('Whether to include successful static resources like images, fonts, scripts, etc. Defaults to false.'),
     filter: z.string().optional().describe('Only return requests whose URL matches this regexp (e.g. "/api/.*user").'),
+    all: z.boolean().optional().describe('Whether to return all network requests since the beginning of the session, not just since the last navigation'),
     clear: z.boolean().optional().describe('Whether to clear the network list'),
   }),
   toolName: ({ clear }) => clear ? 'browser_network_clear' : 'browser_network_requests',
-  toolParams: ({ static: s, filter, clear }) => clear ? ({}) : ({ static: s, filter }),
+  toolParams: ({ static: s, filter, all, clear }) => clear ? ({}) : ({ static: s, filter, all }),
 });
 
 const filenameOption = z.string().optional().describe('Filename to save the result to. If not provided, output is returned as text.');

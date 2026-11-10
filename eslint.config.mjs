@@ -88,7 +88,6 @@ export default [
     }
   },
   // TODO lint tests
-  projectSection('examples/recorder-crx'),
   projectSection('examples/todomvc-crx'),
 ];
 

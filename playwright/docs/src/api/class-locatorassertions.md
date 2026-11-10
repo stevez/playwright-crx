@@ -247,7 +247,7 @@ Whether to use `element.innerText` instead of `element.textContent` when retriev
 
 The opposite of [`method: LocatorAssertions.toHaveAccessibleDescription`].
 
-### param: LocatorAssertions.NotToHaveAccessibleDescription.name
+### param: LocatorAssertions.NotToHaveAccessibleDescription.description
 * since: v1.44
 - `description` <[string]|[RegExp]>
 
@@ -375,6 +375,12 @@ CSS property name.
 - `value` <[string]|[RegExp]>
 
 CSS property value.
+
+### option: LocatorAssertions.NotToHaveCSS.pseudo
+* since: v1.65
+- `pseudo` "PseudoElement" <"before"|"after">
+
+Pseudo-element to read computed styles from.
 
 ### option: LocatorAssertions.NotToHaveCSS.timeout = %%-csharp-java-python-assertions-timeout-%%
 * since: v1.18
@@ -1824,7 +1830,7 @@ CSS property value.
 
 ### option: LocatorAssertions.toHaveCSS.pseudo
 * since: v1.60
-- `pseudo` <[PseudoElement]<"before"|"after">>
+- `pseudo` "PseudoElement" <"before"|"after">
 
 Pseudo-element to read computed styles from.
 

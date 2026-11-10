@@ -370,7 +370,10 @@ export class ElementHandle<T extends Node = Node> extends js.JSHandle<T> {
         continue;
       }
       if (typeof result === 'object' && 'missingState' in result) {
-        progress.log(`  element is not ${result.missingState}`);
+        if (result.missingState === 'non-inert')
+          progress.log('  element is inert');
+        else
+          progress.log(`  element is not ${result.missingState}`);
         continue;
       }
       return result;
@@ -427,7 +430,7 @@ export class ElementHandle<T extends Node = Node> extends js.JSHandle<T> {
       await progress.race((options as any).__testHookBeforeStable());
 
     if (!force) {
-      const elementStates: ElementState[] = action.waitForEnabled ? ['visible', 'enabled', 'stable'] : ['visible', 'stable'];
+      const elementStates: ElementState[] = action.waitForEnabled ? ['visible', 'enabled', 'stable', 'non-inert'] : ['visible', 'stable'];
       progress.log(`  waiting for element to be ${action.waitForEnabled ? 'visible, enabled and stable' : 'visible and stable'}`);
       const result = await progress.race(this.evaluateInUtility(async ([injected, node, { elementStates, frameVisible }]) => {
         return await injected.checkElementStates(node, elementStates, frameVisible);
@@ -599,7 +602,7 @@ export class ElementHandle<T extends Node = Node> extends js.JSHandle<T> {
       const optionsToSelect = [...elements, ...values];
       const result = await progress.race(this.evaluateInUtility(async ([injected, node, { optionsToSelect, force, frameVisible }]) => {
         if (!force) {
-          const checkResult = await injected.checkElementStates(node, ['visible', 'enabled'], frameVisible);
+          const checkResult = await injected.checkElementStates(node, ['visible', 'enabled', 'non-inert'], frameVisible);
           if (checkResult)
             return checkResult;
         }
@@ -631,7 +634,7 @@ export class ElementHandle<T extends Node = Node> extends js.JSHandle<T> {
         progress.log('  waiting for element to be visible, enabled and editable');
       const result = await progress.race(this.evaluateInUtility(async ([injected, node, { value, force, frameVisible }]) => {
         if (!force) {
-          const checkResult = await injected.checkElementStates(node, ['visible', 'enabled', 'editable'], frameVisible);
+          const checkResult = await injected.checkElementStates(node, ['visible', 'enabled', 'editable', 'non-inert'], frameVisible);
           if (checkResult)
             return checkResult;
         }
@@ -768,11 +771,17 @@ export class ElementHandle<T extends Node = Node> extends js.JSHandle<T> {
         fs.promises.access(localPath, fs.constants.F_OK)
       ))));
       // Browsers traverse the given directory asynchronously and we want to ensure all files are uploaded.
-      const waitForInputEvent = localDirectory ? this.evaluate(node => new Promise<any>(fulfill => {
-        node.addEventListener('input', fulfill, { once: true });
-      })).catch(() => {}) : Promise.resolve();
-      await this._page.delegate.setInputFilePaths(progress, retargeted, localPathsOrDirectory);
-      await progress.race(waitForInputEvent);
+      // Install the listener on the input itself before setting the files, so that the event is not missed.
+      const inputEvent = localDirectory ? await progress.race(retargeted.evaluateHandle(node => ({
+        promise: new Promise<void>(fulfill => node.addEventListener('input', () => fulfill(), { once: true })),
+      })).catch(() => undefined)) : undefined;
+      try {
+        await this._page.delegate.setInputFilePaths(progress, retargeted, localPathsOrDirectory);
+        if (inputEvent)
+          await progress.race(inputEvent.evaluate(event => event.promise).catch(() => {}));
+      } finally {
+        inputEvent?.dispose();
+      }
     } else {
       await progress.race(retargeted.evaluateInUtility(([injected, node, files]) =>
         injected.setInputFiles(node, files), filePayloads!));

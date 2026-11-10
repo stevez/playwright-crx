@@ -41,6 +41,7 @@ type ParsedTsConfigData = {
   paths: { key: string, values: string[] }[];
   allowJs: boolean;
   jsx?: JsxOptions;
+  useDefineForClassFields?: boolean;
 };
 const cachedTSConfigs = new Map<string, ParsedTsConfigData[]>();
 
@@ -86,7 +87,14 @@ function validateTsConfig(tsconfig: LoadedTsConfig): ParsedTsConfigData {
       jsxFragmentFactory: tsconfig.jsxFragmentFactory,
       jsxImportSource: tsconfig.jsxImportSource,
     } : undefined,
+    useDefineForClassFields: tsconfig.useDefineForClassFields ?? (tsconfig.target ? targetUsesDefineForClassFields(tsconfig.target) : undefined),
   };
+}
+
+function targetUsesDefineForClassFields(target: string): boolean {
+  const normalized = target.toLowerCase();
+  const year = normalized.match(/^es(\d{4})$/)?.[1];
+  return normalized === 'esnext' || (!!year && +year >= 2022);
 }
 
 function loadAndValidateTsconfigsForFile(file: string): ParsedTsConfigData[] {
@@ -209,10 +217,24 @@ export function resolveHook(filename: string, specifier: string): string | undef
   }
 }
 
+const kStyleExtensions = ['.css', '.less', '.scss'];
+
+export function isStyleFile(filename: string): boolean {
+  return kStyleExtensions.includes(path.extname(filename));
+}
+
 export function shouldTransform(filename: string): boolean {
   if (_externalMatcher(filename))
     return false;
   return !cc.belongsToNodeModules(filename);
+}
+
+const kTransformedExtensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.mts', '.cjs', '.cts'];
+
+// Files with other extensions are left to Node.js and the loaders registered by the user.
+export function hasTransformedExtension(filename: string): boolean {
+  const extension = path.extname(filename);
+  return !extension || kTransformedExtensions.includes(extension);
 }
 
 export function transformHook(originalCode: string, filename: string, moduleUrl?: string): { code: string, serializedCache?: any } {
@@ -221,8 +243,11 @@ export function transformHook(originalCode: string, filename: string, moduleUrl?
     process.env.PW_TEST_SOURCE_TRANSFORM_SCOPE &&
     process.env.PW_TEST_SOURCE_TRANSFORM_SCOPE.split(pathSeparator).some(f => filename.startsWith(f));
   const pluginsEpilogue = hasPreprocessor ? [[process.env.PW_TEST_SOURCE_TRANSFORM!]] as BabelPlugin[] : [];
-  const jsx = loadAndValidateTsconfigsForFile(filename).find(tsconfig => tsconfig.jsx)?.jsx;
-  const hash = calculateHash(originalCode, filename, !!moduleUrl, pluginsEpilogue, jsx);
+  const tsconfigs = loadAndValidateTsconfigsForFile(filename);
+  const jsx = tsconfigs.find(tsconfig => tsconfig.jsx)?.jsx;
+  // Without "target", tsc defaults to the latest one, which defines class fields.
+  const useDefineForClassFields = tsconfigs.find(tsconfig => tsconfig.useDefineForClassFields !== undefined)?.useDefineForClassFields ?? true;
+  const hash = calculateHash(originalCode, filename, !!moduleUrl, pluginsEpilogue, useDefineForClassFields, jsx);
   const { cachedCode, addToCache, serializedCache } = cc.getFromCompilationCache(filename, hash, moduleUrl);
   if (cachedCode !== undefined)
     return { code: cachedCode, serializedCache };
@@ -232,7 +257,7 @@ export function transformHook(originalCode: string, filename: string, moduleUrl?
   process.env.BROWSERSLIST_IGNORE_OLD_DATA = 'true';
 
   const { babelTransform }: { babelTransform: BabelTransformFunction } = require(libPath('transform', 'babelBundle'));
-  const babelResult = babelTransform(originalCode, filename, !!moduleUrl, pluginsEpilogue, jsx);
+  const babelResult = babelTransform(originalCode, filename, !!moduleUrl, pluginsEpilogue, useDefineForClassFields, jsx);
   if (!babelResult?.code)
     return { code: originalCode, serializedCache };
   const { code, map } = babelResult;
@@ -240,13 +265,14 @@ export function transformHook(originalCode: string, filename: string, moduleUrl?
   return { code, serializedCache: added.serializedCache };
 }
 
-function calculateHash(content: string, filePath: string, isModule: boolean, pluginsEpilogue: BabelPlugin[], jsx: JsxOptions | undefined): string {
+function calculateHash(content: string, filePath: string, isModule: boolean, pluginsEpilogue: BabelPlugin[], useDefineForClassFields: boolean, jsx: JsxOptions | undefined): string {
   const hash = crypto.createHash('sha1')
       .update(isModule ? 'esm' : 'no_esm')
       .update(content)
       .update(filePath)
       .update(version)
       .update(pluginsEpilogue.map(p => p[0]).join(','))
+      .update(useDefineForClassFields ? 'define' : 'assign')
       .update(jsx ? JSON.stringify(jsx) : '')
       .digest('hex');
   return hash;
@@ -297,10 +323,15 @@ export async function requireOrImport(file: string) {
 
 let transformInstalled = false;
 
-function installTransformIfNeeded() {
+export function installTransformIfNeeded() {
   if (transformInstalled)
     return;
   transformInstalled = true;
+
+  // Transpilation in `bun` is not necessary, and trying to register a hook would cause issues.
+  // https://github.com/oven-sh/bun/issues/8222#issuecomment-3665364677
+  if ('Bun' in globalThis)
+    return;
 
   registerESMLoader();
   cc.installSourceMapSupport();
@@ -334,7 +365,11 @@ function installCJSHooks() {
 
   addHook((code, filename) => {
     return transformHook(code, filename).code;
-  }, shouldTransform, ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.mts', '.cjs', '.cts']);
+  }, shouldTransform, kTransformedExtensions);
+
+  const extensions = (Module as any)._extensions;
+  for (const ext of kStyleExtensions)
+    extensions[ext] = () => {};
 }
 
 const collectCJSDependencies = (module: Module, dependencies: Set<string>) => {
@@ -349,25 +384,42 @@ const collectCJSDependencies = (module: Module, dependencies: Set<string>) => {
 export function wrapFunctionWithLocation<A extends any[], R>(func: (location: Location, ...args: A) => R): (...args: A) => R {
   return (...args) => {
     const oldPrepareStackTrace = Error.prepareStackTrace;
-    Error.prepareStackTrace = (error, stackFrames) => {
-      const frame = sourceMapSupport.wrapCallSite(stackFrames[1] as any) as NodeJS.CallSite;
-      const fileName = frame.getFileName();
-      // Node error stacks for modules use file:// urls instead of paths.
-      const file = (fileName && fileName.startsWith('file://')) ? url.fileURLToPath(fileName) : fileName;
-      return {
-        file,
-        line: frame.getLineNumber(),
-        column: frame.getColumnNumber(),
-      };
-    };
     const oldStackTraceLimit = Error.stackTraceLimit;
+    Error.prepareStackTrace = 'Bun' in globalThis ? bunCallerLocation : nodeCallerLocation;
     Error.stackTraceLimit = 2;
     const obj: { stack: Location } = {} as any;
-    Error.captureStackTrace(obj);
-    const location = obj.stack;
-    Error.stackTraceLimit = oldStackTraceLimit;
-    Error.prepareStackTrace = oldPrepareStackTrace;
+    let location: Location;
+    try {
+      Error.captureStackTrace(obj);
+      location = obj.stack;
+    } finally {
+      Error.stackTraceLimit = oldStackTraceLimit;
+      Error.prepareStackTrace = oldPrepareStackTrace;
+    }
     return func(location, ...args);
+  };
+}
+
+function nodeCallerLocation(error: Error, stackFrames: NodeJS.CallSite[]) {
+  const frame = sourceMapSupport.wrapCallSite(stackFrames[1] as any) as NodeJS.CallSite;
+  const fileName = frame.getFileName();
+  // Node error stacks for modules use file:// urls instead of paths.
+  const file = (fileName && fileName.startsWith('file://')) ? url.fileURLToPath(fileName) : fileName;
+  return {
+    file,
+    line: frame.getLineNumber(),
+    column: frame.getColumnNumber(),
+  };
+}
+
+function bunCallerLocation(error: Error, stackFrames: NodeJS.CallSite[]) {
+  const frame = stackFrames[1];
+  // Bun's CallSite.getColumnNumber() is 0-based, and Bun does not apply source maps of .js files.
+  const position = sourceMapSupport.mapSourcePosition({ source: frame.getFileName()!, line: frame.getLineNumber()!, column: frame.getColumnNumber()! });
+  return {
+    file: position.source,
+    line: position.line,
+    column: position.column + 1,
   };
 }
 
@@ -384,11 +436,6 @@ let loaderChannel: PortTransport | undefined;
 function registerESMLoader() {
   // Opt-out switch.
   if (process.env.PW_DISABLE_TS_ESM)
-    return;
-
-  // Transpilation in `bun` is not necessary, and trying to register a hook would cause issues.
-  // https://github.com/oven-sh/bun/issues/8222#issuecomment-3665364677
-  if ('Bun' in globalThis)
     return;
 
   const nodeModule = require('node:module');
@@ -429,7 +476,7 @@ export async function startCollectingFileDeps() {
 export async function stopCollectingFileDeps(file: string) {
   cc.stopCollectingFileDeps(file);
   if (loaderChannel)
-    await loaderChannel.send('stopCollectingFileDeps', { file });
+    await loaderChannel.send('stopCollectingFileDeps', { file, dependencies: [...cc.dependenciesForTestFile(file)] });
 }
 
 export async function incorporateCompilationCache() {

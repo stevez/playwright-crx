@@ -450,7 +450,7 @@ test('should respect path resolver for JS files when allowJs', async ({ runInlin
       });
     `,
     'foo/bar/util/b.ts': `
-      module.exports = { foo: 'foo' };
+      export const foo = 'foo';
     `,
   });
 
@@ -477,7 +477,7 @@ test('should not respect path resolver for JS files w/o allowJS', async ({ runIn
       });
     `,
     'foo/bar/util/b.ts': `
-      module.exports = { foo: 'foo' };
+      export const foo = 'foo';
     `,
   });
 
@@ -511,7 +511,7 @@ test('should respect path resolver for JS and TS files from jsconfig.json', asyn
       });
     `,
     'foo/bar/util/b.ts': `
-      module.exports = { foo: 'foo' };
+      export const foo = 'foo';
     `,
   });
 
@@ -552,7 +552,7 @@ test('should support extends in tsconfig.json', async ({ runInlineTest }) => {
       });
     `,
     'dir/foo/bar/util/file.ts': `
-      module.exports = { foo: 'foo' };
+      export const foo = 'foo';
     `,
   });
 
@@ -582,7 +582,7 @@ test('should resolve paths relative to the originating config when extending and
       });
     `,
     'mapped/file.ts': `
-      module.exports = { foo: 'foo' };
+      export const foo = 'foo';
     `,
   });
 
@@ -605,6 +605,77 @@ test('should resolve extends from an explicit node_modules subpath', async ({ ru
     }`,
     'tsconfig.json': `{
       "extends": "@my/tsconfig-base/tsconfig.json",
+      "compilerOptions": {
+        "baseUrl": ".",
+      },
+    }`,
+    'a.test.ts': `
+      import { foo } from 'util/file';
+      import { test, expect } from '@playwright/test';
+      test('test', () => {
+        expect(foo).toBe('foo');
+      });
+    `,
+    'mapped/file.ts': `
+      export const foo = 'foo';
+    `,
+  });
+
+  expect(result.passed).toBe(1);
+  expect(result.exitCode).toBe(0);
+});
+
+test('should resolve extends from a bare package name', async ({ runInlineTest }) => {
+  test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43234' });
+
+  // The @tsconfig/* base packages are documented as "extends": "@tsconfig/node20".
+  // tsc resolves a bare package name to the tsconfig.json at the package root.
+  const result = await runInlineTest({
+    'package.json': JSON.stringify({ name: 'test-project' }),
+    'node_modules/@tsconfig/base/package.json': JSON.stringify({ name: '@tsconfig/base', version: '1.0.0' }),
+    'node_modules/@tsconfig/base/tsconfig.json': `{
+      "compilerOptions": {
+        "paths": {
+          "util/*": ["./mapped/*"],
+        },
+      },
+    }`,
+    'tsconfig.json': `{
+      "extends": "@tsconfig/base",
+      "compilerOptions": {
+        "baseUrl": ".",
+      },
+    }`,
+    'a.test.ts': `
+      import { foo } from 'util/file';
+      import { test, expect } from '@playwright/test';
+      test('test', () => {
+        expect(foo).toBe('foo');
+      });
+    `,
+    'mapped/file.ts': `
+      export const foo = 'foo';
+    `,
+  });
+  expect(result.passed).toBe(1);
+  expect(result.exitCode).toBe(0);
+});
+
+test('should resolve extends from the "tsconfig" field in package.json', async ({ runInlineTest }) => {
+  test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43234' });
+
+  const result = await runInlineTest({
+    'package.json': JSON.stringify({ name: 'test-project' }),
+    'node_modules/@my/tsconfig-base/package.json': JSON.stringify({ name: '@my/tsconfig-base', version: '1.0.0', tsconfig: './base.json' }),
+    'node_modules/@my/tsconfig-base/base.json': `{
+      "compilerOptions": {
+        "paths": {
+          "util/*": ["./mapped/*"],
+        },
+      },
+    }`,
+    'tsconfig.json': `{
+      "extends": "@my/tsconfig-base",
       "compilerOptions": {
         "baseUrl": ".",
       },

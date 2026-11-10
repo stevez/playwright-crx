@@ -36,10 +36,15 @@ const cookieList = defineTool({
     const browserContext = await context.currentBrowserContext();
     let cookies = await browserContext.cookies();
 
-    if (params.domain)
-      cookies = cookies.filter(c => c.domain.includes(params.domain!));
+    if (params.domain) {
+      const domain = normalizeDomain(params.domain);
+      cookies = cookies.filter(c => {
+        const cookieDomain = normalizeDomain(c.domain);
+        return cookieDomain === domain || cookieDomain.endsWith('.' + domain);
+      });
+    }
     if (params.path)
-      cookies = cookies.filter(c => c.path.startsWith(params.path!));
+      cookies = cookies.filter(c => pathMatches(c.path, params.path!));
 
     if (cookies.length === 0)
       response.addTextResult('No cookies found');
@@ -100,11 +105,13 @@ const cookieSet = defineTool({
     const tab = await context.ensureTab();
 
     // Get the current page URL to determine default domain
-    const url = new URL(tab.page.url());
+    const domain = params.domain || new URL(tab.page.url()).hostname;
+    if (!domain)
+      throw new Error(`Cannot infer the cookie domain from the page URL "${tab.page.url()}", specify "domain".`);
     const cookie: any = {
       name: params.name,
       value: params.value,
-      domain: params.domain || url.hostname,
+      domain,
       path: params.path || '/',
     };
 
@@ -128,17 +135,21 @@ const cookieDelete = defineTool({
   schema: {
     name: 'browser_cookie_delete',
     title: 'Delete cookie',
-    description: 'Delete a specific cookie',
+    description: 'Delete a specific cookie (optionally only on a given domain/path)',
     inputSchema: z.object({
       name: z.string().describe('Cookie name to delete'),
+      domain: z.string().optional().describe('Only delete the cookie on this domain'),
+      path: z.string().optional().describe('Only delete the cookie on this path'),
     }),
     type: 'action',
   },
 
   handle: async (context, params, response) => {
     const browserContext = await context.currentBrowserContext();
-    await browserContext.clearCookies({ name: params.name });
-    response.addCode(`await page.context().clearCookies({ name: ${escapeWithQuotes(params.name)} });`);
+    const filter = { name: params.name, domain: params.domain, path: params.path };
+    await browserContext.clearCookies(filter);
+    const options = Object.entries(filter).filter(([, value]) => value !== undefined).map(([key, value]) => `${key}: ${escapeWithQuotes(value!)}`);
+    response.addCode(`await page.context().clearCookies({ ${options.join(', ')} });`);
   },
 });
 
@@ -159,6 +170,17 @@ const cookieClear = defineTool({
     response.addCode(`await page.context().clearCookies();`);
   },
 });
+
+function normalizeDomain(domain: string): string {
+  return domain.replace(/^\./, '').toLowerCase();
+}
+
+function pathMatches(cookiePath: string, filterPath: string): boolean {
+  if (cookiePath === filterPath)
+    return true;
+  const prefix = filterPath.endsWith('/') ? filterPath : filterPath + '/';
+  return cookiePath.startsWith(prefix);
+}
 
 export default [
   cookieList,

@@ -16,6 +16,8 @@
 
 // @ts-nocheck
 
+import path from 'path';
+
 import { test as baseTest, expect } from './ui-mode-fixtures';
 import { TestServerConnection } from '../../packages/playwright/lib/isomorphic';
 import ws from 'ws';
@@ -125,6 +127,35 @@ test('file watching', async ({ startTestServer, writeFiles }, testInfo) => {
   ]);
 });
 
+test('file watching with a directory', async ({ startTestServer, writeFiles }, testInfo) => {
+  // The VS Code extension watches the test dir with a trailing separator when watching all tests,
+  // and a directory without it when watching a folder.
+  await writeFiles({
+    'a.test.ts': `
+      import { test } from '@playwright/test';
+      test('foo', () => {});
+      `,
+  });
+
+  const testServerConnection = await startTestServer();
+  expect(await testServerConnection.runTests({ locations: [] })).toEqual({ status: 'passed' });
+
+  await testServerConnection.watch({ fileNames: [testInfo.outputPath() + path.sep] });
+
+  await writeFiles({
+    'a.test.ts': `
+      import { test } from '@playwright/test';
+      test('foo', () => {});
+      test('bar', () => {});
+      `,
+  });
+
+  const changedEvents = () => testServerConnection.events.filter(e => e[0] === 'testFilesChanged');
+  await expect.poll(changedEvents).toEqual([
+    ['testFilesChanged', { testFiles: [testInfo.outputPath('a.test.ts')] }]
+  ]);
+});
+
 test('should list tests with testIdAttribute', async ({ startTestServer, writeFiles }) => {
   await writeFiles({
     'a.test.ts': `
@@ -132,7 +163,7 @@ test('should list tests with testIdAttribute', async ({ startTestServer, writeFi
       test('foo', () => {});
       `,
     'playwright.config.ts': `
-        module.exports = {
+        export default {
         projects: [{
           name: 'chromium',
           use: {
@@ -157,7 +188,7 @@ test('should list non-default projects', async ({ startTestServer, writeFiles })
       test('foo', () => {});
       `,
     'playwright.config.ts': `
-      module.exports = {
+      export default {
         projects: [
           { name: 'default' },
           { name: 'non-default', default: false },
@@ -208,23 +239,42 @@ test('find related test files errors', async ({ startTestServer, writeFiles }) =
   const aSpecTs = test.info().outputPath('a.spec.ts');
   const result = await testServerConnection.findRelatedTestFiles({ files: [aSpecTs] });
   expect(result).toEqual({ testFiles: [], errors: [
-    expect.objectContaining({ message: expect.stringContaining(`Identifier 'a' has already been declared`) }),
+    expect.objectContaining({ message: expect.stringContaining(`has already been declared`) }),
     expect.objectContaining({ message: expect.stringContaining(`No tests found`) }),
   ] });
 
   expect((await testServerConnection.runGlobalTeardown({})).status).toBe('passed');
 });
 
-test('find related test files', async ({ startTestServer, writeFiles }) => {
-  await writeFiles(filesWithDependency);
+test('find related test files', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43824' },
+}, async ({ startTestServer, writeFiles }) => {
   const testServerConnection = await startTestServer();
+  await writeFiles({
+    ...filesWithDependency,
+    'package.json': `{ "type": "module" }`,
+    'src/other.test.ts': `
+      import { test, expect } from '@playwright/test';
+      import { label } from './button';
+      test('pass', () => expect(label).toBe('Button'));
+    `,
+    'src/unrelated.test.ts': `
+      import { test } from '@playwright/test';
+      test('pass', () => {});
+    `,
+    'src/button.ts': `export { label } from './label';`,
+    'src/label.ts': `export const label = 'Button';`,
+  });
   await testServerConnection.initialize({ interceptStdio: true });
   expect((await testServerConnection.runGlobalSetup({})).status).toBe('passed');
 
   const buttonTs = test.info().outputPath('src/button.ts');
   const buttonTestTs = test.info().outputPath('src/button.test.ts');
   const result = await testServerConnection.findRelatedTestFiles({ files: [buttonTs] });
-  expect(result).toEqual({ testFiles: [buttonTestTs] });
+  const otherTestTs = test.info().outputPath('src/other.test.ts');
+  expect(result).toEqual({ testFiles: [buttonTestTs, otherTestTs] });
+  expect(await testServerConnection.findRelatedTestFiles({ files: [test.info().outputPath('src/label.ts')] }))
+      .toEqual({ testFiles: [buttonTestTs, otherTestTs] });
 
   expect((await testServerConnection.runGlobalTeardown({})).status).toBe('passed');
 });
