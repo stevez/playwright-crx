@@ -34,3 +34,10 @@ That can be done in `chrome://extensions` but to avoid lots of clicks and to all
 This project will open the extension devtools and set a `debugger` instruction for the debugger to pause before running the test.
 
 That way, you can set all necessary breakpoints before continuing the execution.
+
+The project is only enabled when `CRX_DEVTOOLS` is set, so regular runs don't wait on the debugger. Run it for a single test:
+
+```bash
+cd tests
+CRX_DEVTOOLS=1 npx playwright test --project="Chrome DevTools" -g "test name"
+```

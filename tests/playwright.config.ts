@@ -35,7 +35,8 @@ export default defineConfig<CrxFixtureOptions>({
         enabledInIncognito: true,
       },
     },
-    ...(process.env.CI ? [] : [{
+    // opt-in only: every test pauses in the service worker debugger until resumed
+    ...(process.env.CRX_DEVTOOLS && !process.env.CI ? [{
       name: 'Chrome DevTools',
       use: {
         ...devices['Desktop Chrome'],
@@ -43,7 +44,7 @@ export default defineConfig<CrxFixtureOptions>({
         openDevTools: true,
       },
       timeout: 300_000,
-    }]),
+    }] : []),
   ],
   webServer: {
     command: 'npm run serve',
