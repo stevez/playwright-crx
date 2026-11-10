@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.23.0
+
+### Changes
+
+- **Upgrade to Playwright 1.65.0** (#40). The public `crx` / `CrxApplication` API is unchanged, and Node.js 20+ is still the minimum. `@playwright-repl/playwright-crx/test` types are regenerated for 1.65.
 
 ### Bug Fixes
 
@@ -10,6 +14,11 @@
 
 - New `npm run check:patches` (run by `build:crx`) fails if a Playwright upgrade drops one of the vendored patches.
 - The `Chrome DevTools` test project is opt-in via `CRX_DEVTOOLS=1`, so a plain `npm test` no longer waits on the debugger.
+- Removed `release.yml`, which uploaded the deleted recorder example to upstream's Chrome Web Store listing. Releases are published by hand (see README).
+
+### Docs
+
+- README rewritten for this fork (#39): upstream credit, install with the published package name, requirements, fork patches, upgrade rules and the release process.
 
 ## 1.22.1
 
