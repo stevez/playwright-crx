@@ -1,6 +1,6 @@
 # Playwright CRX
 
-> **Fork notice:** This is a fork of [nicolo-ribaudo/playwright-crx](https://github.com/nicolo-ribaudo/playwright-crx), published as [`@playwright-repl/playwright-crx`](https://www.npmjs.com/package/@playwright-repl/playwright-crx) for use with [playwright-repl](https://github.com/stevez/playwright-repl). It includes patches for tab-switching reliability (`chrome.debugger.attach` frame ID handling) and graceful detach recovery. See [CHANGELOG.md](./CHANGELOG.md) for details.
+> **Fork notice:** This is a fork of [ruifigueira/playwright-crx](https://github.com/ruifigueira/playwright-crx) by Rui Figueira, published as [`@playwright-repl/playwright-crx`](https://www.npmjs.com/package/@playwright-repl/playwright-crx) for use with [playwright-repl](https://github.com/stevez/playwright-repl). It follows newer Playwright releases than upstream and carries the patches listed under [Fork patches](#fork-patches). See [CHANGELOG.md](./CHANGELOG.md) for details.
 
 This package contains the [Chrome Extensions](https://developer.chrome.com/docs/extensions/) flavor of the [Playwright](http://github.com/microsoft/playwright) library.
 
@@ -8,33 +8,18 @@ For that, it relies on [`chrome.debugger`](https://developer.chrome.com/docs/ext
 
 **NOTE:** If you want to write end-to-end tests, you should use [@playwright/test](https://playwright.dev/docs/intro) instead.
 
-## Recorder / Player
+## Requirements
 
-**Note:** This extension is available in [Chrome Web Store](https://chrome.google.com/webstore/detail/playwright-crx/jambeljnbnfbkcpnoiaedcabbgmnnlcd).
+- Node.js 20+
+- Bundles Playwright **1.65.0** (Chromium-based browsers only)
 
-A small demo of Playwright CRX recorder and player in action:
+## Install
 
-![Playwright CRX Recorder / Player](./docs/assets/recorder-player.gif)
+```bash
+npm install @playwright-repl/playwright-crx
+```
 
-It provides playwright recorder (the same used in `playwright codegen`) bundled as a chrome extension, with no other dependencies.
-This way, with your normal chrome / chromium / edge browser, you can record playwright scripts in your prefered language.
-
-In terms of chrome extension functionality, it provides:
-
-- [action button](https://developer.chrome.com/docs/extensions/reference/action/) for attaching current tab into recorder (it opens the recorder if it's closed)
-- [context menu](https://developer.chrome.com/docs/extensions/reference/contextMenus/) for the same purpose
-- [side panel](https://developer.chrome.com/docs/extensions/reference/api/sidePanel) to display the recorder by default (it can be disabled in the options, falling back to a popup window)
-- [command shortcuts](https://developer.chrome.com/docs/extensions/reference/api/commands):
-  - `Alt + Shift + R` starts recording
-  - `Alt + Shift + C` starts inspecting
-- [options page](https://developer.chrome.com/docs/extensions/develop/ui/options-page) to configure:
-  - **Default language** (defaults to **Node Library**)
-  - **TestID Attribute Name** (defaults to `data-testid`)
-  - **Open in Side Panel** (defaults to `true`, and falls back to a popup window if set to `false`) 
-- pages must be explicitly attached to be recordable, except if they are opened from already attached pages
-- closing the recorder window will detach all pages and uninstall injected scripts (highlights and event listeners)
-- a player that will run the recorded instructions, in any supported language*
-   - it actually doesn't run Java, Python or C#, but it uses an internal JSONL format to know which instructions it needs to run and how to map them into the current selected code. This way, it can highlight the lines being executed.
+The package is ESM only.
 
 ## API
 
@@ -43,10 +28,10 @@ It's possible to use `playwright-crx` as a library to create new chrome extensio
 Here's a simple example of a background service worker for a chrome extension using **playwright-crx**:
 
 ```ts
-import { crx, expect } from 'playwright-crx/test';
+import { crx, expect } from '@playwright-repl/playwright-crx/test';
 
-// if you don't need assertions, you can reduce the bundle size by importing crx from playwright-crx
-// import { crx } from 'playwright-crx';
+// if you don't need assertions, you can reduce the bundle size by importing crx from the main entry
+// import { crx } from '@playwright-repl/playwright-crx';
 
 chrome.action.onClicked.addListener(async ({ id: tabId }) => {
   const crxApp = await crx.start({ slowMo: 500 });
@@ -108,7 +93,24 @@ await filechooser.setFiles({
 });
 ```
 
-You can give it a try with `playwright-crx/examples/todomvc-crx`.
+You can give it a try with `examples/todomvc-crx`.
+
+### Recorder
+
+Upstream also ships a recorder / player Chrome extension built on this library. This fork doesn't include it; see [ruifigueira/playwright-crx](https://github.com/ruifigueira/playwright-crx) if you need it.
+
+## Fork patches
+
+Changes to the vendored Playwright source in `playwright/`, which must be re-checked after every Playwright upgrade:
+
+- **CSP `unsafe-eval` guard** (`packages/playwright-core/src/server/javascript.ts`): skips the function serialization check when CSP blocks `unsafe-eval`, as it does in MV3 extension service workers.
+- **`CrxApplication` metainfo** (`packages/isomorphic/protocolMetainfo.ts`): marks `attach`, `attachAll`, `detach` and `detachAll` as internal, so they don't show up as failed actions in the Trace Viewer.
+- **Screencast frame-size rounding** (`packages/playwright-core/src/server/chromium/crPage.ts`, #36): rounds fractional viewport sizes so screencast frames aren't dropped at non-integer display scaling.
+
+Changes in this package's own source (`src/`):
+
+- **Graceful detach**: detaching a page whose initialization failed no longer throws, so `close()` still releases `chrome.debugger`.
+- **Restart after close**: `crx.start()` works again after `crxApp.close()`.
 
 ## Build
 
@@ -119,12 +121,47 @@ npm ci
 npm run build
 ```
 
-## Updating Playwright
-
-Playwright is nested as a git subtree.
-
-To update it, just run the following command (replace `v1.48.0` with the desired release tag):
+## Tests
 
 ```bash
-git subtree pull --prefix=playwright git@github.com:microsoft/playwright.git v1.48.0 --squash
+npm run test:install
+npm test
 ```
+
+Tests run in a headed Chromium with the `tests/test-extension` extension loaded. Set `HEADLESS=1` to run headless. To debug the extension's service worker, see [CONTRIBUTING.md](./CONTRIBUTING.md#debug).
+
+## Updating Playwright
+
+Playwright is vendored as a git subtree in `playwright/`. Upgrade one minor version at a time, on its own branch (replace `v1.65.0` with the desired release tag):
+
+```bash
+git subtree pull --prefix=playwright https://github.com/microsoft/playwright.git v1.65.0 --squash
+```
+
+Then:
+
+1. **Check the vendored patches.** The squashed commit message ends with `git-subtree-split: <sha>`, the upstream commit that was pulled. Compare it with the vendored tree:
+
+   ```bash
+   git diff <split sha> HEAD:playwright --stat
+   ```
+
+   The only files listed should be the ones under [Fork patches](#fork-patches). If one is missing, the pull dropped that patch: re-apply it.
+2. **Bump the test harness.** Set `@playwright/test` in `tests/package.json` to the same version, so the tests run against the same Chromium.
+3. **Merge the PR with a merge commit.** Never squash or rebase a subtree PR: `git subtree` needs the original squashed commit and its `git-subtree-split` line to find the base for the next pull.
+
+## Release
+
+Releases are published by hand:
+
+1. Bump `version` in `package.json` (and `package-lock.json`, e.g. with `npm version <x.y.z> --no-git-tag-version`).
+2. Add a section for the version to [CHANGELOG.md](./CHANGELOG.md).
+3. Merge to `main`, then tag it: `git tag v<x.y.z> && git push origin v<x.y.z>`.
+4. Create a GitHub release for the tag, using the CHANGELOG section as notes.
+5. Publish to npm from a clean build:
+
+   ```bash
+   npm ci
+   npm run build
+   npm publish
+   ```

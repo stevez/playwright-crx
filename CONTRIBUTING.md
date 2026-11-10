@@ -4,7 +4,7 @@
 
 We use playwright to test playwright-crx.
 
-The `context` fixture is extended to load a `playwright-crx` extension (e.g., recorder-crx or test-entension)
+The `context` fixture is extended to load a `playwright-crx` extension (e.g., `test-extension`)
 
 ### Run tests in extension service worker
 
