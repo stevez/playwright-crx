@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+- **Restore the main frame session fallback in `crPage.ts`**: the `frameId != targetId` fix from 0.15.2 was silently dropped by the Playwright 1.55 subtree pull, so 1.55 through 1.65 threw `Frame has been detached.` again when attaching to some existing tabs. It is back as a vendored patch.
+
+### Build
+
+- New `npm run check:patches` (run by `build:crx`) fails if a Playwright upgrade drops one of the vendored patches.
+- The `Chrome DevTools` test project is opt-in via `CRX_DEVTOOLS=1`, so a plain `npm test` no longer waits on the debugger.
+
 ## 1.22.1
 
 ### Bug Fixes

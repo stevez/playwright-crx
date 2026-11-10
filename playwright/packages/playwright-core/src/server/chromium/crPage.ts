@@ -145,8 +145,14 @@ export class CRPage implements PageDelegate {
     // Frame id equals target id.
     while (!this._sessions.has(frame._id)) {
       const parent = frame.parentFrame();
-      if (!parent)
+      if (!parent) {
+        // patch(playwright-crx): the main frame id can differ from targetId when attaching
+        // to an existing tab via chrome.debugger.attach. The main frame session is stored
+        // under targetId, not under the actual frame id.
+        if (this._sessions.has(this._targetId))
+          return this._sessions.get(this._targetId)!;
         throw new Error(`Frame has been detached.`);
+      }
       frame = parent;
     }
     return this._sessions.get(frame._id)!;

@@ -106,6 +106,9 @@ Changes to the vendored Playwright source in `playwright/`, which must be re-che
 - **CSP `unsafe-eval` guard** (`packages/playwright-core/src/server/javascript.ts`): skips the function serialization check when CSP blocks `unsafe-eval`, as it does in MV3 extension service workers.
 - **`CrxApplication` metainfo** (`packages/isomorphic/protocolMetainfo.ts`): marks `attach`, `attachAll`, `detach` and `detachAll` as internal, so they don't show up as failed actions in the Trace Viewer.
 - **Screencast frame-size rounding** (`packages/playwright-core/src/server/chromium/crPage.ts`, #36): rounds fractional viewport sizes so screencast frames aren't dropped at non-integer display scaling.
+- **Main frame session fallback** (`packages/playwright-core/src/server/chromium/crPage.ts`): when attaching to an existing tab with `chrome.debugger.attach`, the main frame id can differ from the target id. `_sessionForFrame` falls back to the session stored under the target id instead of throwing `Frame has been detached.`
+
+`npm run check:patches` (also run by `npm run build`) fails if any of these is missing. Add new vendored patches to `utils/check_vendor_patches.cjs`.
 
 Changes in this package's own source (`src/`):
 
@@ -146,9 +149,9 @@ Then:
    git diff <split sha> HEAD:playwright --stat
    ```
 
-   The only files listed should be the ones under [Fork patches](#fork-patches). If one is missing, the pull dropped that patch: re-apply it.
+   The only files listed should be the ones under [Fork patches](#fork-patches), and `npm run check:patches` must pass. If a patch is missing, the pull dropped it: re-apply it.
 2. **Bump the test harness.** Set `@playwright/test` in `tests/package.json` to the same version, so the tests run against the same Chromium.
-3. **Merge the PR with a merge commit.** Never squash or rebase a subtree PR: `git subtree` needs the original squashed commit and its `git-subtree-split` line to find the base for the next pull.
+3. **Merge the PR with a merge commit.** Never squash or rebase a subtree PR. `git subtree` finds the base for the next pull by looking for the last commit with a `git-subtree-split` line. If the PR is squashed, that commit becomes the squash commit, which also contains our patches. The next pull then treats the patches as changes upstream reverted, and drops them without a conflict. That is how the main frame session fallback was lost in the 1.55 upgrade.
 
 ## Release
 
